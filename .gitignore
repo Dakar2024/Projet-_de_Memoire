@@ -1,0 +1,9 @@
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+data/external/*
+data/raw/*
+!data/external/.gitkeep
+!data/raw/.gitkeep
