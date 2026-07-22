@@ -14,6 +14,8 @@ BREAST_CANCER_GENES = [
 ]
 
 # Gène causal + modificateurs HbF majeurs + co-morbidité — genes_drepanocytose.md
-SICKLE_CELL_GENES = ["HBB", "BCL11A", "HBS1L-MYB", "KLF1", "G6PD"]
+# Le locus modulateur HbF est couvert par HBS1L et MYB : la région intergénique "HBS1L-MYB"
+# n'est pas un symbole interrogeable (0 variant ClinVar, esearch NCBI Gene vide).
+SICKLE_CELL_GENES = ["HBB", "BCL11A", "HBS1L", "MYB", "KLF1", "G6PD"]
 
 ALL_GENES = BREAST_CANCER_GENES + SICKLE_CELL_GENES

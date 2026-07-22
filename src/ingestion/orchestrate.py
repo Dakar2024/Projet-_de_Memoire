@@ -5,7 +5,15 @@ from pathlib import Path
 
 import polars as pl
 
-from ingestion.medgen import extract_medgen_cuis
+from ingestion.medgen import extract_medgen_cuis, parse_medgen_conceptmeta
+
+
+def _enrich_medgen_concept(concept: dict) -> dict:
+    """Ajoute les champs extraits du XML `conceptmeta` sans retirer les données brutes."""
+    conceptmeta = concept.get("conceptmeta")
+    if not conceptmeta:
+        return concept
+    return {**concept, **parse_medgen_conceptmeta(conceptmeta)}
 
 
 def add_medgen_cuis(df: pl.DataFrame) -> pl.DataFrame:
@@ -41,11 +49,25 @@ def build_gene_documents(
             "gene_info": gene_info_by_symbol.get(gene_symbol, {}),
             "variants": variant_records,
             "medgen_concepts": [
-                medgen_by_cui[cui] for cui in cuis_for_gene if cui in medgen_by_cui
+                _enrich_medgen_concept(medgen_by_cui[cui])
+                for cui in cuis_for_gene
+                if cui in medgen_by_cui
             ],
             "hpo_terms": hpo_rows_by_gene.get(gene_symbol, []),
         }
     return documents
+
+
+def find_empty_genes(documents: dict[str, dict]) -> list[str]:
+    """Retourne les gènes sans aucun variant ni métadonnée NCBI Gene.
+
+    Signale un symbole invalide ou une collecte partiellement en échec.
+    """
+    return [
+        gene_symbol
+        for gene_symbol, document in documents.items()
+        if not document.get("variants") and not document.get("gene_info")
+    ]
 
 
 def write_raw_gene_files(documents: dict[str, dict], output_dir: Path) -> list[Path]:

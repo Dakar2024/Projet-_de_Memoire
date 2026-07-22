@@ -21,8 +21,16 @@ def filter_clinvar(source_path: Path, genes: list[str]) -> pl.DataFrame:
     )
 
 
-def download_variant_summary(destination: Path, url: str = CLINVAR_BULK_URL) -> Path:
-    """Télécharge le fichier bulk ClinVar en streaming vers `destination`."""
+def download_variant_summary(
+    destination: Path, url: str = CLINVAR_BULK_URL, force: bool = False
+) -> Path:
+    """Télécharge le fichier bulk ClinVar en streaming vers `destination`.
+
+    Le fichier fait ~440 Mo : s'il est déjà présent il est réutilisé tel quel,
+    sauf si `force=True` (pour rafraîchir les données).
+    """
+    if destination.exists() and not force:
+        return destination
     destination.parent.mkdir(parents=True, exist_ok=True)
     with requests.get(url, stream=True, timeout=60) as response:
         response.raise_for_status()

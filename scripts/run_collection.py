@@ -14,7 +14,12 @@ from ingestion.hpo import download_hpo_files, parse_genes_to_phenotype
 from ingestion.http_client import NcbiClient
 from ingestion.medgen import fetch_medgen_concept
 from ingestion.ncbi_gene import fetch_gene_info
-from ingestion.orchestrate import add_medgen_cuis, build_gene_documents, write_raw_gene_files
+from ingestion.orchestrate import (
+    add_medgen_cuis,
+    build_gene_documents,
+    find_empty_genes,
+    write_raw_gene_files,
+)
 
 
 def run_collection(genes: list[str] = ALL_GENES) -> list[Path]:
@@ -40,6 +45,15 @@ def run_collection(genes: list[str] = ALL_GENES) -> list[Path]:
         hpo_rows_by_gene.setdefault(row["gene_symbol"], []).append(row)
 
     documents = build_gene_documents(variants, gene_info_by_symbol, medgen_by_cui, hpo_rows_by_gene)
+
+    empty_genes = find_empty_genes(documents)
+    if empty_genes:
+        print(
+            f"ATTENTION: aucun variant ni metadonnee NCBI Gene pour {', '.join(empty_genes)} "
+            "(symbole invalide ou collecte en echec).",
+            file=sys.stderr,
+        )
+
     return write_raw_gene_files(documents, DATA_RAW_DIR)
 
 
