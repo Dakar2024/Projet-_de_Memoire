@@ -111,7 +111,7 @@ def test_build_gene_documents_leaves_concept_without_conceptmeta_untouched():
     assert documents["HBB"]["medgen_concepts"] == [{"title": "not provided"}]
 
 
-def test_find_empty_genes_flags_documents_without_variants_or_gene_info():
+def test_find_empty_genes_flags_any_missing_variants_or_gene_info():
     from ingestion.orchestrate import find_empty_genes
 
     documents = {
@@ -121,7 +121,49 @@ def test_find_empty_genes_flags_documents_without_variants_or_gene_info():
         "MYB": {"gene_info": {"name": "MYB"}, "variants": []},
     }
 
-    assert find_empty_genes(documents) == ["HBS1L-MYB"]
+    # build_gene_documents émet un document par gène demandé : n'alerter que sur les
+    # documents totalement vides laisserait passer un symbole ClinVar devenu invalide.
+    assert find_empty_genes(documents) == ["HBS1L-MYB", "KLF1", "MYB"]
+
+
+def test_build_gene_documents_keeps_provenance_of_unresolvable_cui():
+    from ingestion.orchestrate import add_medgen_cuis, build_gene_documents
+
+    variants = add_medgen_cuis(
+        pl.DataFrame(
+            {"#AlleleID": ["1"], "GeneSymbol": ["HBB"], "PhenotypeIDS": ["MedGen:CN517202"]}
+        )
+    )
+    # fetch_medgen_concept renvoie {} quand esearch ne trouve rien : sans marqueur,
+    # le CUI en échec devient irrécupérable depuis le document.
+    medgen = {"CN517202": {}}
+
+    documents = build_gene_documents(variants, {"HBB": {}}, medgen, {})
+
+    assert documents["HBB"]["medgen_concepts"] == [{"conceptid": "CN517202"}]
+
+
+def test_build_gene_documents_does_not_alias_the_caller_concept_dicts():
+    from ingestion.orchestrate import add_medgen_cuis, build_gene_documents
+
+    variants = add_medgen_cuis(
+        pl.DataFrame(
+            {
+                "#AlleleID": ["1", "2"],
+                "GeneSymbol": ["HBB", "KLF1"],
+                "PhenotypeIDS": ["MedGen:C3661900", "MedGen:C3661900"],
+            }
+        )
+    )
+    concept = {"title": "not provided"}
+
+    documents = build_gene_documents(
+        variants, {"HBB": {}, "KLF1": {}}, {"C3661900": concept}, {}
+    )
+
+    hbb_concept = documents["HBB"]["medgen_concepts"][0]
+    assert hbb_concept is not concept
+    assert hbb_concept is not documents["KLF1"]["medgen_concepts"][0]
 
 
 def test_find_empty_genes_returns_empty_list_when_all_populated():

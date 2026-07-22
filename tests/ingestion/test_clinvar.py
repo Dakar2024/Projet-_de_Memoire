@@ -1,7 +1,9 @@
 import gzip
-
-import responses
 from pathlib import Path
+
+import pytest
+import responses
+from requests.exceptions import ConnectionError
 
 from ingestion.clinvar import (
     CLINVAR_BULK_URL,
@@ -60,6 +62,20 @@ def test_download_variant_summary_reuses_existing_file(tmp_path):
     assert result_path == destination
     assert destination.read_bytes() == existing
     assert len(responses.calls) == 0
+
+
+@responses.activate
+def test_download_variant_summary_leaves_no_file_when_download_fails(tmp_path):
+    """Un téléchargement interrompu ne doit pas laisser un fichier partiel que le
+    skip-si-présent réutiliserait ensuite comme s'il était complet."""
+    responses.add(responses.GET, CLINVAR_BULK_URL, body=ConnectionError("coupure réseau"))
+
+    destination = tmp_path / "external" / "variant_summary.txt.gz"
+
+    with pytest.raises(ConnectionError):
+        download_variant_summary(destination)
+
+    assert not destination.exists()
 
 
 @responses.activate
