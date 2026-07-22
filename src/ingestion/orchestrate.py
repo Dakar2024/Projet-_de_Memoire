@@ -36,8 +36,13 @@ def build_gene_documents(
     gene_info_by_symbol: dict[str, dict],
     medgen_by_cui: dict[str, dict],
     hpo_rows_by_gene: dict[str, list[dict]],
+    provenance: dict | None = None,
 ) -> dict[str, dict]:
-    """Assemble un document par gène combinant ClinVar, NCBI Gene, MedGen et HPO."""
+    """Assemble un document par gène combinant ClinVar, NCBI Gene, MedGen et HPO.
+
+    `provenance`, si fourni, est copié dans chaque document sous la clé `_provenance`
+    (date de collecte, versions des sources) pour rendre la couche RAW traçable.
+    """
     documents: dict[str, dict] = {}
     for gene_symbol in gene_info_by_symbol:
         variant_records = clinvar_variants.filter(
@@ -50,7 +55,7 @@ def build_gene_documents(
                 if cui not in cuis_for_gene:
                     cuis_for_gene.append(cui)
 
-        documents[gene_symbol] = {
+        document = {
             "gene_symbol": gene_symbol,
             "gene_info": gene_info_by_symbol.get(gene_symbol, {}),
             "variants": variant_records,
@@ -61,6 +66,9 @@ def build_gene_documents(
             ],
             "hpo_terms": hpo_rows_by_gene.get(gene_symbol, []),
         }
+        if provenance is not None:
+            document["_provenance"] = provenance
+        documents[gene_symbol] = document
     return documents
 
 

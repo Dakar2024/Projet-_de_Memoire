@@ -3,7 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import polars as pl
-import requests
+
+from ingestion.download import download_to_file
 
 CLINVAR_BULK_URL = (
     "https://ftp.ncbi.nlm.nih.gov/pub/clinvar/tab_delimited/variant_summary.txt.gz"
@@ -11,12 +12,21 @@ CLINVAR_BULK_URL = (
 
 
 def filter_clinvar(source_path: Path, genes: list[str]) -> pl.DataFrame:
-    """Filtre le fichier bulk ClinVar sur les gènes cibles, gère les doublons d'assemblage."""
+    """Filtre le fichier bulk ClinVar sur les gènes cibles, gère les doublons d'assemblage.
+
+    Limite connue : `is_in` fait une correspondance exacte, donc les lignes dont le champ
+    `GeneSymbol` joint plusieurs gènes par `;` sont ignorées — environ 270 associations
+    variant-gène sur 97 000 (0,3 %), surtout ATM, PTEN, HBB, BRCA1 et MYB. Éclater ces
+    lignes ferait apparaître un même variant sous plusieurs gènes : c'est une décision de
+    modélisation qui appartient à la couche Bronze, pas à la couche RAW.
+    """
     return (
         pl.scan_csv(source_path, separator="\t", infer_schema_length=0)
         .filter(pl.col("GeneSymbol").is_in(genes))
         .filter(pl.col("Assembly").is_in(["GRCh38", "na"]))
-        .unique(subset=["#AlleleID"], keep="first")
+        # maintain_order pour que deux collectes du même bulk produisent des fichiers
+        # identiques, et donc comparables par diff.
+        .unique(subset=["#AlleleID"], keep="first", maintain_order=True)
         .collect()
     )
 
@@ -24,27 +34,5 @@ def filter_clinvar(source_path: Path, genes: list[str]) -> pl.DataFrame:
 def download_variant_summary(
     destination: Path, url: str = CLINVAR_BULK_URL, force: bool = False
 ) -> Path:
-    """Télécharge le fichier bulk ClinVar en streaming vers `destination`.
-
-    Le fichier fait ~440 Mo : s'il est déjà présent il est réutilisé tel quel,
-    sauf si `force=True` (pour rafraîchir les données).
-    """
-    if destination.exists() and not force:
-        return destination
-    destination.parent.mkdir(parents=True, exist_ok=True)
-
-    # Écriture dans un fichier temporaire puis renommage atomique : une coupure en
-    # cours de transfert ne doit pas laisser un fichier partiel que le skip-si-présent
-    # réutiliserait ensuite comme s'il était complet.
-    partial = destination.with_name(destination.name + ".part")
-    try:
-        with requests.get(url, stream=True, timeout=60) as response:
-            response.raise_for_status()
-            with open(partial, "wb") as fh:
-                for chunk in response.iter_content(chunk_size=8192):
-                    fh.write(chunk)
-        partial.replace(destination)
-    except BaseException:
-        partial.unlink(missing_ok=True)
-        raise
-    return destination
+    """Télécharge le fichier bulk ClinVar (~440 Mo) vers `destination`."""
+    return download_to_file(url, destination, force=force)

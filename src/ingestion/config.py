@@ -4,8 +4,14 @@ from pathlib import Path
 
 EUTILS_BASE_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 
-DATA_EXTERNAL_DIR = Path("data/external")
-DATA_RAW_DIR = Path("data/raw")
+# Transmis à NCBI avec l'email pour identifier l'appelant.
+TOOL_NAME = "rag-genomique-ingestion"
+
+# Ancrés sur la racine du dépôt : la collecte doit écrire au même endroit quel que soit
+# le répertoire courant depuis lequel on lance le script.
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DATA_EXTERNAL_DIR = PROJECT_ROOT / "data" / "external"
+DATA_RAW_DIR = PROJECT_ROOT / "data" / "raw"
 
 # Panel germinal complet cancer du sein (haute + modérée pénétrance) — genes_cancer_sein.md
 BREAST_CANCER_GENES = [
