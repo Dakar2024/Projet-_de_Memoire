@@ -32,9 +32,19 @@ def download_variant_summary(
     if destination.exists() and not force:
         return destination
     destination.parent.mkdir(parents=True, exist_ok=True)
-    with requests.get(url, stream=True, timeout=60) as response:
-        response.raise_for_status()
-        with open(destination, "wb") as fh:
-            for chunk in response.iter_content(chunk_size=8192):
-                fh.write(chunk)
+
+    # Écriture dans un fichier temporaire puis renommage atomique : une coupure en
+    # cours de transfert ne doit pas laisser un fichier partiel que le skip-si-présent
+    # réutiliserait ensuite comme s'il était complet.
+    partial = destination.with_name(destination.name + ".part")
+    try:
+        with requests.get(url, stream=True, timeout=60) as response:
+            response.raise_for_status()
+            with open(partial, "wb") as fh:
+                for chunk in response.iter_content(chunk_size=8192):
+                    fh.write(chunk)
+        partial.replace(destination)
+    except BaseException:
+        partial.unlink(missing_ok=True)
+        raise
     return destination

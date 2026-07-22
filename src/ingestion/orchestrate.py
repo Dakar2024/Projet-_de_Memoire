@@ -8,11 +8,17 @@ import polars as pl
 from ingestion.medgen import extract_medgen_cuis, parse_medgen_conceptmeta
 
 
-def _enrich_medgen_concept(concept: dict) -> dict:
-    """Ajoute les champs extraits du XML `conceptmeta` sans retirer les données brutes."""
+def _enrich_medgen_concept(concept: dict, cui: str) -> dict:
+    """Ajoute les champs extraits du XML `conceptmeta` sans retirer les données brutes.
+
+    Un concept vide signale un CUI que MedGen ne résout pas : on conserve au moins
+    son identifiant, sans quoi le CUI en échec serait irrécupérable depuis le document.
+    """
+    if not concept:
+        return {"conceptid": cui}
     conceptmeta = concept.get("conceptmeta")
     if not conceptmeta:
-        return concept
+        return dict(concept)
     return {**concept, **parse_medgen_conceptmeta(conceptmeta)}
 
 
@@ -49,7 +55,7 @@ def build_gene_documents(
             "gene_info": gene_info_by_symbol.get(gene_symbol, {}),
             "variants": variant_records,
             "medgen_concepts": [
-                _enrich_medgen_concept(medgen_by_cui[cui])
+                _enrich_medgen_concept(medgen_by_cui[cui], cui)
                 for cui in cuis_for_gene
                 if cui in medgen_by_cui
             ],
@@ -59,14 +65,19 @@ def build_gene_documents(
 
 
 def find_empty_genes(documents: dict[str, dict]) -> list[str]:
-    """Retourne les gènes sans aucun variant ni métadonnée NCBI Gene.
+    """Retourne les gènes auxquels il manque les variants ou les métadonnées NCBI Gene.
 
-    Signale un symbole invalide ou une collecte partiellement en échec.
+    `build_gene_documents` émet un document par gène demandé : n'alerter que sur les
+    documents entièrement vides ne détecterait que l'échec total. Un gène résolu par
+    NCBI Gene mais sans aucun variant ClinVar est le défaut le plus probable (symbole
+    absent du bulk, filtre d'assemblage cassé) — il doit alerter aussi.
+
+    Volontairement muet sur les termes HPO : HBS1L et MYB en ont légitimement zéro.
     """
     return [
         gene_symbol
         for gene_symbol, document in documents.items()
-        if not document.get("variants") and not document.get("gene_info")
+        if not document.get("variants") or not document.get("gene_info")
     ]
 
 

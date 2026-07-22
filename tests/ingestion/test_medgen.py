@@ -90,7 +90,68 @@ def test_parse_medgen_conceptmeta_handles_missing_fields():
     result = parse_medgen_conceptmeta("<Definitions></Definitions>")
     assert result == {
         "mim_number": "",
+        "mim_numbers": [],
         "mode_inheritance": "",
+        "modes_inheritance": [],
         "clinical_summary": "",
+        "definitions": [],
         "hpo_terms": [],
     }
+
+
+# beta Thalassemia (C0005283) : deux MIM, deux modes d'hérédité, plusieurs définitions.
+# Les champs singuliers ne gardent que la première occurrence, d'où les champs pluriels.
+MULTI_VALUED_CONCEPTMETA = """
+<Definitions>
+<Definition source="GeneReviews">Beta-thalassemia has two clinically significant forms.</Definition>
+<Definition source="MONDO">A thalassemia caused by reduced beta globin synthesis.</Definition>
+</Definitions>
+<ModesOfInheritance>
+<ModeOfInheritance uid="141025"><Name>Autosomal recessive inheritance</Name></ModeOfInheritance>
+<ModeOfInheritance uid="141047"><Name>Autosomal dominant inheritance</Name></ModeOfInheritance>
+</ModesOfInheritance>
+<OMIM><MIM>141900</MIM><MIM>613985</MIM></OMIM>
+"""
+
+
+def test_parse_medgen_conceptmeta_collects_every_mim_and_inheritance_mode():
+    from ingestion.medgen import parse_medgen_conceptmeta
+
+    result = parse_medgen_conceptmeta(MULTI_VALUED_CONCEPTMETA)
+
+    assert result["mim_numbers"] == ["141900", "613985"]
+    assert result["modes_inheritance"] == [
+        "Autosomal recessive inheritance",
+        "Autosomal dominant inheritance",
+    ]
+    # Les singuliers restent la première occurrence, pour compatibilité.
+    assert result["mim_number"] == "141900"
+    assert result["mode_inheritance"] == "Autosomal recessive inheritance"
+
+
+def test_parse_medgen_conceptmeta_keeps_every_definition_with_its_source():
+    from ingestion.medgen import parse_medgen_conceptmeta
+
+    result = parse_medgen_conceptmeta(MULTI_VALUED_CONCEPTMETA)
+
+    assert result["definitions"] == [
+        {
+            "source": "GeneReviews",
+            "text": "Beta-thalassemia has two clinically significant forms.",
+        },
+        {
+            "source": "MONDO",
+            "text": "A thalassemia caused by reduced beta globin synthesis.",
+        },
+    ]
+    assert result["clinical_summary"] == "Beta-thalassemia has two clinically significant forms."
+
+
+def test_parse_medgen_conceptmeta_keeps_text_split_by_nested_tags():
+    from ingestion.medgen import parse_medgen_conceptmeta
+
+    conceptmeta = "<Definitions><Definition source='NCBI'>Anémie <i>sévère</i> chronique.</Definition></Definitions>"
+
+    result = parse_medgen_conceptmeta(conceptmeta)
+
+    assert result["clinical_summary"] == "Anémie sévère chronique."
