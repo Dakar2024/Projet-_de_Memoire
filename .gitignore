@@ -3,6 +3,11 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .env
+
+# Fichiers de travail internes (outils Claude Code / workflow), non destinés au partage
+.claude/
+.superpowers/
+SESSION_HANDOFF.md
 data/external/*
 data/raw/*
 !data/external/.gitkeep
