@@ -46,3 +46,32 @@ def test_download_variant_summary_writes_streamed_content(tmp_path):
 
     assert result_path == destination
     assert destination.read_bytes() == body
+
+
+@responses.activate
+def test_download_variant_summary_reuses_existing_file(tmp_path):
+    destination = tmp_path / "external" / "variant_summary.txt.gz"
+    destination.parent.mkdir(parents=True)
+    existing = gzip.compress(b"already downloaded\n")
+    destination.write_bytes(existing)
+
+    result_path = download_variant_summary(destination)
+
+    assert result_path == destination
+    assert destination.read_bytes() == existing
+    assert len(responses.calls) == 0
+
+
+@responses.activate
+def test_download_variant_summary_force_redownloads_existing_file(tmp_path):
+    body = gzip.compress(b"fresh\n")
+    responses.add(responses.GET, CLINVAR_BULK_URL, body=body, status=200)
+
+    destination = tmp_path / "external" / "variant_summary.txt.gz"
+    destination.parent.mkdir(parents=True)
+    destination.write_bytes(gzip.compress(b"stale\n"))
+
+    result_path = download_variant_summary(destination, force=True)
+
+    assert result_path == destination
+    assert destination.read_bytes() == body
