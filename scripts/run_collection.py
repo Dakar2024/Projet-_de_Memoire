@@ -3,16 +3,20 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from dotenv import load_dotenv
 
-from ingestion.clinvar import download_variant_summary, filter_clinvar
+from ingestion.clinvar import CLINVAR_BULK_URL, download_variant_summary, filter_clinvar
 from ingestion.config import ALL_GENES, DATA_EXTERNAL_DIR, DATA_RAW_DIR
-from ingestion.hpo import download_hpo_files, parse_genes_to_phenotype
+from ingestion.hpo import (
+    GENES_TO_PHENOTYPE_URL,
+    download_hpo_files,
+    parse_genes_to_phenotype,
+)
 from ingestion.http_client import NcbiClient
 from ingestion.medgen import fetch_medgen_concept
 from ingestion.ncbi_gene import fetch_gene_info
@@ -33,6 +37,10 @@ def run_collection(
     quoi faire d'une collecte partielle.
     """
     load_dotenv()
+    if not os.environ.get("NCBI_EMAIL"):
+        raise SystemExit(
+            "NCBI_EMAIL manquant : copier .env.example en .env et y renseigner votre email."
+        )
     client = NcbiClient(email=os.environ["NCBI_EMAIL"], api_key=os.environ.get("NCBI_API_KEY", ""))
 
     bulk_path = DATA_EXTERNAL_DIR / "variant_summary.txt.gz"
@@ -54,13 +62,28 @@ def run_collection(
                 all_cuis.append(cui)
     medgen_by_cui = {cui: fetch_medgen_concept(client, cui) for cui in all_cuis}
 
-    hpo_paths = download_hpo_files(DATA_EXTERNAL_DIR)
+    hpo_paths = download_hpo_files(DATA_EXTERNAL_DIR, force=refresh)
     hpo_rows = parse_genes_to_phenotype(hpo_paths["genes_to_phenotype"], genes)
     hpo_rows_by_gene: dict[str, list[dict]] = {}
     for row in hpo_rows:
         hpo_rows_by_gene.setdefault(row["gene_symbol"], []).append(row)
 
-    documents = build_gene_documents(variants, gene_info_by_symbol, medgen_by_cui, hpo_rows_by_gene)
+    provenance = {
+        "collected_at": datetime.now(timezone.utc).isoformat(),
+        "n_genes": len(genes),
+        "clinvar_bulk_url": CLINVAR_BULK_URL,
+        "clinvar_bulk_mtime": datetime.fromtimestamp(
+            clinvar_path.stat().st_mtime, timezone.utc
+        ).isoformat(),
+        "hpo_genes_to_phenotype_url": GENES_TO_PHENOTYPE_URL,
+        "hpo_genes_to_phenotype_mtime": datetime.fromtimestamp(
+            hpo_paths["genes_to_phenotype"].stat().st_mtime, timezone.utc
+        ).isoformat(),
+    }
+
+    documents = build_gene_documents(
+        variants, gene_info_by_symbol, medgen_by_cui, hpo_rows_by_gene, provenance=provenance
+    )
 
     return write_raw_gene_files(documents, DATA_RAW_DIR), find_empty_genes(documents)
 

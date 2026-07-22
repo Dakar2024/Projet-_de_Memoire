@@ -74,6 +74,29 @@ def test_esearch_sends_email_and_api_key_params():
     sent_params = responses.calls[0].request.params
     assert sent_params["email"] == "test@example.com"
     assert sent_params["api_key"] == "secret"
+    # NCBI attend `tool` en plus de `email` pour identifier l'appelant.
+    assert sent_params["tool"] == "rag-genomique-ingestion"
+
+
+@responses.activate
+def test_esearch_retries_transient_errors_then_succeeds():
+    responses.add(
+        responses.GET,
+        "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
+        status=503,
+    )
+    responses.add(
+        responses.GET,
+        "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
+        json={"esearchresult": {"idlist": ["3043"]}},
+        status=200,
+    )
+    # Session réelle (avec l'adaptateur de retry) et non un limiter injecté seulement :
+    # on veut vérifier que le 503 est réessayé de façon transparente.
+    client = NcbiClient(email="test@example.com", rate_limiter=_no_wait_limiter())
+
+    assert client.esearch(db="gene", term="HBB[gene]") == ["3043"]
+    assert len(responses.calls) == 2
 
 
 @responses.activate

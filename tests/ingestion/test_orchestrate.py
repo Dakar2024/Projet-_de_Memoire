@@ -1,9 +1,22 @@
+import json
+
 import polars as pl
+
+from ingestion.orchestrate import (
+    add_medgen_cuis,
+    build_gene_documents,
+    find_empty_genes,
+    write_raw_gene_files,
+)
+
+EMPTY_SCHEMA = {
+    "#AlleleID": pl.Utf8,
+    "GeneSymbol": pl.Utf8,
+    "PhenotypeIDS": pl.Utf8,
+}
 
 
 def test_add_medgen_cuis_extracts_list_column():
-    from ingestion.orchestrate import add_medgen_cuis
-
     df = pl.DataFrame(
         {
             "#AlleleID": ["1"],
@@ -16,8 +29,6 @@ def test_add_medgen_cuis_extracts_list_column():
 
 
 def test_build_gene_documents_assembles_variant_gene_medgen_hpo():
-    from ingestion.orchestrate import add_medgen_cuis, build_gene_documents
-
     variants = add_medgen_cuis(
         pl.DataFrame(
             {
@@ -43,8 +54,6 @@ def test_build_gene_documents_assembles_variant_gene_medgen_hpo():
 
 
 def test_build_gene_documents_handles_gene_with_no_variants():
-    from ingestion.orchestrate import add_medgen_cuis, build_gene_documents
-
     variants = add_medgen_cuis(
         pl.DataFrame(
             {"#AlleleID": [], "GeneSymbol": [], "PhenotypeIDS": []},
@@ -61,8 +70,6 @@ def test_build_gene_documents_handles_gene_with_no_variants():
 
 
 def test_build_gene_documents_parses_medgen_conceptmeta():
-    from ingestion.orchestrate import add_medgen_cuis, build_gene_documents
-
     variants = add_medgen_cuis(
         pl.DataFrame(
             {
@@ -97,8 +104,6 @@ def test_build_gene_documents_parses_medgen_conceptmeta():
 
 
 def test_build_gene_documents_leaves_concept_without_conceptmeta_untouched():
-    from ingestion.orchestrate import add_medgen_cuis, build_gene_documents
-
     variants = add_medgen_cuis(
         pl.DataFrame(
             {"#AlleleID": ["1"], "GeneSymbol": ["HBB"], "PhenotypeIDS": ["MedGen:C3661900"]}
@@ -111,9 +116,40 @@ def test_build_gene_documents_leaves_concept_without_conceptmeta_untouched():
     assert documents["HBB"]["medgen_concepts"] == [{"title": "not provided"}]
 
 
-def test_find_empty_genes_flags_any_missing_variants_or_gene_info():
-    from ingestion.orchestrate import find_empty_genes
+def test_build_gene_documents_records_provenance_in_each_document():
+    variants = add_medgen_cuis(
+        pl.DataFrame({"#AlleleID": [], "GeneSymbol": [], "PhenotypeIDS": []}, schema=EMPTY_SCHEMA)
+    )
+    provenance = {"collected_at": "2026-07-22T14:00:00+00:00", "clinvar_bulk_url": "https://x"}
 
+    documents = build_gene_documents(variants, {"HBB": {}}, {}, {}, provenance=provenance)
+
+    assert documents["HBB"]["_provenance"] == provenance
+
+
+def test_build_gene_documents_omits_provenance_when_not_supplied():
+    variants = add_medgen_cuis(
+        pl.DataFrame({"#AlleleID": [], "GeneSymbol": [], "PhenotypeIDS": []}, schema=EMPTY_SCHEMA)
+    )
+
+    documents = build_gene_documents(variants, {"HBB": {}}, {}, {})
+
+    assert "_provenance" not in documents["HBB"]
+
+
+def test_write_raw_gene_files_keeps_non_ascii_characters_readable(tmp_path):
+    """Les définitions MedGen contiennent des caractères non-ASCII (ß, accents) :
+    ils doivent rester lisibles dans le JSON, pas être échappés en \\uXXXX."""
+    documents = {"HBB": {"gene_symbol": "HBB", "summary": "ß-thalassémie sévère"}}
+
+    written = write_raw_gene_files(documents, tmp_path)
+
+    content = written[0].read_text(encoding="utf-8")
+    assert "ß-thalassémie sévère" in content
+    assert json.loads(content)["summary"] == "ß-thalassémie sévère"
+
+
+def test_find_empty_genes_flags_any_missing_variants_or_gene_info():
     documents = {
         "HBB": {"gene_info": {"name": "HBB"}, "variants": [{"#AlleleID": "1"}]},
         "HBS1L-MYB": {"gene_info": {}, "variants": []},
@@ -127,8 +163,6 @@ def test_find_empty_genes_flags_any_missing_variants_or_gene_info():
 
 
 def test_build_gene_documents_keeps_provenance_of_unresolvable_cui():
-    from ingestion.orchestrate import add_medgen_cuis, build_gene_documents
-
     variants = add_medgen_cuis(
         pl.DataFrame(
             {"#AlleleID": ["1"], "GeneSymbol": ["HBB"], "PhenotypeIDS": ["MedGen:CN517202"]}
@@ -144,8 +178,6 @@ def test_build_gene_documents_keeps_provenance_of_unresolvable_cui():
 
 
 def test_build_gene_documents_does_not_alias_the_caller_concept_dicts():
-    from ingestion.orchestrate import add_medgen_cuis, build_gene_documents
-
     variants = add_medgen_cuis(
         pl.DataFrame(
             {
@@ -167,16 +199,12 @@ def test_build_gene_documents_does_not_alias_the_caller_concept_dicts():
 
 
 def test_find_empty_genes_returns_empty_list_when_all_populated():
-    from ingestion.orchestrate import find_empty_genes
-
     documents = {"HBB": {"gene_info": {"name": "HBB"}, "variants": [{"#AlleleID": "1"}]}}
 
     assert find_empty_genes(documents) == []
 
 
 def test_write_raw_gene_files_creates_one_json_per_gene(tmp_path):
-    from ingestion.orchestrate import write_raw_gene_files
-
     documents = {"HBB": {"gene_symbol": "HBB", "variants": []}}
     written = write_raw_gene_files(documents, tmp_path / "raw")
 
