@@ -2,9 +2,21 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import requests
+
 from ingestion.download import download_to_file
+from ingestion.http_client import build_retrying_session
 
 GENES_TO_PHENOTYPE_URL = "https://purl.obolibrary.org/obo/hp/hpoa/genes_to_phenotype.txt"
+
+# Service public ontology.jax.org (sans clé) : détails d'un terme HPO (definition, synonyms,
+# xrefs) — absents de genes_to_phenotype.txt, qui ne porte que l'id et le nom du terme.
+HP_TERMS_URL = "https://ontology.jax.org/api/hp/terms"
+
+# Le paramètre `filter` de cette API est limité à 250 caractères côté serveur (spec OpenAPI
+# publiée sur /api/hp/docs) ; "HP:0000000," fait 11 caractères, 20 IDs par lot garde une
+# marge confortable.
+HP_TERMS_BATCH_SIZE = 20
 
 
 def parse_genes_to_phenotype(path: Path, genes: list[str]) -> list[dict]:
@@ -24,6 +36,52 @@ def parse_genes_to_phenotype(path: Path, genes: list[str]) -> list[dict]:
                 {"gene_symbol": gene_symbol, "hpo_id": parts[2], "hpo_name": parts[3]}
             )
     return rows
+
+
+def fetch_hpo_term_details(
+    hpo_ids: list[str], session: requests.Session | None = None
+) -> dict[str, dict]:
+    """Récupère definition/synonyms/xrefs pour des IDs HPO, par lots de `HP_TERMS_BATCH_SIZE`.
+
+    Les IDs sont dédupliqués avant l'appel — un même terme (ex. un HPO partagé par plusieurs
+    gènes du panel) n'est demandé qu'une fois. Un ID que l'API ne reconnaît plus (terme
+    retiré/fusionné côté HPO) est simplement absent du résultat plutôt que de faire échouer
+    l'appel — géré côté appelant via `enrich_hpo_rows`.
+    """
+    session = session or build_retrying_session()
+    unique_ids = list(dict.fromkeys(hpo_ids))
+    details: dict[str, dict] = {}
+    for start in range(0, len(unique_ids), HP_TERMS_BATCH_SIZE):
+        batch = unique_ids[start : start + HP_TERMS_BATCH_SIZE]
+        response = session.get(HP_TERMS_URL, params={"filter": ",".join(batch)}, timeout=30)
+        response.raise_for_status()
+        for term in response.json():
+            details[term["id"]] = {
+                "definition": term.get("definition", ""),
+                "synonyms": term.get("synonyms", []),
+                "xrefs": term.get("xrefs", []),
+            }
+    return details
+
+
+def enrich_hpo_rows(rows: list[dict], term_details: dict[str, dict]) -> list[dict]:
+    """Ajoute definition/synonyms/xrefs à chaque ligne HPO à partir de `term_details`.
+
+    Un `hpo_id` absent de `term_details` garde des champs d'enrichissement vides plutôt que
+    de faire échouer l'assemblage — cohérent avec le traitement des CUI MedGen non résolus.
+    """
+    enriched = []
+    for row in rows:
+        details = term_details.get(row["hpo_id"], {})
+        enriched.append(
+            {
+                **row,
+                "definition": details.get("definition", ""),
+                "synonyms": details.get("synonyms", []),
+                "xrefs": details.get("xrefs", []),
+            }
+        )
+    return enriched
 
 
 def download_file(url: str, destination: Path, force: bool = False) -> Path:

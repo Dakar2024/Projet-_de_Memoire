@@ -58,16 +58,19 @@ entry point (a thin CLI wrapper) — it calls each module in sequence:
    `medgen.py` also extracts MedGen CUIs from ClinVar's `PhenotypeIDS` field and parses the
    `conceptmeta` XML blob into structured fields.
 3. **`hpo.py`** — downloads and parses the public HPO `genes_to_phenotype.txt` flat file (also
-   via `download.py`). `phenotype.hpoa` (disease-centric annotations) is deliberately not
-   downloaded — nothing consumes it without a disease→gene join that doesn't exist yet.
+   via `download.py`), then enriches each row with `definition`/`synonyms`/`xrefs` fetched
+   from the `ontology.jax.org/api/hp/terms` REST API (keyless, batched — up to
+   `HP_TERMS_BATCH_SIZE` HPO IDs per call, since the API caps its `filter` query param at 250
+   chars). `phenotype.hpoa` (disease-centric annotations) is deliberately not downloaded —
+   nothing consumes it without a disease→gene join that doesn't exist yet.
 4. **`orchestrate.py`** — joins all four sources per gene into one document; `find_empty_genes`
    flags genes missing variants or gene metadata (used by the CLI to decide the exit code).
 
 Shared infrastructure:
 - **`http_client.py`** — `NcbiClient` (esearch/esummary, retry on 429/5xx via `urllib3.Retry`)
   and `RateLimiter`, which throttles calls to respect NCBI's global rate limit (faster with an
-  API key). Both ClinVar and NCBI Gene/MedGen calls go through this client's retry/rate-limit
-  logic.
+  API key). Also exports `build_retrying_session()`, the retry-configured `requests.Session`
+  factory shared by `NcbiClient` and `hpo.py`'s HPO-terms API calls.
 - **`download.py`** — generic streamed download to a `.part` file with atomic rename, so a
   partial download is never mistaken for a complete, cacheable one. Shared by both the
   ClinVar bulk and the HPO flat file — downloads are skipped if the destination already
@@ -79,8 +82,9 @@ Shared infrastructure:
 
 This is the interface handed to the next stage (Bronze). Each document has: `gene_symbol`,
 `gene_info` (raw NCBI Gene esummary), `variants` (raw ClinVar rows, original 43 columns),
-`medgen_concepts` (raw + derived fields from `conceptmeta`), `hpo_terms`, and `_provenance`
-(collection timestamp + source versions).
+`medgen_concepts` (raw + derived fields from `conceptmeta`), `hpo_terms` (each row enriched
+with `definition`/`synonyms`/`xrefs`), and `_provenance` (collection timestamp + source
+versions).
 
 ### Known limitations (intentionally deferred to Bronze, not to fix here)
 
@@ -95,6 +99,9 @@ This is the interface handed to the next stage (Bronze). Each document has: `gen
   as a legitimate "unknown concept", not an error.
 - Empty `hpo_terms` for `HBS1L` and `MYB` is expected (GWAS loci absent from HPO annotations,
   not a failed collection) — `find_empty_genes` deliberately does not check for this.
+- `definition`/`synonyms`/`xrefs` on an `hpo_terms` row can be empty (`""`/`[]`) when
+  `ontology.jax.org` no longer recognizes that HPO ID (retired/merged term) — treated the same
+  way as an unresolvable MedGen CUI, not an error.
 
 ## Data directories
 

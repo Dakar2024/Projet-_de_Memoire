@@ -12,7 +12,7 @@ les assemble en un document JSON par gène. Elle ne fait **que** cela : la norma
 | **ClinVar** | Variants et leur signification clinique | Fichier bulk FTP (`variant_summary.txt.gz`, ~440 Mo) |
 | **NCBI Gene** | Métadonnées du gène (nom, description, localisation) | E-utilities (esearch + esummary) |
 | **MedGen** | Concepts maladie, MIM, mode d'hérédité, features HPO | E-utilities (esearch + esummary) |
-| **HPO** | Termes phénotypiques associés au gène | Fichier plat public (`genes_to_phenotype.txt`) |
+| **HPO** | Termes phénotypiques associés au gène, enrichis de leur definition/synonyms/xrefs | Fichier plat public (`genes_to_phenotype.txt`) + API `ontology.jax.org/api/hp/terms` (sans clé, par lots) |
 
 Panel : **18 gènes** — cancer du sein héréditaire (12) + drépanocytose et modificateurs (6).
 Voir `src/ingestion/config.py`.
@@ -67,7 +67,7 @@ Contrat de sortie de cette étape — c'est l'entrée de l'étape 2. Chaque docu
 | `gene_info` | `dict` | esummary NCBI Gene brut (nom, description, `maplocation`, `summary`…) |
 | `variants` | `list[dict]` | Lignes ClinVar brutes, **43 colonnes d'origine** |
 | `medgen_concepts` | `list[dict]` | Concepts MedGen, bruts + champs dérivés du `conceptmeta` |
-| `hpo_terms` | `list[dict]` | `{gene_symbol, hpo_id, hpo_name}` |
+| `hpo_terms` | `list[dict]` | `{gene_symbol, hpo_id, hpo_name, definition, synonyms, xrefs}` |
 | `_provenance` | `dict` | Date de collecte (UTC) et versions des sources |
 
 ### Points à connaître avant de consommer cette couche
@@ -87,6 +87,9 @@ Contrat de sortie de cette étape — c'est l'entrée de l'étape 2. Chaque docu
   MedGen (comportement correct et voulu), à traiter comme « concept inconnu ».
 - **`hpo_terms` vide est légitime pour `HBS1L` et `MYB`** (loci GWAS absents des annotations
   HPO, pas des gènes mendéliens) — ce n'est pas une collecte ratée.
+- **`definition`/`synonyms`/`xrefs` peuvent être vides** sur une ligne `hpo_terms` : l'API
+  `ontology.jax.org` ne les fournit pas pour un terme qu'elle ne reconnaît plus (retiré/fusionné
+  côté HPO) — traiter comme un enrichissement manquant, pas une erreur.
 
 ## Structure
 
@@ -98,7 +101,7 @@ src/ingestion/
   clinvar.py       download + filtrage du bulk ClinVar
   ncbi_gene.py     fetch_gene_info
   medgen.py        extraction CUI, fetch concept, parsing conceptmeta
-  hpo.py           download + parsing du fichier HPO genes_to_phenotype
+  hpo.py           download + parsing genes_to_phenotype, enrichissement via l'API HPO
   orchestrate.py   assemblage des 4 sources en un document par gène
 scripts/
   run_collection.py   point d'entrée CLI
