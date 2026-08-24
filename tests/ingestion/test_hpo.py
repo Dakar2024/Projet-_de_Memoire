@@ -26,15 +26,12 @@ def test_parse_genes_to_phenotype_excludes_genes_out_of_scope():
 
 
 @responses.activate
-def test_download_hpo_files_writes_both_files(tmp_path):
-    from ingestion.hpo import download_hpo_files, GENES_TO_PHENOTYPE_URL, PHENOTYPE_HPOA_URL
+def test_download_hpo_files_writes_genes_to_phenotype(tmp_path):
+    from ingestion.hpo import download_hpo_files, GENES_TO_PHENOTYPE_URL
 
     responses.add(responses.GET, GENES_TO_PHENOTYPE_URL, body=b"gene-content", status=200)
-    responses.add(responses.GET, PHENOTYPE_HPOA_URL, body=b"disease-content", status=200)
 
     result = download_hpo_files(tmp_path)
 
-    assert result["genes_to_phenotype"] == tmp_path / "genes_to_phenotype.txt"
-    assert result["phenotype_hpoa"] == tmp_path / "phenotype.hpoa"
+    assert result == {"genes_to_phenotype": tmp_path / "genes_to_phenotype.txt"}
     assert (tmp_path / "genes_to_phenotype.txt").read_bytes() == b"gene-content"
-    assert (tmp_path / "phenotype.hpoa").read_bytes() == b"disease-content"

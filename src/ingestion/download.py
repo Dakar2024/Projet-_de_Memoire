@@ -11,7 +11,7 @@ def download_to_file(url: str, destination: Path, force: bool = False) -> Path:
     """Télécharge `url` vers `destination`, en réutilisant le fichier déjà présent.
 
     Les sources de ce projet sont des fichiers plats volumineux (440 Mo pour le bulk
-    ClinVar, 35 Mo pour `phenotype.hpoa`), d'où deux garanties :
+    ClinVar), d'où deux garanties :
 
     - streaming par blocs, pour ne pas charger le fichier entier en mémoire ;
     - écriture dans un `.part` puis renommage atomique, pour qu'une coupure ne laisse

@@ -1,14 +1,43 @@
 from __future__ import annotations
 
 import json
+import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import polars as pl
 
-from ingestion.medgen import extract_medgen_cuis, parse_medgen_conceptmeta
+from ingestion.medgen import MEDGEN_CUI_PATTERN, parse_medgen_conceptmeta
 
 
-def _enrich_medgen_concept(concept: dict, cui: str) -> dict:
+def _parsed_conceptmeta_fields(concept: dict, cui: str, cache: dict[str, dict | None]) -> dict | None:
+    """Parse le XML `conceptmeta` d'un CUI une seule fois, quel que soit le nombre de gènes
+    qui le référencent (ex. le concept « syndrome sein-ovaire héréditaire » est partagé par
+    BRCA1, BRCA2, PALB2, ATM, CHEK2...) : sans cache, il serait reparsé une fois par gène.
+
+    Renvoie `None` si le concept n'a pas de `conceptmeta`, ou si son XML est mal formé — une
+    collecte complète fait ~1200 appels NCBI et rien n'est écrit avant la toute fin du run
+    (voir http_client.py) ; un concept malformé isolé ne doit pas faire perdre tout ce travail.
+    """
+    if cui in cache:
+        return cache[cui]
+    conceptmeta = concept.get("conceptmeta") if concept else None
+    if not conceptmeta:
+        cache[cui] = None
+        return None
+    try:
+        cache[cui] = parse_medgen_conceptmeta(conceptmeta)
+    except ET.ParseError as exc:
+        print(
+            f"medgen: conceptmeta invalide pour {cui} ({exc}), concept conservé sans "
+            "enrichissement",
+            file=sys.stderr,
+        )
+        cache[cui] = None
+    return cache[cui]
+
+
+def _enrich_medgen_concept(concept: dict, parsed_fields: dict | None, cui: str) -> dict:
     """Ajoute les champs extraits du XML `conceptmeta` sans retirer les données brutes.
 
     Un concept vide signale un CUI que MedGen ne résout pas : on conserve au moins
@@ -16,17 +45,21 @@ def _enrich_medgen_concept(concept: dict, cui: str) -> dict:
     """
     if not concept:
         return {"conceptid": cui}
-    conceptmeta = concept.get("conceptmeta")
-    if not conceptmeta:
+    if parsed_fields is None:
         return dict(concept)
-    return {**concept, **parse_medgen_conceptmeta(conceptmeta)}
+    return {**concept, **parsed_fields}
 
 
 def add_medgen_cuis(df: pl.DataFrame) -> pl.DataFrame:
-    """Ajoute une colonne `medgen_cuis` (liste de CUI) dérivée de PhenotypeIDS."""
+    """Ajoute une colonne `medgen_cuis` (liste de CUI dédupliqués, dans l'ordre d'apparition)
+    dérivée de PhenotypeIDS, par extraction polars vectorisée (pas de callback Python par
+    ligne)."""
     return df.with_columns(
         pl.col("PhenotypeIDS")
-        .map_elements(extract_medgen_cuis, return_dtype=pl.List(pl.Utf8))
+        .fill_null("")
+        .str.extract_all(MEDGEN_CUI_PATTERN.pattern)
+        .list.eval(pl.element().str.replace("MedGen:", ""))
+        .list.unique(maintain_order=True)
         .alias("medgen_cuis")
     )
 
@@ -44,6 +77,7 @@ def build_gene_documents(
     (date de collecte, versions des sources) pour rendre la couche RAW traçable.
     """
     documents: dict[str, dict] = {}
+    parsed_conceptmeta_cache: dict[str, dict | None] = {}
     for gene_symbol in gene_info_by_symbol:
         variant_records = clinvar_variants.filter(
             pl.col("GeneSymbol") == gene_symbol
@@ -60,7 +94,11 @@ def build_gene_documents(
             "gene_info": gene_info_by_symbol.get(gene_symbol, {}),
             "variants": variant_records,
             "medgen_concepts": [
-                _enrich_medgen_concept(medgen_by_cui[cui], cui)
+                _enrich_medgen_concept(
+                    medgen_by_cui[cui],
+                    _parsed_conceptmeta_fields(medgen_by_cui[cui], cui, parsed_conceptmeta_cache),
+                    cui,
+                )
                 for cui in cuis_for_gene
                 if cui in medgen_by_cui
             ],

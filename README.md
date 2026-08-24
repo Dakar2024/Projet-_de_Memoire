@@ -12,7 +12,7 @@ les assemble en un document JSON par gène. Elle ne fait **que** cela : la norma
 | **ClinVar** | Variants et leur signification clinique | Fichier bulk FTP (`variant_summary.txt.gz`, ~440 Mo) |
 | **NCBI Gene** | Métadonnées du gène (nom, description, localisation) | E-utilities (esearch + esummary) |
 | **MedGen** | Concepts maladie, MIM, mode d'hérédité, features HPO | E-utilities (esearch + esummary) |
-| **HPO** | Termes phénotypiques associés au gène | Fichiers plats publics |
+| **HPO** | Termes phénotypiques associés au gène | Fichier plat public (`genes_to_phenotype.txt`) |
 
 Panel : **18 gènes** — cancer du sein héréditaire (12) + drépanocytose et modificateurs (6).
 Voir `src/ingestion/config.py`.
@@ -98,7 +98,7 @@ src/ingestion/
   clinvar.py       download + filtrage du bulk ClinVar
   ncbi_gene.py     fetch_gene_info
   medgen.py        extraction CUI, fetch concept, parsing conceptmeta
-  hpo.py           download + parsing des fichiers HPO
+  hpo.py           download + parsing du fichier HPO genes_to_phenotype
   orchestrate.py   assemblage des 4 sources en un document par gène
 scripts/
   run_collection.py   point d'entrée CLI
