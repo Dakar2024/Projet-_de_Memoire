@@ -5,7 +5,6 @@ from pathlib import Path
 from ingestion.download import download_to_file
 
 GENES_TO_PHENOTYPE_URL = "https://purl.obolibrary.org/obo/hp/hpoa/genes_to_phenotype.txt"
-PHENOTYPE_HPOA_URL = "https://purl.obolibrary.org/obo/hp/hpoa/phenotype.hpoa"
 
 
 def parse_genes_to_phenotype(path: Path, genes: list[str]) -> list[dict]:
@@ -33,12 +32,16 @@ def download_file(url: str, destination: Path, force: bool = False) -> Path:
 
 
 def download_hpo_files(destination_dir: Path, force: bool = False) -> dict[str, Path]:
-    """Télécharge les deux fichiers HPO publics dans `destination_dir`."""
+    """Télécharge les fichiers HPO publics utilisés par la collecte dans `destination_dir`.
+
+    `phenotype.hpoa` (annotations par maladie, ~35 Mo) n'est volontairement pas téléchargé :
+    rien dans ce module ne le consomme, faute d'une jointure disease_id -> gène — l'ajouter
+    reviendrait à payer un téléchargement pour rien. `genes_to_phenotype.txt` porte déjà un
+    `disease_id` par ligne gène/HPO ; une future étape qui voudrait exploiter les fréquences
+    et l'âge d'apparition de `phenotype.hpoa` pourra joindre dessus.
+    """
     return {
         "genes_to_phenotype": download_file(
             GENES_TO_PHENOTYPE_URL, destination_dir / "genes_to_phenotype.txt", force=force
-        ),
-        "phenotype_hpoa": download_file(
-            PHENOTYPE_HPOA_URL, destination_dir / "phenotype.hpoa", force=force
         ),
     }
