@@ -14,7 +14,10 @@ from ingestion.clinvar import CLINVAR_BULK_URL, download_variant_summary, filter
 from ingestion.config import ALL_GENES, DATA_EXTERNAL_DIR, DATA_RAW_DIR
 from ingestion.hpo import (
     GENES_TO_PHENOTYPE_URL,
+    HP_TERMS_URL,
     download_hpo_files,
+    enrich_hpo_rows,
+    fetch_hpo_term_details,
     parse_genes_to_phenotype,
 )
 from ingestion.http_client import NcbiClient
@@ -64,6 +67,8 @@ def run_collection(
 
     hpo_paths = download_hpo_files(DATA_EXTERNAL_DIR, force=refresh)
     hpo_rows = parse_genes_to_phenotype(hpo_paths["genes_to_phenotype"], genes)
+    hpo_term_details = fetch_hpo_term_details([row["hpo_id"] for row in hpo_rows])
+    hpo_rows = enrich_hpo_rows(hpo_rows, hpo_term_details)
     hpo_rows_by_gene: dict[str, list[dict]] = {}
     for row in hpo_rows:
         hpo_rows_by_gene.setdefault(row["gene_symbol"], []).append(row)
@@ -79,6 +84,7 @@ def run_collection(
         "hpo_genes_to_phenotype_mtime": datetime.fromtimestamp(
             hpo_paths["genes_to_phenotype"].stat().st_mtime, timezone.utc
         ).isoformat(),
+        "hpo_terms_api_url": HP_TERMS_URL,
     }
 
     documents = build_gene_documents(

@@ -16,7 +16,13 @@ RETRY_STATUSES = (429, 500, 502, 503, 504)
 MAX_RETRIES = 3
 
 
-def _build_session() -> requests.Session:
+def build_retrying_session() -> requests.Session:
+    """Session `requests` avec retry/backoff sur les erreurs transitoires (429/5xx).
+
+    Partagée par tous les clients HTTP du projet (NCBI E-utilities, API HPO) : une collecte
+    complète fait des centaines d'appels sur plusieurs minutes, un 429/5xx ponctuel ne doit
+    pas faire perdre le travail déjà accompli.
+    """
     session = requests.Session()
     retry = Retry(
         total=MAX_RETRIES,
@@ -65,7 +71,7 @@ class NcbiClient:
         self._email = email
         self._api_key = api_key
         self._rate_limiter = rate_limiter or RateLimiter(0.11 if api_key else 0.34)
-        self._session = session or _build_session()
+        self._session = session or build_retrying_session()
 
     def _params(self, extra: dict) -> dict:
         # NCBI demande `tool` et `email` pour identifier l'appelant : sans eux, un usage

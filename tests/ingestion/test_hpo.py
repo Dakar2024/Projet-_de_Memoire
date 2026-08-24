@@ -35,3 +35,107 @@ def test_download_hpo_files_writes_genes_to_phenotype(tmp_path):
 
     assert result == {"genes_to_phenotype": tmp_path / "genes_to_phenotype.txt"}
     assert (tmp_path / "genes_to_phenotype.txt").read_bytes() == b"gene-content"
+
+
+@responses.activate
+def test_fetch_hpo_term_details_returns_details_keyed_by_id():
+    from ingestion.hpo import HP_TERMS_URL, fetch_hpo_term_details
+
+    responses.add(
+        responses.GET,
+        HP_TERMS_URL,
+        json=[
+            {
+                "id": "HP:0001878",
+                "name": "Hemolytic anemia",
+                "definition": "A type of anemia caused by hemolysis.",
+                "synonyms": ["Haemolytic anaemia"],
+                "xrefs": ["UMLS:C0002878"],
+            }
+        ],
+        status=200,
+    )
+
+    result = fetch_hpo_term_details(["HP:0001878"])
+
+    assert result == {
+        "HP:0001878": {
+            "definition": "A type of anemia caused by hemolysis.",
+            "synonyms": ["Haemolytic anaemia"],
+            "xrefs": ["UMLS:C0002878"],
+        }
+    }
+    assert responses.calls[0].request.params["filter"] == "HP:0001878"
+
+
+@responses.activate
+def test_fetch_hpo_term_details_dedupes_ids_before_querying():
+    from ingestion.hpo import HP_TERMS_URL, fetch_hpo_term_details
+
+    responses.add(responses.GET, HP_TERMS_URL, json=[], status=200)
+
+    fetch_hpo_term_details(["HP:0001878", "HP:0001878"])
+
+    assert len(responses.calls) == 1
+    assert responses.calls[0].request.params["filter"] == "HP:0001878"
+
+
+@responses.activate
+def test_fetch_hpo_term_details_splits_into_batches():
+    from ingestion.hpo import HP_TERMS_BATCH_SIZE, HP_TERMS_URL, fetch_hpo_term_details
+
+    ids = [f"HP:{i:07d}" for i in range(HP_TERMS_BATCH_SIZE + 5)]
+    responses.add(responses.GET, HP_TERMS_URL, json=[], status=200)
+    responses.add(responses.GET, HP_TERMS_URL, json=[], status=200)
+
+    fetch_hpo_term_details(ids)
+
+    assert len(responses.calls) == 2
+    first_batch = responses.calls[0].request.params["filter"].split(",")
+    second_batch = responses.calls[1].request.params["filter"].split(",")
+    assert len(first_batch) == HP_TERMS_BATCH_SIZE
+    assert len(second_batch) == 5
+
+
+def test_fetch_hpo_term_details_makes_no_request_for_empty_list():
+    from ingestion.hpo import fetch_hpo_term_details
+
+    assert fetch_hpo_term_details([]) == {}
+
+
+def test_enrich_hpo_rows_adds_definition_synonyms_xrefs():
+    from ingestion.hpo import enrich_hpo_rows
+
+    rows = [{"gene_symbol": "HBB", "hpo_id": "HP:0001878", "hpo_name": "Hemolytic anemia"}]
+    term_details = {
+        "HP:0001878": {
+            "definition": "A type of anemia caused by hemolysis.",
+            "synonyms": ["Haemolytic anaemia"],
+            "xrefs": ["UMLS:C0002878"],
+        }
+    }
+
+    result = enrich_hpo_rows(rows, term_details)
+
+    assert result == [
+        {
+            "gene_symbol": "HBB",
+            "hpo_id": "HP:0001878",
+            "hpo_name": "Hemolytic anemia",
+            "definition": "A type of anemia caused by hemolysis.",
+            "synonyms": ["Haemolytic anaemia"],
+            "xrefs": ["UMLS:C0002878"],
+        }
+    ]
+
+
+def test_enrich_hpo_rows_defaults_to_empty_when_term_missing():
+    from ingestion.hpo import enrich_hpo_rows
+
+    rows = [{"gene_symbol": "HBS1L", "hpo_id": "HP:9999999", "hpo_name": "Unknown"}]
+
+    result = enrich_hpo_rows(rows, term_details={})
+
+    assert result[0]["definition"] == ""
+    assert result[0]["synonyms"] == []
+    assert result[0]["xrefs"] == []
