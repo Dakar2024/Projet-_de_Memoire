@@ -57,6 +57,13 @@ pytest -q
 Le script `run_collection.py` fait de vrais appels réseau et n'est pas testé automatiquement ;
 sa correction repose sur les fonctions unitaires des modules `src/ingestion/`.
 
+## Lancer la collecte via NiFi (optionnel)
+
+`nifi/` fait tourner `run_collection.py` comme un flow Apache NiFi planifié (cron
+quotidien, routage succès/échec, journalisation) plutôt qu'un lancement manuel — voir
+`nifi/README.md`. NiFi ne fait qu'orchestrer cette étape : la logique de collecte reste
+intégralement dans `src/ingestion/`, inchangée et testée par `pytest` comme ci-dessus.
+
 ## Schéma d'un `data/raw/{GENE}.json`
 
 Contrat de sortie de cette étape — c'est l'entrée de l'étape 2. Chaque document a ces clés :

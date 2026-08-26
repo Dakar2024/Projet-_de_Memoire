@@ -108,3 +108,21 @@ versions).
 `data/external/` (downloaded source files) and `data/raw/` (per-gene output) are gitignored
 except for `.gitkeep`; regenerate their contents by running the collection script rather than
 expecting them to be present in a fresh checkout.
+
+## Orchestration (NiFi) — scoped to stage 1 only
+
+`nifi/` runs `scripts/run_collection.py` as a scheduled Apache NiFi flow instead of a
+manual/cron invocation. NiFi wraps and schedules the existing, pytest-covered pipeline via
+`ExecuteStreamCommand` — it does **not** reimplement the HTTP calls, retries, polars
+filtering, or XML parsing as native NiFi processors; that logic stays in `src/ingestion/`,
+untouched and still under test. See `nifi/README.md` for the flow's composition and what has
+actually been verified (the failure path — missing `NCBI_EMAIL` — end to end; the success
+path deliberately not, for the same reason `run_collection.py` itself isn't network-tested).
+
+**NiFi is deliberately not a pipeline-wide orchestrator.** It is a dataflow/ETL tool (move
+data from point A to point B, with routing/backpressure/provenance) — not a task scheduler
+like Airflow (DAGs of heterogeneous jobs, retries, backfill). Extending it to sequence
+Bronze/Silver/Gold/RAG once those stages exist would misuse the tool for a job it isn't built
+for, and — like the rest of this repo's scope — that decision is deferred, not made here:
+when stage 2 exists, a plain sequential script (or, only if genuinely warranted by scale, a
+real orchestrator) is the more honest fit than repurposing NiFi.
