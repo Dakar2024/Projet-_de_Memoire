@@ -1,0 +1,680 @@
+{
+  "flowContents": {
+    "identifier": "171240b1-9ab9-3e06-818e-a0047dde039e",
+    "instanceIdentifier": "3e5842e3-01a0-1000-61d9-ddbe14a9a88b",
+    "name": "Collecte génomique (étape 1)",
+    "comments": "",
+    "position": {
+      "x": 0.0,
+      "y": 0.0
+    },
+    "processGroups": [],
+    "remoteProcessGroups": [],
+    "processors": [
+      {
+        "identifier": "1ece7edb-6f6d-304b-8323-ac71fbd89ca7",
+        "instanceIdentifier": "3e584475-01a0-1000-45e7-659946c4ee62",
+        "name": "Router selon le code de sortie",
+        "comments": "",
+        "position": {
+          "x": 0.0,
+          "y": 400.0
+        },
+        "type": "org.apache.nifi.processors.standard.RouteOnAttribute",
+        "bundle": {
+          "group": "org.apache.nifi",
+          "artifact": "nifi-standard-nar",
+          "version": "2.6.0"
+        },
+        "properties": {
+          "Routing Strategy": "Route to Property name",
+          "echec": "${execution.status:equals('0'):not()}",
+          "succes": "${execution.status:equals('0')}"
+        },
+        "propertyDescriptors": {
+          "Routing Strategy": {
+            "name": "Routing Strategy",
+            "displayName": "Routing Strategy",
+            "identifiesControllerService": false,
+            "sensitive": false,
+            "dynamic": false
+          },
+          "echec": {
+            "name": "echec",
+            "displayName": "echec",
+            "identifiesControllerService": false,
+            "sensitive": false,
+            "dynamic": true
+          },
+          "succes": {
+            "name": "succes",
+            "displayName": "succes",
+            "identifiesControllerService": false,
+            "sensitive": false,
+            "dynamic": true
+          }
+        },
+        "style": {},
+        "schedulingPeriod": "0 sec",
+        "schedulingStrategy": "TIMER_DRIVEN",
+        "executionNode": "ALL",
+        "penaltyDuration": "30 sec",
+        "yieldDuration": "1 sec",
+        "bulletinLevel": "WARN",
+        "runDurationMillis": 25,
+        "concurrentlySchedulableTaskCount": 1,
+        "autoTerminatedRelationships": [
+          "unmatched"
+        ],
+        "scheduledState": "ENABLED",
+        "retryCount": 10,
+        "retriedRelationships": [],
+        "backoffMechanism": "PENALIZE_FLOWFILE",
+        "maxBackoffPeriod": "10 mins",
+        "componentType": "PROCESSOR",
+        "groupIdentifier": "171240b1-9ab9-3e06-818e-a0047dde039e"
+      },
+      {
+        "identifier": "4a081ea8-83a2-3944-8330-cd987d219c79",
+        "instanceIdentifier": "3e584557-01a0-1000-e53d-2efaf1a99a09",
+        "name": "Log collecte en échec",
+        "comments": "",
+        "position": {
+          "x": 300.0,
+          "y": 600.0
+        },
+        "type": "org.apache.nifi.processors.standard.LogAttribute",
+        "bundle": {
+          "group": "org.apache.nifi",
+          "artifact": "nifi-standard-nar",
+          "version": "2.6.0"
+        },
+        "properties": {
+          "Log prefix": null,
+          "character-set": "UTF-8",
+          "Log FlowFile Properties": "true",
+          "Log Level": "error",
+          "attributes-to-ignore-regex": null,
+          "Attributes to Ignore": null,
+          "Attributes to Log": null,
+          "attributes-to-log-regex": ".*",
+          "Output Format": "Line per Attribute",
+          "Log Payload": "true"
+        },
+        "propertyDescriptors": {
+          "Log prefix": {
+            "name": "Log prefix",
+            "displayName": "Log prefix",
+            "identifiesControllerService": false,
+            "sensitive": false,
+            "dynamic": false
+          },
+          "character-set": {
+            "name": "character-set",
+            "displayName": "Character Set",
+            "identifiesControllerService": false,
+            "sensitive": false,
+            "dynamic": false
+          },
+          "Log FlowFile Properties": {
+            "name": "Log FlowFile Properties",
+            "displayName": "Log FlowFile Properties",
+            "identifiesControllerService": false,
+            "sensitive": false,
+            "dynamic": false
+          },
+          "Log Level": {
+            "name": "Log Level",
+            "displayName": "Log Level",
+            "identifiesControllerService": false,
+            "sensitive": false,
+            "dynamic": false
+          },
+          "attributes-to-ignore-regex": {
+            "name": "attributes-to-ignore-regex",
+            "displayName": "Attributes to Ignore by Regular Expression",
+            "identifiesControllerService": false,
+            "sensitive": false,
+            "dynamic": false
+          },
+          "Attributes to Ignore": {
+            "name": "Attributes to Ignore",
+            "displayName": "Attributes to Ignore",
+            "identifiesControllerService": false,
+            "sensitive": false,
+            "dynamic": false
+          },
+          "Attributes to Log": {
+            "name": "Attributes to Log",
+            "displayName": "Attributes to Log",
+            "identifiesControllerService": false,
+            "sensitive": false,
+            "dynamic": false
+          },
+          "attributes-to-log-regex": {
+            "name": "attributes-to-log-regex",
+            "displayName": "Attributes to Log by Regular Expression",
+            "identifiesControllerService": false,
+            "sensitive": false,
+            "dynamic": false
+          },
+          "Output Format": {
+            "name": "Output Format",
+            "displayName": "Output Format",
+            "identifiesControllerService": false,
+            "sensitive": false,
+            "dynamic": false
+          },
+          "Log Payload": {
+            "name": "Log Payload",
+            "displayName": "Log Payload",
+            "identifiesControllerService": false,
+            "sensitive": false,
+            "dynamic": false
+          }
+        },
+        "style": {},
+        "schedulingPeriod": "0 sec",
+        "schedulingStrategy": "TIMER_DRIVEN",
+        "executionNode": "ALL",
+        "penaltyDuration": "30 sec",
+        "yieldDuration": "1 sec",
+        "bulletinLevel": "WARN",
+        "runDurationMillis": 25,
+        "concurrentlySchedulableTaskCount": 1,
+        "autoTerminatedRelationships": [
+          "success"
+        ],
+        "scheduledState": "ENABLED",
+        "retryCount": 10,
+        "retriedRelationships": [],
+        "backoffMechanism": "PENALIZE_FLOWFILE",
+        "maxBackoffPeriod": "10 mins",
+        "componentType": "PROCESSOR",
+        "groupIdentifier": "171240b1-9ab9-3e06-818e-a0047dde039e"
+      },
+      {
+        "identifier": "f4b08578-ece2-355e-957b-235fbd270f30",
+        "instanceIdentifier": "3e58451e-01a0-1000-1997-9884bdee7d88",
+        "name": "Log collecte réussie",
+        "comments": "",
+        "position": {
+          "x": -300.0,
+          "y": 600.0
+        },
+        "type": "org.apache.nifi.processors.standard.LogAttribute",
+        "bundle": {
+          "group": "org.apache.nifi",
+          "artifact": "nifi-standard-nar",
+          "version": "2.6.0"
+        },
+        "properties": {
+          "Log prefix": null,
+          "character-set": "UTF-8",
+          "Log FlowFile Properties": "true",
+          "Log Level": "info",
+          "attributes-to-ignore-regex": null,
+          "Attributes to Ignore": null,
+          "Attributes to Log": null,
+          "attributes-to-log-regex": ".*",
+          "Output Format": "Line per Attribute",
+          "Log Payload": "false"
+        },
+        "propertyDescriptors": {
+          "Log prefix": {
+            "name": "Log prefix",
+            "displayName": "Log prefix",
+            "identifiesControllerService": false,
+            "sensitive": false,
+            "dynamic": false
+          },
+          "character-set": {
+            "name": "character-set",
+            "displayName": "Character Set",
+            "identifiesControllerService": false,
+            "sensitive": false,
+            "dynamic": false
+          },
+          "Log FlowFile Properties": {
+            "name": "Log FlowFile Properties",
+            "displayName": "Log FlowFile Properties",
+            "identifiesControllerService": false,
+            "sensitive": false,
+            "dynamic": false
+          },
+          "Log Level": {
+            "name": "Log Level",
+            "displayName": "Log Level",
+            "identifiesControllerService": false,
+            "sensitive": false,
+            "dynamic": false
+          },
+          "attributes-to-ignore-regex": {
+            "name": "attributes-to-ignore-regex",
+            "displayName": "Attributes to Ignore by Regular Expression",
+            "identifiesControllerService": false,
+            "sensitive": false,
+            "dynamic": false
+          },
+          "Attributes to Ignore": {
+            "name": "Attributes to Ignore",
+            "displayName": "Attributes to Ignore",
+            "identifiesControllerService": false,
+            "sensitive": false,
+            "dynamic": false
+          },
+          "Attributes to Log": {
+            "name": "Attributes to Log",
+            "displayName": "Attributes to Log",
+            "identifiesControllerService": false,
+            "sensitive": false,
+            "dynamic": false
+          },
+          "attributes-to-log-regex": {
+            "name": "attributes-to-log-regex",
+            "displayName": "Attributes to Log by Regular Expression",
+            "identifiesControllerService": false,
+            "sensitive": false,
+            "dynamic": false
+          },
+          "Output Format": {
+            "name": "Output Format",
+            "displayName": "Output Format",
+            "identifiesControllerService": false,
+            "sensitive": false,
+            "dynamic": false
+          },
+          "Log Payload": {
+            "name": "Log Payload",
+            "displayName": "Log Payload",
+            "identifiesControllerService": false,
+            "sensitive": false,
+            "dynamic": false
+          }
+        },
+        "style": {},
+        "schedulingPeriod": "0 sec",
+        "schedulingStrategy": "TIMER_DRIVEN",
+        "executionNode": "ALL",
+        "penaltyDuration": "30 sec",
+        "yieldDuration": "1 sec",
+        "bulletinLevel": "WARN",
+        "runDurationMillis": 25,
+        "concurrentlySchedulableTaskCount": 1,
+        "autoTerminatedRelationships": [
+          "success"
+        ],
+        "scheduledState": "ENABLED",
+        "retryCount": 10,
+        "retriedRelationships": [],
+        "backoffMechanism": "PENALIZE_FLOWFILE",
+        "maxBackoffPeriod": "10 mins",
+        "componentType": "PROCESSOR",
+        "groupIdentifier": "171240b1-9ab9-3e06-818e-a0047dde039e"
+      },
+      {
+        "identifier": "be4d435d-0a37-3dd2-af7f-9f824ce77961",
+        "instanceIdentifier": "3e584390-01a0-1000-7428-e9d3d92296e8",
+        "name": "Déclencheur quotidien (02h00)",
+        "comments": "",
+        "position": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "type": "org.apache.nifi.processors.standard.GenerateFlowFile",
+        "bundle": {
+          "group": "org.apache.nifi",
+          "artifact": "nifi-standard-nar",
+          "version": "2.6.0"
+        },
+        "properties": {
+          "character-set": "UTF-8",
+          "File Size": "0B",
+          "mime-type": null,
+          "generate-ff-custom-text": null,
+          "Batch Size": "1",
+          "Unique FlowFiles": "false",
+          "Data Format": "Text"
+        },
+        "propertyDescriptors": {
+          "character-set": {
+            "name": "character-set",
+            "displayName": "Character Set",
+            "identifiesControllerService": false,
+            "sensitive": false,
+            "dynamic": false
+          },
+          "File Size": {
+            "name": "File Size",
+            "displayName": "File Size",
+            "identifiesControllerService": false,
+            "sensitive": false,
+            "dynamic": false
+          },
+          "mime-type": {
+            "name": "mime-type",
+            "displayName": "Mime Type",
+            "identifiesControllerService": false,
+            "sensitive": false,
+            "dynamic": false
+          },
+          "generate-ff-custom-text": {
+            "name": "generate-ff-custom-text",
+            "displayName": "Custom Text",
+            "identifiesControllerService": false,
+            "sensitive": false,
+            "dynamic": false
+          },
+          "Batch Size": {
+            "name": "Batch Size",
+            "displayName": "Batch Size",
+            "identifiesControllerService": false,
+            "sensitive": false,
+            "dynamic": false
+          },
+          "Unique FlowFiles": {
+            "name": "Unique FlowFiles",
+            "displayName": "Unique FlowFiles",
+            "identifiesControllerService": false,
+            "sensitive": false,
+            "dynamic": false
+          },
+          "Data Format": {
+            "name": "Data Format",
+            "displayName": "Data Format",
+            "identifiesControllerService": false,
+            "sensitive": false,
+            "dynamic": false
+          }
+        },
+        "style": {},
+        "schedulingPeriod": "0 0 2 * * ?",
+        "schedulingStrategy": "CRON_DRIVEN",
+        "executionNode": "ALL",
+        "penaltyDuration": "30 sec",
+        "yieldDuration": "1 sec",
+        "bulletinLevel": "WARN",
+        "runDurationMillis": 0,
+        "concurrentlySchedulableTaskCount": 1,
+        "autoTerminatedRelationships": [],
+        "scheduledState": "ENABLED",
+        "retryCount": 10,
+        "retriedRelationships": [],
+        "backoffMechanism": "PENALIZE_FLOWFILE",
+        "maxBackoffPeriod": "10 mins",
+        "componentType": "PROCESSOR",
+        "groupIdentifier": "171240b1-9ab9-3e06-818e-a0047dde039e"
+      },
+      {
+        "identifier": "ab813441-5d2f-3d59-a187-dbfe2a6dd549",
+        "instanceIdentifier": "3e584426-01a0-1000-467d-bf0c9707b63b",
+        "name": "Exécuter run_collection.py",
+        "comments": "",
+        "position": {
+          "x": 0.0,
+          "y": 200.0
+        },
+        "type": "org.apache.nifi.processors.standard.ExecuteStreamCommand",
+        "bundle": {
+          "group": "org.apache.nifi",
+          "artifact": "nifi-standard-nar",
+          "version": "2.6.0"
+        },
+        "properties": {
+          "argumentsStrategy": "Command Arguments Property",
+          "Max Attribute Length": "256",
+          "Output MIME Type": null,
+          "Working Directory": "/opt/projet",
+          "Command Path": "/opt/collecte-venv/bin/python3",
+          "Output Destination Attribute": null,
+          "Argument Delimiter": ";",
+          "Ignore STDIN": "false",
+          "Command Arguments": "scripts/run_collection.py"
+        },
+        "propertyDescriptors": {
+          "argumentsStrategy": {
+            "name": "argumentsStrategy",
+            "displayName": "Command Arguments Strategy",
+            "identifiesControllerService": false,
+            "sensitive": false,
+            "dynamic": false
+          },
+          "Max Attribute Length": {
+            "name": "Max Attribute Length",
+            "displayName": "Max Attribute Length",
+            "identifiesControllerService": false,
+            "sensitive": false,
+            "dynamic": false
+          },
+          "Output MIME Type": {
+            "name": "Output MIME Type",
+            "displayName": "Output MIME Type",
+            "identifiesControllerService": false,
+            "sensitive": false,
+            "dynamic": false
+          },
+          "Working Directory": {
+            "name": "Working Directory",
+            "displayName": "Working Directory",
+            "identifiesControllerService": false,
+            "sensitive": false,
+            "dynamic": false
+          },
+          "Command Path": {
+            "name": "Command Path",
+            "displayName": "Command Path",
+            "identifiesControllerService": false,
+            "sensitive": false,
+            "dynamic": false
+          },
+          "Output Destination Attribute": {
+            "name": "Output Destination Attribute",
+            "displayName": "Output Destination Attribute",
+            "identifiesControllerService": false,
+            "sensitive": false,
+            "dynamic": false
+          },
+          "Argument Delimiter": {
+            "name": "Argument Delimiter",
+            "displayName": "Argument Delimiter",
+            "identifiesControllerService": false,
+            "sensitive": false,
+            "dynamic": false
+          },
+          "Ignore STDIN": {
+            "name": "Ignore STDIN",
+            "displayName": "Ignore STDIN",
+            "identifiesControllerService": false,
+            "sensitive": false,
+            "dynamic": false
+          },
+          "Command Arguments": {
+            "name": "Command Arguments",
+            "displayName": "Command Arguments",
+            "identifiesControllerService": false,
+            "sensitive": false,
+            "dynamic": false
+          }
+        },
+        "style": {},
+        "schedulingPeriod": "0 sec",
+        "schedulingStrategy": "TIMER_DRIVEN",
+        "executionNode": "ALL",
+        "penaltyDuration": "30 sec",
+        "yieldDuration": "1 sec",
+        "bulletinLevel": "WARN",
+        "runDurationMillis": 0,
+        "concurrentlySchedulableTaskCount": 1,
+        "autoTerminatedRelationships": [
+          "original"
+        ],
+        "scheduledState": "ENABLED",
+        "retryCount": 10,
+        "retriedRelationships": [],
+        "backoffMechanism": "PENALIZE_FLOWFILE",
+        "maxBackoffPeriod": "10 mins",
+        "componentType": "PROCESSOR",
+        "groupIdentifier": "171240b1-9ab9-3e06-818e-a0047dde039e"
+      }
+    ],
+    "inputPorts": [],
+    "outputPorts": [],
+    "connections": [
+      {
+        "identifier": "07a0a91f-6aac-36b9-aae0-2f3f8ffd3a7b",
+        "instanceIdentifier": "3e5845fb-01a0-1000-28b5-c16c33e6ece4",
+        "source": {
+          "id": "ab813441-5d2f-3d59-a187-dbfe2a6dd549",
+          "type": "PROCESSOR",
+          "groupId": "171240b1-9ab9-3e06-818e-a0047dde039e",
+          "name": "Exécuter run_collection.py",
+          "comments": "",
+          "instanceIdentifier": "3e584426-01a0-1000-467d-bf0c9707b63b"
+        },
+        "destination": {
+          "id": "1ece7edb-6f6d-304b-8323-ac71fbd89ca7",
+          "type": "PROCESSOR",
+          "groupId": "171240b1-9ab9-3e06-818e-a0047dde039e",
+          "name": "Router selon le code de sortie",
+          "comments": "",
+          "instanceIdentifier": "3e584475-01a0-1000-45e7-659946c4ee62"
+        },
+        "labelIndex": 1,
+        "zIndex": 0,
+        "selectedRelationships": [
+          "output stream",
+          "nonzero status"
+        ],
+        "backPressureObjectThreshold": 10000,
+        "backPressureDataSizeThreshold": "1 GB",
+        "flowFileExpiration": "0 sec",
+        "prioritizers": [],
+        "bends": [],
+        "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+        "loadBalanceCompression": "DO_NOT_COMPRESS",
+        "componentType": "CONNECTION",
+        "groupIdentifier": "171240b1-9ab9-3e06-818e-a0047dde039e"
+      },
+      {
+        "identifier": "c40d5145-a634-3f6f-8cff-a386c699d596",
+        "instanceIdentifier": "3e584598-01a0-1000-b7c2-93961c178335",
+        "source": {
+          "id": "be4d435d-0a37-3dd2-af7f-9f824ce77961",
+          "type": "PROCESSOR",
+          "groupId": "171240b1-9ab9-3e06-818e-a0047dde039e",
+          "name": "Déclencheur quotidien (02h00)",
+          "comments": "",
+          "instanceIdentifier": "3e584390-01a0-1000-7428-e9d3d92296e8"
+        },
+        "destination": {
+          "id": "ab813441-5d2f-3d59-a187-dbfe2a6dd549",
+          "type": "PROCESSOR",
+          "groupId": "171240b1-9ab9-3e06-818e-a0047dde039e",
+          "name": "Exécuter run_collection.py",
+          "comments": "",
+          "instanceIdentifier": "3e584426-01a0-1000-467d-bf0c9707b63b"
+        },
+        "labelIndex": 1,
+        "zIndex": 0,
+        "selectedRelationships": [
+          "success"
+        ],
+        "backPressureObjectThreshold": 10000,
+        "backPressureDataSizeThreshold": "1 GB",
+        "flowFileExpiration": "0 sec",
+        "prioritizers": [],
+        "bends": [],
+        "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+        "loadBalanceCompression": "DO_NOT_COMPRESS",
+        "componentType": "CONNECTION",
+        "groupIdentifier": "171240b1-9ab9-3e06-818e-a0047dde039e"
+      },
+      {
+        "identifier": "5da6f1f9-e6c7-3072-9c53-c3ca92a83bff",
+        "instanceIdentifier": "3e584672-01a0-1000-3792-aaf75ba2d8dc",
+        "source": {
+          "id": "1ece7edb-6f6d-304b-8323-ac71fbd89ca7",
+          "type": "PROCESSOR",
+          "groupId": "171240b1-9ab9-3e06-818e-a0047dde039e",
+          "name": "Router selon le code de sortie",
+          "comments": "",
+          "instanceIdentifier": "3e584475-01a0-1000-45e7-659946c4ee62"
+        },
+        "destination": {
+          "id": "4a081ea8-83a2-3944-8330-cd987d219c79",
+          "type": "PROCESSOR",
+          "groupId": "171240b1-9ab9-3e06-818e-a0047dde039e",
+          "name": "Log collecte en échec",
+          "comments": "",
+          "instanceIdentifier": "3e584557-01a0-1000-e53d-2efaf1a99a09"
+        },
+        "labelIndex": 1,
+        "zIndex": 0,
+        "selectedRelationships": [
+          "echec"
+        ],
+        "backPressureObjectThreshold": 10000,
+        "backPressureDataSizeThreshold": "1 GB",
+        "flowFileExpiration": "0 sec",
+        "prioritizers": [],
+        "bends": [],
+        "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+        "loadBalanceCompression": "DO_NOT_COMPRESS",
+        "componentType": "CONNECTION",
+        "groupIdentifier": "171240b1-9ab9-3e06-818e-a0047dde039e"
+      },
+      {
+        "identifier": "96925155-d7fc-306b-8a41-49116e93c93a",
+        "instanceIdentifier": "3e584636-01a0-1000-06ae-30eeea1b7b16",
+        "source": {
+          "id": "1ece7edb-6f6d-304b-8323-ac71fbd89ca7",
+          "type": "PROCESSOR",
+          "groupId": "171240b1-9ab9-3e06-818e-a0047dde039e",
+          "name": "Router selon le code de sortie",
+          "comments": "",
+          "instanceIdentifier": "3e584475-01a0-1000-45e7-659946c4ee62"
+        },
+        "destination": {
+          "id": "f4b08578-ece2-355e-957b-235fbd270f30",
+          "type": "PROCESSOR",
+          "groupId": "171240b1-9ab9-3e06-818e-a0047dde039e",
+          "name": "Log collecte réussie",
+          "comments": "",
+          "instanceIdentifier": "3e58451e-01a0-1000-1997-9884bdee7d88"
+        },
+        "labelIndex": 1,
+        "zIndex": 0,
+        "selectedRelationships": [
+          "succes"
+        ],
+        "backPressureObjectThreshold": 10000,
+        "backPressureDataSizeThreshold": "1 GB",
+        "flowFileExpiration": "0 sec",
+        "prioritizers": [],
+        "bends": [],
+        "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+        "loadBalanceCompression": "DO_NOT_COMPRESS",
+        "componentType": "CONNECTION",
+        "groupIdentifier": "171240b1-9ab9-3e06-818e-a0047dde039e"
+      }
+    ],
+    "labels": [],
+    "funnels": [],
+    "controllerServices": [],
+    "defaultFlowFileExpiration": "0 sec",
+    "defaultBackPressureObjectThreshold": 10000,
+    "defaultBackPressureDataSizeThreshold": "1 GB",
+    "scheduledState": "ENABLED",
+    "executionEngine": "INHERITED",
+    "maxConcurrentTasks": 1,
+    "statelessFlowTimeout": "1 min",
+    "flowFileConcurrency": "UNBOUNDED",
+    "flowFileOutboundPolicy": "STREAM_WHEN_AVAILABLE",
+    "componentType": "PROCESS_GROUP"
+  },
+  "externalControllerServices": {},
+  "parameterContexts": {},
+  "flowEncodingVersion": "1.0",
+  "parameterProviders": {},
+  "latest": false
+}
