@@ -65,7 +65,7 @@
 
 - [ ] **Step 1: Écrire les tests qui échouent**
 
-Ajouter à la fin de `tests/ingestion/test_config.py` :
+Ajouter à `tests/ingestion/test_config.py` — **les `import` vont dans le bloc d'imports en tête de fichier, pas au milieu (E402) ; seules les fonctions de test vont à la fin** :
 
 ```python
 from pathlib import Path
@@ -542,7 +542,7 @@ Expected: PASS, 13 tests
 
 - [ ] **Step 5: Ajouter le test d'intégration contre un vrai MinIO**
 
-Ajouter à la fin de `tests/ingestion/test_storage.py` :
+Ajouter à `tests/ingestion/test_storage.py` — imports en tête de fichier, test à la fin :
 
 ```python
 @pytest.mark.integration
@@ -593,7 +593,7 @@ git commit -m "feat: add object-storage layer with manifest and _SUCCESS markers
 
 - [ ] **Step 1: Écrire les tests qui échouent**
 
-Ajouter à `tests/ingestion/test_download.py` :
+Ajouter à `tests/ingestion/test_download.py` — **les `import` vont dans le bloc d'imports en tête de fichier, pas au milieu (E402) ; seules les fonctions de test vont à la fin** :
 
 ```python
 from ingestion.download import IncompleteDownloadError
@@ -712,7 +712,7 @@ git commit -m "feat: verify Content-Length to reject truncated downloads"
 
 - [ ] **Step 1: Écrire les tests qui échouent**
 
-Ajouter à `tests/ingestion/test_clinvar.py` :
+Ajouter à `tests/ingestion/test_clinvar.py` — **les `import` vont dans le bloc d'imports en tête de fichier, pas au milieu (E402) ; seules les fonctions de test vont à la fin** :
 
 ```python
 from ingestion.clinvar import archive_url_for, archive_version_for
@@ -732,7 +732,7 @@ def test_archive_version_for_is_the_year_month():
     assert archive_version_for("2026-12-31") == "2026-12"
 ```
 
-Ajouter à `tests/ingestion/test_hpo.py` :
+Ajouter à `tests/ingestion/test_hpo.py` — **les `import` vont dans le bloc d'imports en tête de fichier, pas au milieu (E402) ; seules les fonctions de test vont à la fin** :
 
 ```python
 import responses
