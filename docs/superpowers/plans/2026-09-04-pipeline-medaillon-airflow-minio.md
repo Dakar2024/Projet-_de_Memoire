@@ -132,7 +132,7 @@ Dans `requirements.txt`, remplacer la ligne `polars==1.43.0` (version **retirée
 requests==2.34.2
 polars==1.44.1
 python-dotenv==1.2.2
-boto3==1.41.9
+boto3==1.41.5
 ```
 
 Dans `pytest.ini`, déclarer le marqueur et exclure l'intégration par défaut :
@@ -2397,7 +2397,7 @@ RUN python -m venv /opt/ingestion-venv \
     && /opt/ingestion-venv/bin/pip install --no-cache-dir -r /tmp/requirements.txt
 
 # boto3 côté Airflow : les tâches écrivent dans MinIO depuis le processus worker.
-RUN pip install --no-cache-dir boto3==1.41.9
+RUN pip install --no-cache-dir boto3==1.41.5
 ```
 
 - [ ] **Step 2: Écrire le script de création des buckets**
