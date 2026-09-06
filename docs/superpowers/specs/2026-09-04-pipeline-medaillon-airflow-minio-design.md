@@ -39,7 +39,8 @@ objet**, ordonnancée par Airflow. Elle ne réécrit pas la logique de collecte.
 ### 2.1 NiFi est retiré
 
 NiFi apportait le déclenchement planifié, le routage succès/échec et la journalisation —
-un **sous-ensemble strict** de ce qu'Airflow fournit, pour un coût de 2 à 4 Go de RAM.
+un **sous-ensemble strict** de ce qu'Airflow fournit, pour un coût mesuré de **1,37 Gio de RAM
+au repos avec un flow vide** (image de 2,25 Go, démarrage en 61,6 s).
 
 Le profil des sources ne justifie pas un outil de dataflow : deux fichiers plats publiés
 mensuellement et des appels REST séquentiels. Aucun flux continu, aucune backpressure,
