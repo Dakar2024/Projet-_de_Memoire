@@ -2545,8 +2545,9 @@ composant actif. L'orchestration est assurée par Airflow (`dags/`), voir
 
 Raison de l'arbitrage : les apports de NiFi ici (déclenchement planifié, routage
 succès/échec, journalisation) sont un sous-ensemble strict de ceux d'Airflow, lequel est
-requis de toute façon pour Bronze/Silver/Gold — pour un coût de 2 à 4 Go de RAM sur un VPS
-qui doit aussi loger Airflow, PostgreSQL et MinIO. Le profil des sources (deux fichiers
+requis de toute façon pour Bronze/Silver/Gold — pour un coût mesuré de 1,37 Gio de RAM au
+repos avec un flow vide (image de 2,25 Go, démarrage en 61,6 s), sur un VPS qui doit aussi
+loger Airflow, PostgreSQL et MinIO. Chiffres et protocole : `docs/choix_contexte.md`. Le profil des sources (deux fichiers
 plats mensuels, appels REST séquentiels) ne présente ni flux, ni backpressure, ni routage.
 ```
 
