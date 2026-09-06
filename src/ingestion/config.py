@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 EUTILS_BASE_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
@@ -12,6 +13,24 @@ TOOL_NAME = "rag-genomique-ingestion"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_EXTERNAL_DIR = PROJECT_ROOT / "data" / "external"
 DATA_RAW_DIR = PROJECT_ROOT / "data" / "raw"
+
+# Couches du médaillon. Sur MinIO, chaque couche est un bucket ; en local, un
+# sous-dossier de DEFAULT_LAKE_DIR.
+BRONZE = "bronze"
+SILVER = "silver"
+GOLD = "gold"
+
+DEFAULT_LAKE_DIR = PROJECT_ROOT / "data" / "lake"
+
+
+def current_lake_uri() -> str:
+    """Racine du lac, lue à l'appel (et non à l'import) pour rester testable.
+
+    `file://<chemin>` en local et dans les tests, `s3://` quand les couches sont
+    des buckets MinIO. Le défaut local garantit que la suite de tests tourne sans
+    conteneur ni réseau.
+    """
+    return os.environ.get("LAKE_URI") or f"file://{DEFAULT_LAKE_DIR}"
 
 # Panel germinal complet cancer du sein (haute + modérée pénétrance) — genes_cancer_sein.md
 BREAST_CANCER_GENES = [

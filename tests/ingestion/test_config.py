@@ -27,3 +27,25 @@ def test_all_genes_has_no_duplicates():
 
 def test_eutils_base_url_is_https():
     assert EUTILS_BASE_URL == "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
+
+
+from pathlib import Path
+
+from ingestion.config import BRONZE, GOLD, SILVER, current_lake_uri
+
+
+def test_current_lake_uri_defaults_to_local_data_lake(monkeypatch):
+    monkeypatch.delenv("LAKE_URI", raising=False)
+    uri = current_lake_uri()
+    assert uri.startswith("file://")
+    assert uri.endswith("/data/lake")
+    assert Path(uri[len("file://"):]).is_absolute()
+
+
+def test_current_lake_uri_reads_environment(monkeypatch):
+    monkeypatch.setenv("LAKE_URI", "s3://")
+    assert current_lake_uri() == "s3://"
+
+
+def test_layer_names_are_the_three_medallion_buckets():
+    assert (BRONZE, SILVER, GOLD) == ("bronze", "silver", "gold")
