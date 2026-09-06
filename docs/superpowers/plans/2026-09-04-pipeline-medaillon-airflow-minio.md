@@ -139,7 +139,8 @@ Dans `pytest.ini`, déclarer le marqueur et exclure l'intégration par défaut :
 
 ```ini
 [pytest]
-pythonpath = src
+# `.` en plus de `src` : les tests de DAG importent `dags.*`, qui vit à la racine.
+pythonpath = src .
 testpaths = tests
 markers =
     integration: nécessite un MinIO joignable (exclu de la passe rapide)
@@ -174,6 +175,7 @@ git commit -m "feat: add lake URI configuration and medallion layer names"
   - `put_bytes(uri: str, data: bytes, client=None) -> None`
   - `put_file(uri: str, local_path: Path, client=None) -> None`
   - `get_bytes(uri: str, client=None) -> bytes`
+  - `open_stream(uri: str, client=None) -> IO[bytes]`
   - `exists(uri: str, client=None) -> bool`
   - `build_manifest(source: str, logical_date: str, source_url: str, source_version: str, files: dict[str, int], record_count: int, panel: str | None = None) -> dict`
   - `finalize_partition(partition: str, manifest: dict, client=None) -> None`
@@ -184,6 +186,7 @@ git commit -m "feat: add lake URI configuration and medallion layer names"
 Créer `tests/ingestion/test_storage.py` :
 
 ```python
+import io
 import json
 
 import pytest
@@ -194,6 +197,7 @@ from ingestion.storage import (
     finalize_partition,
     get_bytes,
     layer_uri,
+    open_stream,
     partition_is_complete,
     partition_uri,
     put_bytes,
@@ -219,6 +223,7 @@ class FakeS3:
             raise FileNotFoundError(Key)
         return {"Body": _Body(self.objects[(Bucket, Key)])}
 
+
     def head_object(self, Bucket, Key):
         if (Bucket, Key) not in self.objects:
             raise FileNotFoundError(Key)
@@ -226,8 +231,20 @@ class FakeS3:
 
 
 class _Body:
-    def __init__(self, data): self._data = data
-    def read(self): return self._data
+    """Imite `StreamingBody` de boto3 : lecture par tranches et context manager."""
+
+    def __init__(self, data):
+        self._buffer = io.BytesIO(data)
+
+    def read(self, size=-1):
+        return self._buffer.read(size)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self._buffer.close()
+        return False
 
 
 def test_layer_uri_joins_a_local_directory():
@@ -276,6 +293,26 @@ def test_put_file_streams_from_disk(tmp_path):
 
 def test_exists_is_false_for_missing_object(tmp_path):
     assert exists(f"file://{tmp_path}/absent.txt") is False
+
+
+def test_open_stream_reads_without_materialising_the_whole_object(tmp_path):
+    """Le bulk ClinVar fait 442 Mo compressés (~4 Go décompressés) : les
+    consommateurs doivent pouvoir le parcourir sans le charger en mémoire."""
+    uri = f"file://{tmp_path}/bronze/clinvar/dt=2026-09-01/data.bin"
+    put_bytes(uri, b"premier|second")
+
+    with open_stream(uri) as stream:
+        assert stream.read(7) == b"premier"
+        assert stream.read() == b"|second"
+
+
+def test_open_stream_reads_from_s3():
+    client = FakeS3()
+    uri = "s3://bronze/clinvar/dt=2026-09-01/data.bin"
+    put_bytes(uri, b"flux s3", client=client)
+
+    with open_stream(uri, client=client) as stream:
+        assert stream.read() == b"flux s3"
 
 
 def test_build_manifest_records_source_version_and_sizes():
@@ -432,6 +469,18 @@ def get_bytes(uri: str, client=None) -> bytes:
     return _local_path(uri).read_bytes()
 
 
+def open_stream(uri: str, client=None):
+    """Ouvre un objet en lecture binaire, sans le matérialiser en mémoire.
+
+    Nécessaire pour le bulk ClinVar : 442 Mo compressés, ~4 Go décompressés, à
+    parcourir sur un worker qui ne dispose que de quelques Go.
+    """
+    if uri.startswith(S3_SCHEME):
+        bucket, key = _split_s3(uri)
+        return (client or _s3_client()).get_object(Bucket=bucket, Key=key)["Body"]
+    return open(_local_path(uri), "rb")
+
+
 def exists(uri: str, client=None) -> bool:
     if uri.startswith(S3_SCHEME):
         bucket, key = _split_s3(uri)
@@ -489,7 +538,7 @@ def partition_is_complete(partition: str, client=None) -> bool:
 - [ ] **Step 4: Lancer les tests pour vérifier qu'ils passent**
 
 Run: `venv/bin/pytest tests/ingestion/test_storage.py -q`
-Expected: PASS, 11 tests
+Expected: PASS, 13 tests
 
 - [ ] **Step 5: Ajouter le test d'intégration contre un vrai MinIO**
 
@@ -516,12 +565,12 @@ def test_storage_round_trip_against_a_real_minio():
 ```
 
 Run: `venv/bin/pytest tests/ingestion/test_storage.py -q`
-Expected: PASS, 11 tests — le test d'intégration est **désélectionné**, pas exécuté
+Expected: PASS, 13 tests — le test d'intégration est **désélectionné**, pas exécuté
 
 - [ ] **Step 6: Vérifier la suite complète**
 
 Run: `venv/bin/pytest -q`
-Expected: PASS, 77 tests
+Expected: PASS, 79 tests
 
 - [ ] **Step 7: Commit**
 
@@ -1114,7 +1163,7 @@ if __name__ == "__main__":
 - [ ] **Step 6: Vérifier la suite complète**
 
 Run: `venv/bin/pytest -q`
-Expected: PASS, 89 tests
+Expected: PASS, 91 tests
 
 - [ ] **Step 7: Commit**
 
@@ -1407,7 +1456,7 @@ if __name__ == "__main__":
 - [ ] **Step 7: Vérifier la suite complète**
 
 Run: `venv/bin/pytest -q`
-Expected: PASS, 94 tests
+Expected: PASS, 96 tests
 
 - [ ] **Step 8: Commit**
 
@@ -1548,7 +1597,7 @@ from ingestion.medgen import extract_medgen_cuis, fetch_medgen_concept
 from ingestion.storage import (
     build_manifest,
     finalize_partition,
-    get_bytes,
+    open_stream,
     partition_uri,
     put_bytes,
 )
@@ -1567,19 +1616,25 @@ def cuis_from_bronze_clinvar(
     `PhenotypeIDS`. Cette lecture pilote les appels d'API et ne persiste rien —
     le flux reste unidirectionnel.
 
-    Le bulk est parcouru en flux : à 442 Mo il ne doit pas être matérialisé.
+    Le bulk est parcouru en flux : 442 Mo compressés, ~4 Go décompressés. Le
+    décompresser en mémoire épuiserait la marge du worker, d'où la chaîne
+    `open_stream` -> `GzipFile` -> `TextIOWrapper` -> `DictReader`, qui ne tient
+    qu'une ligne à la fois.
     """
     genes_set = set(genes)
-    raw = gzip.decompress(get_bytes(f"{clinvar_partition}/{BULK_OBJECT}", client=client))
-    reader = csv.DictReader(io.StringIO(raw.decode("utf-8")), delimiter="\t")
-
     cuis: list[str] = []
-    for row in reader:
-        if row.get("GeneSymbol") not in genes_set:
-            continue
-        for cui in extract_medgen_cuis(row.get("PhenotypeIDS") or ""):
-            if cui not in cuis:
-                cuis.append(cui)
+
+    with open_stream(f"{clinvar_partition}/{BULK_OBJECT}", client=client) as raw:
+        with gzip.GzipFile(fileobj=raw, mode="rb") as decompressed:
+            reader = csv.DictReader(
+                io.TextIOWrapper(decompressed, encoding="utf-8"), delimiter="\t"
+            )
+            for row in reader:
+                if row.get("GeneSymbol") not in genes_set:
+                    continue
+                for cui in extract_medgen_cuis(row.get("PhenotypeIDS") or ""):
+                    if cui not in cuis:
+                        cuis.append(cui)
     return cuis
 
 
@@ -1719,7 +1774,7 @@ if __name__ == "__main__":
 - [ ] **Step 6: Vérifier la suite complète**
 
 Run: `venv/bin/pytest -q`
-Expected: PASS, 98 tests
+Expected: PASS, 100 tests
 
 - [ ] **Step 7: Commit**
 
@@ -2034,7 +2089,7 @@ Expected: PASS, 6 tests
 - [ ] **Step 6: Vérifier la suite complète**
 
 Run: `venv/bin/pytest -q`
-Expected: PASS, 106 tests
+Expected: PASS, 108 tests
 
 - [ ] **Step 7: Commit**
 
@@ -2228,9 +2283,23 @@ def build_panel_dag(panel: str, genes: list[str]) -> DAG:
             return ingest_medgen(context["ds"], panel, genes, client_or_fail())
 
         @task(task_id="check_bronze")
-        def task_check_bronze(*partitions: str) -> None:
-            """Bloque la propagation vers Silver si une partition est incomplète."""
-            for partition in partitions:
+        def task_check_bronze(
+            ncbi_gene_partition: str,
+            refseq_partition: str,
+            hpo_terms_partition: str,
+            medgen_partition: str,
+        ) -> None:
+            """Bloque la propagation vers Silver si une partition est incomplète.
+
+            Paramètres nommés plutôt que varargs : même forme que
+            `check_bronze_shared` du DAG d'acquisition, et dépendances explicites.
+            """
+            for partition in (
+                ncbi_gene_partition,
+                refseq_partition,
+                hpo_terms_partition,
+                medgen_partition,
+            ):
                 if not partition_is_complete(partition):
                     raise ValueError(f"partition Bronze incomplète : {partition}")
 
@@ -2281,7 +2350,7 @@ Expected: PASS, 8 tests
 - [ ] **Step 5: Vérifier la suite complète**
 
 Run: `venv/bin/pytest -q`
-Expected: PASS, 114 tests
+Expected: PASS, 116 tests
 
 - [ ] **Step 6: Commit**
 
@@ -2578,7 +2647,7 @@ git commit -m "feat: add Airflow 3 + MinIO docker compose stack with memory limi
 - [ ] **Suite de tests complète et rapide**
 
 Run: `venv/bin/pytest -q`
-Expected: PASS, 114 tests, en moins de 3 secondes, sans réseau ni conteneur
+Expected: PASS, 116 tests, en moins de 3 secondes, sans réseau ni conteneur
 
 - [ ] **Aucune régression sur le chemin autonome**
 
