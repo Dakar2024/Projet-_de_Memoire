@@ -7,7 +7,13 @@ import requests
 CHUNK_SIZE = 8192
 
 
-def download_to_file(url: str, destination: Path, force: bool = False) -> Path:
+class IncompleteDownloadError(RuntimeError):
+    """Le nombre d'octets reçus ne correspond pas au `Content-Length` annoncé."""
+
+
+def download_to_file(
+    url: str, destination: Path, force: bool = False, verify_size: bool = True
+) -> Path:
     """Télécharge `url` vers `destination`, en réutilisant le fichier déjà présent.
 
     Les sources de ce projet sont des fichiers plats volumineux (440 Mo pour le bulk
@@ -16,6 +22,9 @@ def download_to_file(url: str, destination: Path, force: bool = False) -> Path:
     - streaming par blocs, pour ne pas charger le fichier entier en mémoire ;
     - écriture dans un `.part` puis renommage atomique, pour qu'une coupure ne laisse
       jamais un fichier partiel que le skip-si-présent réutiliserait comme complet.
+
+    La taille reçue est comparée au `Content-Length` annoncé quand il est présent :
+    une réponse tronquée est rejetée au lieu d'être promue en fichier complet.
 
     `force=True` retélécharge ; en cas d'échec le fichier précédent reste intact.
     """
@@ -27,9 +36,19 @@ def download_to_file(url: str, destination: Path, force: bool = False) -> Path:
     try:
         with requests.get(url, stream=True, timeout=60) as response:
             response.raise_for_status()
+            # Désactiver la vérification automatique de Content-Length par urllib3
+            # pour pouvoir faire notre propre contrôle d'intégrité
+            response.raw.enforce_content_length = False
+            expected = response.headers.get("Content-Length")
+            written = 0
             with open(partial, "wb") as fh:
                 for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
                     fh.write(chunk)
+                    written += len(chunk)
+        if verify_size and expected is not None and written != int(expected):
+            raise IncompleteDownloadError(
+                f"{url} : {written} octets reçus pour {expected} annoncés"
+            )
         partial.replace(destination)
     except BaseException:
         partial.unlink(missing_ok=True)
