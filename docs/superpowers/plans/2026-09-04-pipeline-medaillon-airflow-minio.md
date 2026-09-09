@@ -789,7 +789,7 @@ Expected: FAIL avec `ImportError: cannot import name 'archive_url_for'`
 
 - [ ] **Step 3: Implémenter dans `src/ingestion/clinvar.py`**
 
-Ajouter après `CLINVAR_BULK_URL` :
+Ajouter `import re` au bloc d'imports en tête de fichier, puis après `CLINVAR_BULK_URL` :
 
 ```python
 # Archives mensuelles immuables. Le fichier « latest » est rafraîchi plus souvent
@@ -801,8 +801,18 @@ CLINVAR_ARCHIVE_URL_TEMPLATE = (
 )
 
 
+# La date logique vient d'Airflow, mais `archive_version_for` est aussi appelable
+# depuis la ligne de commande : une entrée malformée produirait sinon une version
+# syntaxiquement valide mais fausse, donc une URL silencieusement erronée.
+LOGICAL_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
 def archive_version_for(logical_date: str) -> str:
-    """Version d'archive ClinVar correspondant à une date logique (`YYYY-MM`)."""
+    """Version d'archive ClinVar (`YYYY-MM`) correspondant à une date logique `YYYY-MM-DD`."""
+    if not LOGICAL_DATE_PATTERN.match(logical_date or ""):
+        raise ValueError(
+            f"date logique invalide : {logical_date!r} — format attendu YYYY-MM-DD"
+        )
     return logical_date[:7]
 
 
@@ -833,11 +843,26 @@ def release_url_for(release_tag: str) -> str:
     return HPO_RELEASE_URL_TEMPLATE.format(release_tag=release_tag)
 
 
+class ReleaseTagResolutionError(RuntimeError):
+    """GitHub n'a pas renvoyé la redirection attendue vers la release courante."""
+
+
 def resolve_release_tag(session: requests.Session | None = None) -> str:
-    """Résout le tag de la release HPO courante via la redirection de `/releases/latest`."""
+    """Résout le tag de la release HPO courante via la redirection de `/releases/latest`.
+
+    Les 429 et 5xx sont déjà retentés par `build_retrying_session`. Le cas non couvert
+    est un statut non retenté sans redirection — GitHub renvoyant une page HTML, ou un
+    404 après un changement d'URL : lire `headers["Location"]` lèverait alors un
+    `KeyError` nu, illisible en tête d'un run mensuel.
+    """
     session = session or build_retrying_session()
     response = session.get(HPO_LATEST_RELEASE_URL, allow_redirects=False, timeout=30)
-    location = response.headers["Location"]
+    location = response.headers.get("Location")
+    if not location:
+        raise ReleaseTagResolutionError(
+            f"{HPO_LATEST_RELEASE_URL} : réponse HTTP {response.status_code} sans en-tête "
+            "Location — GitHub indisponible, en limitation de débit, ou format changé."
+        )
     return location.rstrip("/").rsplit("/", 1)[-1]
 ```
 
