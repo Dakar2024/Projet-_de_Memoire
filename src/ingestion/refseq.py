@@ -15,9 +15,14 @@ REFSEQ_SEARCH_TEMPLATE = (
 def fetch_transcripts(client: NcbiClient, gene_symbol: str) -> list[dict]:
     """Récupère les transcrits RefSeq d'un gène (esearch nuccore puis esummary).
 
-    Un gène sans transcrit RefSeq renvoie une liste vide plutôt qu'une erreur :
-    c'est le cas légitime des loci GWAS du panel (HBS1L, MYB), traité comme
-    l'absence de terme HPO ou de CUI MedGen résolvable.
+    Un symbole que nuccore ne résout pas renvoie une liste vide plutôt qu'une
+    erreur, comme l'absence de CUI MedGen résolvable ailleurs dans ce dépôt : le
+    verdict de complétude appartient à `check_bronze`, pas à l'ingestion.
+
+    Coût : un `esummary` par UID, soit ~6 à 8 appels par gène et ~120 sur le panel
+    de 18 — plus lourd que `ncbi_gene.py`, qui n'en fait qu'un par gène. Le batching
+    de `esummary` est reporté à l'étape de durcissement, comme pour les autres
+    sources.
     """
     uids = client.esearch(
         db="nuccore", term=REFSEQ_SEARCH_TEMPLATE.format(gene=gene_symbol)
