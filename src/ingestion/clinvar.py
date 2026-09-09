@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import polars as pl
@@ -19,8 +20,18 @@ CLINVAR_ARCHIVE_URL_TEMPLATE = (
 )
 
 
+# La date logique vient d'Airflow, mais `archive_version_for` est aussi appelable
+# depuis la ligne de commande : une entrée malformée produirait sinon une version
+# syntaxiquement valide mais fausse, donc une URL silencieusement erronée.
+LOGICAL_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
 def archive_version_for(logical_date: str) -> str:
-    """Version d'archive ClinVar correspondant à une date logique (`YYYY-MM`)."""
+    """Version d'archive ClinVar (`YYYY-MM`) correspondant à une date logique `YYYY-MM-DD`."""
+    if not LOGICAL_DATE_PATTERN.match(logical_date or ""):
+        raise ValueError(
+            f"date logique invalide : {logical_date!r} — format attendu YYYY-MM-DD"
+        )
     return logical_date[:7]
 
 

@@ -1,8 +1,9 @@
 from pathlib import Path
 
+import pytest
 import responses
 
-from ingestion.hpo import release_url_for, resolve_release_tag
+from ingestion.hpo import ReleaseTagResolutionError, release_url_for, resolve_release_tag
 
 FIXTURE = Path(__file__).parent.parent / "fixtures" / "genes_to_phenotype_sample.txt"
 
@@ -162,3 +163,17 @@ def test_resolve_release_tag_reads_the_redirect_from_latest():
         },
     )
     assert resolve_release_tag() == "v2026-09-01"
+
+
+@responses.activate
+def test_resolve_release_tag_reports_a_response_without_a_location_header():
+    """429 et 5xx sont déjà retentés par la session : le trou réel est un statut non
+    retenté sans redirection, comme une page HTML servie à la place du 302."""
+    responses.add(
+        responses.GET,
+        "https://github.com/obophenotype/human-phenotype-ontology/releases/latest",
+        status=200,
+        body="<html>page GitHub</html>",
+    )
+    with pytest.raises(ReleaseTagResolutionError, match="sans en-tête Location"):
+        resolve_release_tag()

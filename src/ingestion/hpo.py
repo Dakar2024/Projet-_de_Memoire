@@ -30,16 +30,31 @@ HP_TERMS_URL = "https://ontology.jax.org/api/hp/terms"
 HP_TERMS_BATCH_SIZE = 20
 
 
+class ReleaseTagResolutionError(RuntimeError):
+    """GitHub n'a pas renvoyé la redirection attendue vers la release courante."""
+
+
 def release_url_for(release_tag: str) -> str:
     """URL de téléchargement de `genes_to_phenotype.txt` pour un tag de release."""
     return HPO_RELEASE_URL_TEMPLATE.format(release_tag=release_tag)
 
 
 def resolve_release_tag(session: requests.Session | None = None) -> str:
-    """Résout le tag de la release HPO courante via la redirection de `/releases/latest`."""
+    """Résout le tag de la release HPO courante via la redirection de `/releases/latest`.
+
+    Les 429 et 5xx sont déjà retentés par `build_retrying_session`. Le cas non couvert
+    est un statut non retenté sans redirection — GitHub renvoyant une page HTML, ou un
+    404 après un changement d'URL : lire `headers["Location"]` lèverait alors un
+    `KeyError` nu, illisible en tête d'un run mensuel.
+    """
     session = session or build_retrying_session()
     response = session.get(HPO_LATEST_RELEASE_URL, allow_redirects=False, timeout=30)
-    location = response.headers["Location"]
+    location = response.headers.get("Location")
+    if not location:
+        raise ReleaseTagResolutionError(
+            f"{HPO_LATEST_RELEASE_URL} : réponse HTTP {response.status_code} sans en-tête "
+            "Location — GitHub indisponible, en limitation de débit, ou format changé."
+        )
     return location.rstrip("/").rsplit("/", 1)[-1]
 
 
