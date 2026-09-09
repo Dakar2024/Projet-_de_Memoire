@@ -1451,16 +1451,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from dotenv import load_dotenv
 
 from ingestion.config import BRONZE
+from ingestion.errors import ConfigurationError
 from ingestion.http_client import NcbiClient
 from ingestion.jsonl import dumps_gzipped
 from ingestion.ncbi_gene import fetch_gene_info
 from ingestion.storage import build_manifest, finalize_partition, partition_uri, put_bytes
 
 OBJECT_NAME = "gene_summaries.jsonl.gz"
-
-
-class ConfigurationError(RuntimeError):
-    """Erreur permanente : la relancer ne peut pas la résoudre."""
 
 
 def build_client() -> NcbiClient:
@@ -1595,6 +1592,30 @@ if __name__ == "__main__":
         lake_uri=args.lake_uri,
     ))
 ```
+
+- [ ] **Step 6ter: Sortir `ConfigurationError` de `scripts/`**
+
+Le brief définissait la classe dans `scripts/ingest_ncbi_gene.py`. Les DAGs de la tâche 11
+doivent l'attraper pour classer l'erreur comme non-retentable : un paquet `dags/` important
+un type d'exception depuis un script d'entrée CLI est un couplage à l'envers. Créer
+`src/ingestion/errors.py` :
+
+```python
+from __future__ import annotations
+
+
+class ConfigurationError(RuntimeError):
+    """Erreur permanente : la relancer ne peut pas la résoudre.
+
+    Levée quand une variable d'environnement obligatoire manque. Vit dans
+    `ingestion` et non dans `scripts` parce que les DAGs doivent l'attraper pour
+    la convertir en échec Airflow non-retenté, sans dépendre d'un point d'entrée CLI.
+    """
+```
+
+Puis, dans `scripts/ingest_ncbi_gene.py`, retirer la définition locale et ajouter
+`from ingestion.errors import ConfigurationError` au bloc d'imports. Aucun autre changement :
+`build_client` continue de la lever à l'identique.
 
 - [ ] **Step 6bis: Tester `ingest_refseq` (le brief l'avait omis)**
 
@@ -2459,7 +2480,7 @@ def test_configuration_errors_fail_without_consuming_retries(monkeypatch):
     from airflow.sdk.exceptions import AirflowFailException
 
     from dags import dag_genomic_pipeline
-    from scripts.ingest_ncbi_gene import ConfigurationError
+    from ingestion.errors import ConfigurationError
 
     def refuser():
         raise ConfigurationError("NCBI_EMAIL manquant")
@@ -2502,7 +2523,8 @@ from ingestion.http_client import NcbiClient
 from ingestion.storage import partition_is_complete
 from scripts.ingest_hpo_terms import ingest_hpo_terms
 from scripts.ingest_medgen import ingest_medgen
-from scripts.ingest_ncbi_gene import ConfigurationError, build_client, ingest_ncbi_gene
+from ingestion.errors import ConfigurationError
+from scripts.ingest_ncbi_gene import build_client, ingest_ncbi_gene
 from scripts.ingest_refseq import ingest_refseq
 from transformations.bronze_to_silver import bronze_to_silver
 from transformations.silver_to_gold import silver_to_gold
