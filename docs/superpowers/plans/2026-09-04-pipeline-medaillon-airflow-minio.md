@@ -1211,6 +1211,98 @@ if __name__ == "__main__":
     print(ingest_hpo_files(args.logical_date, lake_uri=args.lake_uri, release_tag=args.release_tag))
 ```
 
+- [ ] **Step 5bis: Fermer les deux trous de couverture**
+
+Le brief initial ne prescrivait de tests que pour `ingest_clinvar`, et aucun de ces tests
+ne distinguait `put_file` de `put_bytes` — sur un fichier de test de 11 octets les deux
+produisent le même résultat, donc une régression réintroduisant `read_bytes()` passerait
+la suite au vert.
+
+Ajouter à `tests/scripts/test_ingest_clinvar.py` (imports en tête de fichier) :
+
+```python
+@responses.activate
+def test_ingest_clinvar_uploads_the_bulk_from_disk_not_from_memory(tmp_path):
+    """Le bulk fait 442 Mo : il doit être téléversé depuis le disque. Sans ce test,
+    un passage de `put_file` à `put_bytes` passerait inaperçu — sur un fichier de
+    test de 11 octets, les deux produisent un résultat identique."""
+    responses.add(responses.GET, ARCHIVE, body=b"bulk gzippe", status=200)
+    lake = f"file://{tmp_path}/lake"
+
+    with patch("scripts.ingest_clinvar.put_file", wraps=put_file) as espion:
+        ingest_clinvar("2026-09-01", lake_uri=lake, cache_dir=tmp_path / "cache")
+
+    assert espion.call_count == 1
+    _uri, source = espion.call_args.args
+    assert isinstance(source, Path), "le bulk doit être téléversé depuis un chemin"
+```
+
+Créer `tests/scripts/test_ingest_hpo_files.py` :
+
+```python
+import json
+
+import responses
+
+from ingestion.storage import get_bytes, partition_is_complete
+from scripts.ingest_hpo_files import ingest_hpo_files
+
+RELEASE = (
+    "https://github.com/obophenotype/human-phenotype-ontology/releases/"
+    "download/v2026-09-01/genes_to_phenotype.txt"
+)
+
+
+@responses.activate
+def test_ingest_hpo_files_deposits_the_flat_file_and_finalises_the_partition(tmp_path):
+    responses.add(responses.GET, RELEASE, body=b"ncbi_gene_id\tgene_symbol\n", status=200)
+    lake = f"file://{tmp_path}/lake"
+
+    partition = ingest_hpo_files(
+        "2026-09-01", lake_uri=lake, cache_dir=tmp_path / "cache",
+        release_tag="v2026-09-01",
+    )
+
+    assert partition == f"{lake}/bronze/hpo/dt=2026-09-01"
+    assert get_bytes(f"{partition}/genes_to_phenotype.txt") == b"ncbi_gene_id\tgene_symbol\n"
+    assert partition_is_complete(partition) is True
+
+
+@responses.activate
+def test_ingest_hpo_files_manifest_pins_the_release_tag(tmp_path):
+    responses.add(responses.GET, RELEASE, body=b"contenu", status=200)
+    lake = f"file://{tmp_path}/lake"
+
+    partition = ingest_hpo_files(
+        "2026-09-01", lake_uri=lake, cache_dir=tmp_path / "cache",
+        release_tag="v2026-09-01",
+    )
+
+    manifest = json.loads(get_bytes(f"{partition}/manifest.json"))
+    assert manifest["source"] == "hpo"
+    assert manifest["source_version"] == "v2026-09-01"
+    assert manifest["source_url"] == RELEASE
+    assert manifest["files"] == {"genes_to_phenotype.txt": len(b"contenu")}
+
+
+@responses.activate
+def test_ingest_hpo_files_does_not_resolve_the_tag_when_one_is_given(tmp_path):
+    """Un `release_tag` explicite doit éviter tout appel réseau à GitHub : c'est ce
+    qui rend un rejeu reproductible et les tests hors-ligne."""
+    responses.add(responses.GET, RELEASE, body=b"contenu", status=200)
+
+    ingest_hpo_files(
+        "2026-09-01", lake_uri=f"file://{tmp_path}/lake",
+        cache_dir=tmp_path / "cache", release_tag="v2026-09-01",
+    )
+
+    appelees = {call.request.url for call in responses.calls}
+    assert appelees == {RELEASE}
+```
+
+Les imports à ajouter en tête de `test_ingest_clinvar.py` : `from pathlib import Path`,
+`from unittest.mock import patch`, et `put_file` dans l'import depuis `ingestion.storage`.
+
 - [ ] **Step 6: Vérifier la suite complète**
 
 Run: `venv/bin/pytest -q`
