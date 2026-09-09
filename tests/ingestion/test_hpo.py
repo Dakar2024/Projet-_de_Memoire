@@ -2,6 +2,8 @@ from pathlib import Path
 
 import responses
 
+from ingestion.hpo import release_url_for, resolve_release_tag
+
 FIXTURE = Path(__file__).parent.parent / "fixtures" / "genes_to_phenotype_sample.txt"
 
 
@@ -139,3 +141,24 @@ def test_enrich_hpo_rows_defaults_to_empty_when_term_missing():
     assert result[0]["definition"] == ""
     assert result[0]["synonyms"] == []
     assert result[0]["xrefs"] == []
+
+
+def test_release_url_for_builds_a_tagged_download_url():
+    assert release_url_for("v2026-09-01") == (
+        "https://github.com/obophenotype/human-phenotype-ontology/releases/"
+        "download/v2026-09-01/genes_to_phenotype.txt"
+    )
+
+
+@responses.activate
+def test_resolve_release_tag_reads_the_redirect_from_latest():
+    responses.add(
+        responses.GET,
+        "https://github.com/obophenotype/human-phenotype-ontology/releases/latest",
+        status=302,
+        headers={
+            "Location": "https://github.com/obophenotype/human-phenotype-ontology"
+            "/releases/tag/v2026-09-01"
+        },
+    )
+    assert resolve_release_tag() == "v2026-09-01"

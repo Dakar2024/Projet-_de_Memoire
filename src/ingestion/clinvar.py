@@ -10,6 +10,24 @@ CLINVAR_BULK_URL = (
     "https://ftp.ncbi.nlm.nih.gov/pub/clinvar/tab_delimited/variant_summary.txt.gz"
 )
 
+# Archives mensuelles immuables. Le fichier « latest » est rafraîchi plus souvent
+# que la publication mensuelle : l'épingler par mois est ce qui rend un rejeu de
+# `dt=2026-08-01` réellement identique à l'exécution d'origine.
+CLINVAR_ARCHIVE_URL_TEMPLATE = (
+    "https://ftp.ncbi.nlm.nih.gov/pub/clinvar/tab_delimited/archive/"
+    "variant_summary_{version}.txt.gz"
+)
+
+
+def archive_version_for(logical_date: str) -> str:
+    """Version d'archive ClinVar correspondant à une date logique (`YYYY-MM`)."""
+    return logical_date[:7]
+
+
+def archive_url_for(logical_date: str) -> str:
+    """URL de l'archive ClinVar épinglée sur le mois de la date logique."""
+    return CLINVAR_ARCHIVE_URL_TEMPLATE.format(version=archive_version_for(logical_date))
+
 
 def filter_clinvar(source_path: Path, genes: list[str]) -> pl.DataFrame:
     """Filtre le fichier bulk ClinVar sur les gènes cibles, gère les doublons d'assemblage.

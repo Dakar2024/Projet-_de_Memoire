@@ -9,6 +9,17 @@ from ingestion.http_client import build_retrying_session
 
 GENES_TO_PHENOTYPE_URL = "https://purl.obolibrary.org/obo/hp/hpoa/genes_to_phenotype.txt"
 
+# HPO publie des releases taguées (`v2026-09-01`). La PURL pointe sur « latest »,
+# qui change : on résout le tag une fois, on l'enregistre au manifest, et on
+# télécharge l'URL taguée — un rejeu retéléchargera exactement le même fichier.
+HPO_LATEST_RELEASE_URL = (
+    "https://github.com/obophenotype/human-phenotype-ontology/releases/latest"
+)
+HPO_RELEASE_URL_TEMPLATE = (
+    "https://github.com/obophenotype/human-phenotype-ontology/releases/"
+    "download/{release_tag}/genes_to_phenotype.txt"
+)
+
 # Service public ontology.jax.org (sans clé) : détails d'un terme HPO (definition, synonyms,
 # xrefs) — absents de genes_to_phenotype.txt, qui ne porte que l'id et le nom du terme.
 HP_TERMS_URL = "https://ontology.jax.org/api/hp/terms"
@@ -17,6 +28,19 @@ HP_TERMS_URL = "https://ontology.jax.org/api/hp/terms"
 # publiée sur /api/hp/docs) ; "HP:0000000," fait 11 caractères, 20 IDs par lot garde une
 # marge confortable.
 HP_TERMS_BATCH_SIZE = 20
+
+
+def release_url_for(release_tag: str) -> str:
+    """URL de téléchargement de `genes_to_phenotype.txt` pour un tag de release."""
+    return HPO_RELEASE_URL_TEMPLATE.format(release_tag=release_tag)
+
+
+def resolve_release_tag(session: requests.Session | None = None) -> str:
+    """Résout le tag de la release HPO courante via la redirection de `/releases/latest`."""
+    session = session or build_retrying_session()
+    response = session.get(HPO_LATEST_RELEASE_URL, allow_redirects=False, timeout=30)
+    location = response.headers["Location"]
+    return location.rstrip("/").rsplit("/", 1)[-1]
 
 
 def parse_genes_to_phenotype(path: Path, genes: list[str]) -> list[dict]:
