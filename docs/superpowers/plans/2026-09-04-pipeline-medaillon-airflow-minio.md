@@ -1596,6 +1596,84 @@ if __name__ == "__main__":
     ))
 ```
 
+- [ ] **Step 6bis: Tester `ingest_refseq` (le brief l'avait omis)**
+
+Le plan prescrivait des tests pour `ingest_ncbi_gene` mais aucun pour `ingest_refseq` —
+la même asymétrie que celle corrigée en tâche 6. Créer `tests/scripts/test_ingest_refseq.py` :
+
+```python
+import gzip
+import json
+
+import responses
+
+from ingestion.http_client import NcbiClient, RateLimiter
+from ingestion.storage import get_bytes, partition_is_complete
+from scripts.ingest_refseq import ingest_refseq
+
+ESEARCH = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
+ESUMMARY = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
+
+
+def _client():
+    return NcbiClient(
+        email="test@example.com",
+        rate_limiter=RateLimiter(0.0, sleep_fn=lambda s: None),
+    )
+
+
+def _records(partition):
+    raw = gzip.decompress(get_bytes(f"{partition}/transcripts.jsonl.gz")).decode()
+    return [json.loads(line) for line in raw.splitlines()]
+
+
+@responses.activate
+def test_ingest_refseq_writes_one_record_per_gene(tmp_path):
+    responses.add(responses.GET, ESEARCH,
+                  json={"esearchresult": {"idlist": ["2778098787"]}}, status=200)
+    responses.add(responses.GET, ESUMMARY, json={"result": {
+        "2778098787": {"accessionversion": "NM_001432077.1", "slen": 11863}}}, status=200)
+    lake = f"file://{tmp_path}/lake"
+
+    partition = ingest_refseq("2026-09-01", "brca", ["BRCA2"], _client(), lake_uri=lake)
+
+    assert partition == f"{lake}/bronze/refseq/dt=2026-09-01/panel=brca"
+    assert _records(partition) == [{
+        "gene_symbol": "BRCA2",
+        "transcripts": [{"accessionversion": "NM_001432077.1", "slen": 11863}],
+    }]
+    assert partition_is_complete(partition) is True
+
+
+@responses.activate
+def test_ingest_refseq_keeps_genes_without_transcripts(tmp_path):
+    """Un gène sans transcrit garde son entrée : un symbole en échec doit rester
+    traçable depuis la partition, le verdict appartient à `check_bronze`."""
+    responses.add(responses.GET, ESEARCH,
+                  json={"esearchresult": {"idlist": []}}, status=200)
+    lake = f"file://{tmp_path}/lake"
+
+    partition = ingest_refseq("2026-09-01", "brca", ["INCONNU"], _client(), lake_uri=lake)
+
+    assert _records(partition) == [{"gene_symbol": "INCONNU", "transcripts": []}]
+
+
+@responses.activate
+def test_ingest_refseq_manifest_records_the_panel_and_count(tmp_path):
+    responses.add(responses.GET, ESEARCH,
+                  json={"esearchresult": {"idlist": []}}, status=200)
+    lake = f"file://{tmp_path}/lake"
+
+    partition = ingest_refseq(
+        "2026-09-01", "sickle", ["HBB", "HBS1L"], _client(), lake_uri=lake
+    )
+
+    manifest = json.loads(get_bytes(f"{partition}/manifest.json"))
+    assert manifest["source"] == "refseq"
+    assert manifest["panel"] == "sickle"
+    assert manifest["record_count"] == 2
+```
+
 - [ ] **Step 7: Vérifier la suite complète**
 
 Run: `venv/bin/pytest -q`
@@ -1912,6 +1990,65 @@ if __name__ == "__main__":
     print(ingest_hpo_terms(
         args.logical_date, args.panel, args.genes.split(","), lake_uri=args.lake_uri,
     ))
+```
+
+- [ ] **Step 5bis: Tester `ingest_hpo_terms` (même omission que pour les autres paires)**
+
+Créer `tests/scripts/test_ingest_hpo_terms.py` :
+
+```python
+import gzip
+import json
+
+import responses
+
+from ingestion.storage import get_bytes, partition_is_complete, put_bytes
+from scripts.ingest_hpo_terms import ingest_hpo_terms
+
+HP_TERMS = "https://ontology.jax.org/api/hp/terms"
+
+FLAT = (
+    "ncbi_gene_id\tgene_symbol\thpo_id\thpo_name\n"
+    "3043\tHBB\tHP:0001903\tAnemia\n"
+    "9999\tAUTRE\tHP:0000118\tPhenotypic abnormality\n"
+)
+
+
+def _seed_flat_file(tmp_path) -> str:
+    lake = f"file://{tmp_path}/lake"
+    put_bytes(f"{lake}/bronze/hpo/dt=2026-09-01/genes_to_phenotype.txt", FLAT.encode())
+    return lake
+
+
+@responses.activate
+def test_ingest_hpo_terms_enriches_only_the_panel_genes(tmp_path):
+    """Le fichier plat est partagé entre panels : seuls les termes des gènes du
+    panel demandé doivent être enrichis et déposés."""
+    lake = _seed_flat_file(tmp_path)
+    responses.add(responses.GET, HP_TERMS, json=[
+        {"id": "HP:0001903", "definition": "A reduction in erythrocytes.",
+         "synonyms": ["Low blood count"], "xrefs": ["UMLS:C0002871"]}], status=200)
+
+    partition = ingest_hpo_terms("2026-09-01", "sickle", ["HBB"], lake_uri=lake)
+
+    assert partition == f"{lake}/bronze/hpo_terms/dt=2026-09-01/panel=sickle"
+    raw = gzip.decompress(get_bytes(f"{partition}/hpo_terms.jsonl.gz")).decode()
+    records = [json.loads(line) for line in raw.splitlines()]
+    assert [r["hpo_id"] for r in records] == ["HP:0001903"]
+    assert records[0]["details"]["definition"] == "A reduction in erythrocytes."
+    assert partition_is_complete(partition) is True
+
+
+@responses.activate
+def test_ingest_hpo_terms_manifest_records_the_panel(tmp_path):
+    lake = _seed_flat_file(tmp_path)
+    responses.add(responses.GET, HP_TERMS, json=[], status=200)
+
+    partition = ingest_hpo_terms("2026-09-01", "sickle", ["HBB"], lake_uri=lake)
+
+    manifest = json.loads(get_bytes(f"{partition}/manifest.json"))
+    assert manifest["source"] == "hpo_terms"
+    assert manifest["panel"] == "sickle"
 ```
 
 - [ ] **Step 6: Vérifier la suite complète**
