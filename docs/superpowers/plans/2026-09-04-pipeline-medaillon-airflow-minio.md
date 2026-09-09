@@ -980,11 +980,12 @@ def fetch_transcripts(client: NcbiClient, gene_symbol: str) -> list[dict]:
 
     Un symbole que nuccore ne résout pas renvoie une liste vide plutôt qu'une
     erreur, comme l'absence de CUI MedGen résolvable ailleurs dans ce dépôt : le
-    verdict qualité appartient à `check_bronze`, pas à l'ingestion.
+    verdict de complétude appartient à `check_bronze`, pas à l'ingestion.
 
-    À ne pas confondre avec le cas HPO : `HBS1L` et `MYB` sont bien absents des
-    annotations phénotypiques HPO, mais ce sont des gènes codants qui ont des
-    transcrits RefSeq (8 pour HBS1L, mesuré) — leur catalogue n'est donc pas vide.
+    Coût : un `esummary` par UID, soit ~6 à 8 appels par gène et ~120 sur le panel
+    de 18 — plus lourd que `ncbi_gene.py`, qui n'en fait qu'un par gène. Le batching
+    de `esummary` est reporté à l'étape de durcissement, comme pour les autres
+    sources.
     """
     uids = client.esearch(
         db="nuccore", term=REFSEQ_SEARCH_TEMPLATE.format(gene=gene_symbol)
