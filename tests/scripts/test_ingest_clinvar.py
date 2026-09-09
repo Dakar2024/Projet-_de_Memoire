@@ -1,8 +1,10 @@
 import json
+from pathlib import Path
+from unittest.mock import patch
 
 import responses
 
-from ingestion.storage import get_bytes, partition_is_complete
+from ingestion.storage import get_bytes, partition_is_complete, put_file
 from scripts.ingest_clinvar import ingest_clinvar
 
 ARCHIVE = (
@@ -47,3 +49,19 @@ def test_ingest_clinvar_deposits_the_bulk_unfiltered(tmp_path):
     partition = ingest_clinvar("2026-09-01", lake_uri=lake, cache_dir=tmp_path / "cache")
 
     assert get_bytes(f"{partition}/variant_summary.txt.gz") == contenu
+
+
+@responses.activate
+def test_ingest_clinvar_uploads_the_bulk_from_disk_not_from_memory(tmp_path):
+    """Le bulk fait 442 Mo : il doit être téléversé depuis le disque. Sans ce test,
+    un passage de `put_file` à `put_bytes` passerait inaperçu — sur un fichier de
+    test de 11 octets, les deux produisent un résultat identique."""
+    responses.add(responses.GET, ARCHIVE, body=b"bulk gzippe", status=200)
+    lake = f"file://{tmp_path}/lake"
+
+    with patch("scripts.ingest_clinvar.put_file", wraps=put_file) as espion:
+        ingest_clinvar("2026-09-01", lake_uri=lake, cache_dir=tmp_path / "cache")
+
+    assert espion.call_count == 1
+    _uri, source = espion.call_args.args
+    assert isinstance(source, Path), "le bulk doit être téléversé depuis un chemin"
