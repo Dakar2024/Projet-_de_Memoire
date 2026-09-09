@@ -647,7 +647,7 @@ Expected: FAIL avec `ImportError: cannot import name 'IncompleteDownloadError'`
 
 - [ ] **Step 3: Modifier `src/ingestion/download.py`**
 
-Ajouter la classe d'exception après `CHUNK_SIZE = 8192` :
+Ajouter l'import `from requests.exceptions import ChunkedEncodingError` au bloc d'imports en tête de fichier, puis la classe d'exception après `CHUNK_SIZE = 8192` :
 
 ```python
 class IncompleteDownloadError(RuntimeError):
@@ -662,10 +662,20 @@ Puis, dans `download_to_file`, remplacer le bloc `with requests.get(...)` par :
             response.raise_for_status()
             expected = response.headers.get("Content-Length")
             written = 0
-            with open(partial, "wb") as fh:
-                for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
-                    fh.write(chunk)
-                    written += len(chunk)
+            try:
+                with open(partial, "wb") as fh:
+                    for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
+                        fh.write(chunk)
+                        written += len(chunk)
+            except ChunkedEncodingError as exc:
+                # urllib3 détecte lui-même la troncature quand Content-Length est annoncé.
+                # On conserve cette garantie de transport et on la présente sous le type
+                # d'erreur du projet, plutôt que de désactiver urllib3 pour la refaire à
+                # la main : l'attribut qui la désactive est un interne non épinglé, et une
+                # assignation d'attribut ne lève jamais — un renommage la rendrait
+                # silencieusement inopérante.
+                raise IncompleteDownloadError(f"{url} : flux interrompu ({exc})") from exc
+        # Seconde ligne de défense : couvre aussi une réponse plus longue qu'annoncée.
         if verify_size and expected is not None and written != int(expected):
             raise IncompleteDownloadError(
                 f"{url} : {written} octets reçus pour {expected} annoncés"
