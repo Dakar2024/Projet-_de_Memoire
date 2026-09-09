@@ -2,6 +2,7 @@ import io
 import json
 
 import pytest
+from botocore.exceptions import ClientError
 
 from ingestion.storage import (
     build_manifest,
@@ -15,6 +16,14 @@ from ingestion.storage import (
     put_bytes,
     put_file,
 )
+
+
+def _client_error(status: int, code: str) -> ClientError:
+    """Erreur boto3 réaliste : le code de statut est ce que `exists()` inspecte."""
+    return ClientError(
+        {"Error": {"Code": code}, "ResponseMetadata": {"HTTPStatusCode": status}},
+        "HeadObject",
+    )
 
 
 class FakeS3:
@@ -32,13 +41,13 @@ class FakeS3:
 
     def get_object(self, Bucket, Key):
         if (Bucket, Key) not in self.objects:
-            raise FileNotFoundError(Key)
+            raise _client_error(404, "404")
         return {"Body": _Body(self.objects[(Bucket, Key)])}
 
 
     def head_object(self, Bucket, Key):
         if (Bucket, Key) not in self.objects:
-            raise FileNotFoundError(Key)
+            raise _client_error(404, "404")
         return {"ContentLength": len(self.objects[(Bucket, Key)])}
 
 
@@ -171,6 +180,29 @@ def test_partition_is_complete_only_after_finalize(tmp_path):
     ))
 
     assert partition_is_complete(partition) is True
+
+
+def test_exists_propagates_a_permission_error_instead_of_reporting_absence():
+    """Un 403 n'est pas une absence : le confondre ferait lire une partition
+    complète comme incomplète, et `check_bronze` échouerait pour la mauvaise raison."""
+    class Forbidden(FakeS3):
+        def head_object(self, Bucket, Key):
+            raise _client_error(403, "403")
+
+    with pytest.raises(ClientError):
+        exists("s3://bronze/clinvar/dt=2026-09-01/data.txt", client=Forbidden())
+
+
+def test_exists_propagates_a_connection_failure():
+    """Une panne réseau ne lève pas ClientError du tout : elle doit remonter."""
+    from botocore.exceptions import EndpointConnectionError
+
+    class Unreachable(FakeS3):
+        def head_object(self, Bucket, Key):
+            raise EndpointConnectionError(endpoint_url="http://minio:9000")
+
+    with pytest.raises(EndpointConnectionError):
+        exists("s3://bronze/clinvar/dt=2026-09-01/data.txt", client=Unreachable())
 
 
 @pytest.mark.integration

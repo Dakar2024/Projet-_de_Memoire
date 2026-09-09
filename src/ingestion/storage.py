@@ -6,6 +6,8 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
+from botocore.exceptions import ClientError
+
 from ingestion.config import current_lake_uri
 
 S3_SCHEME = "s3://"
@@ -111,13 +113,22 @@ def open_stream(uri: str, client=None):
 
 
 def exists(uri: str, client=None) -> bool:
+    """Teste la présence d'un objet, sans masquer les pannes.
+
+    Seul un 404 signifie « absent ». Un 403 (identifiants invalides) ou une panne
+    réseau doivent remonter : les confondre avec une absence ferait lire une
+    partition complète comme incomplète, exactement le mode de défaillance que ce
+    module existe pour empêcher.
+    """
     if uri.startswith(S3_SCHEME):
         bucket, key = _split_s3(uri)
         try:
             (client or _s3_client()).head_object(Bucket=bucket, Key=key)
             return True
-        except Exception:
-            return False
+        except ClientError as exc:
+            if exc.response["ResponseMetadata"]["HTTPStatusCode"] == 404:
+                return False
+            raise
     return _local_path(uri).exists()
 
 
