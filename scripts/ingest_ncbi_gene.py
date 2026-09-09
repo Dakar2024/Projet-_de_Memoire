@@ -11,16 +11,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from dotenv import load_dotenv
 
 from ingestion.config import BRONZE
+from ingestion.errors import ConfigurationError
 from ingestion.http_client import NcbiClient
 from ingestion.jsonl import dumps_gzipped
 from ingestion.ncbi_gene import fetch_gene_info
 from ingestion.storage import build_manifest, finalize_partition, partition_uri, put_bytes
 
 OBJECT_NAME = "gene_summaries.jsonl.gz"
-
-
-class ConfigurationError(RuntimeError):
-    """Erreur permanente : la relancer ne peut pas la résoudre."""
 
 
 def build_client() -> NcbiClient:
