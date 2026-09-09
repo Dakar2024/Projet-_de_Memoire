@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import requests
+from requests.exceptions import ChunkedEncodingError
 
 CHUNK_SIZE = 8192
 
@@ -36,15 +37,22 @@ def download_to_file(
     try:
         with requests.get(url, stream=True, timeout=60) as response:
             response.raise_for_status()
-            # Désactiver la vérification automatique de Content-Length par urllib3
-            # pour pouvoir faire notre propre contrôle d'intégrité
-            response.raw.enforce_content_length = False
             expected = response.headers.get("Content-Length")
             written = 0
-            with open(partial, "wb") as fh:
-                for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
-                    fh.write(chunk)
-                    written += len(chunk)
+            try:
+                with open(partial, "wb") as fh:
+                    for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
+                        fh.write(chunk)
+                        written += len(chunk)
+            except ChunkedEncodingError as exc:
+                # urllib3 détecte lui-même la troncature quand Content-Length est annoncé.
+                # On conserve cette garantie de transport et on la présente sous le type
+                # d'erreur du projet, plutôt que de désactiver urllib3 pour la refaire à
+                # la main : l'attribut qui la désactive est un interne non épinglé, et une
+                # assignation d'attribut ne lève jamais — un renommage la rendrait
+                # silencieusement inopérante.
+                raise IncompleteDownloadError(f"{url} : flux interrompu ({exc})") from exc
+        # Seconde ligne de défense : couvre aussi une réponse plus longue qu'annoncée.
         if verify_size and expected is not None and written != int(expected):
             raise IncompleteDownloadError(
                 f"{url} : {written} octets reçus pour {expected} annoncés"
