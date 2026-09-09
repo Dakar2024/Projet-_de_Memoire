@@ -978,9 +978,13 @@ REFSEQ_SEARCH_TEMPLATE = (
 def fetch_transcripts(client: NcbiClient, gene_symbol: str) -> list[dict]:
     """Récupère les transcrits RefSeq d'un gène (esearch nuccore puis esummary).
 
-    Un gène sans transcrit RefSeq renvoie une liste vide plutôt qu'une erreur :
-    c'est le cas légitime des loci GWAS du panel (HBS1L, MYB), traité comme
-    l'absence de terme HPO ou de CUI MedGen résolvable.
+    Un symbole que nuccore ne résout pas renvoie une liste vide plutôt qu'une
+    erreur, comme l'absence de CUI MedGen résolvable ailleurs dans ce dépôt : le
+    verdict qualité appartient à `check_bronze`, pas à l'ingestion.
+
+    À ne pas confondre avec le cas HPO : `HBS1L` et `MYB` sont bien absents des
+    annotations phénotypiques HPO, mais ce sont des gènes codants qui ont des
+    transcrits RefSeq (8 pour HBS1L, mesuré) — leur catalogue n'est donc pas vide.
     """
     uids = client.esearch(
         db="nuccore", term=REFSEQ_SEARCH_TEMPLATE.format(gene=gene_symbol)
