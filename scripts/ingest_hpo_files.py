@@ -15,6 +15,7 @@ from ingestion.storage import (
     finalize_partition,
     partition_uri,
     put_file,
+    read_manifest,
 )
 
 OBJECT_NAME = "genes_to_phenotype.txt"
@@ -30,13 +31,20 @@ def ingest_hpo_files(
 
     Le tag résolu est inscrit au manifest : c'est lui, et non la date du run, qui
     identifie la version de la source.
+
+    Choix du tag, par priorité : `release_tag` explicite ; sinon le `source_version`
+    du manifest existant de la partition ; sinon `/releases/latest`. Sans la reprise
+    du manifest, rejouer un mois passé écraserait sa partition avec la release
+    courante, et le rejeu ne reproduirait plus l'exécution d'origine.
     """
-    release_tag = release_tag or resolve_release_tag()
+    partition = partition_uri(RAW, "hpo", logical_date, lake_uri=lake_uri)
+    if not release_tag:
+        manifest = read_manifest(partition)
+        release_tag = manifest["source_version"] if manifest else resolve_release_tag()
     url = release_url_for(release_tag)
     cache_dir = cache_dir or DATA_EXTERNAL_DIR
     local = download_to_file(url, cache_dir / f"genes_to_phenotype_{release_tag}.txt")
 
-    partition = partition_uri(RAW, "hpo", logical_date, lake_uri=lake_uri)
     begin_partition(partition)
     put_file(f"{partition}/{OBJECT_NAME}", local)
 
@@ -58,6 +66,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Dépose les fichiers plats HPO dans la couche raw.")
     parser.add_argument("--logical-date", required=True)
     parser.add_argument("--lake-uri", default=None)
-    parser.add_argument("--release-tag", default=None, help="défaut : résolu depuis /releases/latest")
+    parser.add_argument("--release-tag", default=None, help="défaut : tag du manifest existant de la partition, sinon /releases/latest")
     args = parser.parse_args()
     print(ingest_hpo_files(args.logical_date, lake_uri=args.lake_uri, release_tag=args.release_tag))
