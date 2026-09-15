@@ -55,7 +55,7 @@
 
 ---
 
-### Task A1: Renommer la couche d'atterrissage `bronze` en `raw`
+### Task 1 (A1): Renommer la couche d'atterrissage `bronze` en `raw`
 
 **Files:**
 - Modify: `src/ingestion/config.py:19`
@@ -161,7 +161,7 @@ git commit -m "refactor: rename the landing layer from bronze to raw"
 
 ---
 
-### Task A2: Ingestion MedGen et termes HPO en `raw`
+### Task 2 (A2): Ingestion MedGen et termes HPO en `raw`
 
 **Files:**
 - Create: `scripts/ingest_medgen.py`
@@ -545,7 +545,7 @@ git commit -m "feat: add per-panel MedGen and HPO term ingestion into the raw la
 
 ---
 
-### Task A3: Stubs des quatre transformations
+### Task 3 (A3): Stubs des quatre transformations
 
 **Files:**
 - Create: `src/transformations/__init__.py` (vide)
@@ -727,7 +727,7 @@ git commit -m "feat: add documented stubs for the four medallion transformations
 
 ---
 
-### Task A4: Contrôle de complétude, panels et DAG d'acquisition
+### Task 4 (A4): Contrôle de complétude, panels et DAG d'acquisition
 
 **Files:**
 - Modify: `src/ingestion/storage.py` (ajout en fin de fichier)
@@ -1017,7 +1017,7 @@ git commit -m "feat: add partition checks, panels and the shared acquisition DAG
 
 ---
 
-### Task A5: DAGs par panel
+### Task 5 (A5): DAGs par panel
 
 **Files:**
 - Create: `dags/dag_genomic_pipeline.py`
@@ -1273,7 +1273,7 @@ git commit -m "feat: add per-panel four-layer DAGs triggered by the sources Asse
 
 ---
 
-### Task A6: Stack Docker et documentation
+### Task 6 (A6): Stack Docker et documentation
 
 **Files:**
 - Create: `docker/airflow/Dockerfile`, `docker/minio/create-buckets.sh`, `docker-compose.yml`, `.env.docker.example`
