@@ -2009,11 +2009,21 @@ x-airflow-common: &airflow-common
   volumes:
     - .:/opt/projet
   working_dir: /opt/projet
-  depends_on:
+  depends_on: &airflow-depends-on
     postgres:
       condition: service_healthy
     minio:
       condition: service_healthy
+
+# Les services longs attendent la fin de `airflow db migrate` : sans cela, ils démarrent
+# contre une base non migrée et bouclent en erreur jusqu'à ce que la migration aboutisse.
+x-airflow-after-init: &airflow-after-init
+  postgres:
+    condition: service_healthy
+  minio:
+    condition: service_healthy
+  airflow-init:
+    condition: service_completed_successfully
 
 services:
   postgres:
@@ -2075,6 +2085,7 @@ services:
 
   airflow-apiserver:
     <<: *airflow-common
+    depends_on: *airflow-after-init
     command: api-server
     ports:
       - "8080:8080"
@@ -2086,6 +2097,7 @@ services:
 
   airflow-scheduler:
     <<: *airflow-common
+    depends_on: *airflow-after-init
     command: scheduler
     restart: unless-stopped
     deploy:
@@ -2096,6 +2108,7 @@ services:
 
   airflow-dag-processor:
     <<: *airflow-common
+    depends_on: *airflow-after-init
     command: dag-processor
     restart: unless-stopped
     deploy:
@@ -2105,6 +2118,7 @@ services:
 
   airflow-triggerer:
     <<: *airflow-common
+    depends_on: *airflow-after-init
     command: triggerer
     restart: unless-stopped
     deploy:
