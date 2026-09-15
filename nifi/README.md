@@ -6,9 +6,9 @@
 
 Ce dossier fait tourner l'étape 1 (collecte RAW) via un flow Apache NiFi plutôt que via
 un lancement manuel/cron de `scripts/run_collection.py`. **Périmètre volontairement
-limité à la collecte** : NiFi n'orchestre pas les étapes Bronze/Silver/Gold ni la RAG —
-voir la section "Pourquoi NiFi ne fait que ça" du `CLAUDE.md` racine pour la justification
-de cette frontière.
+limité à la collecte** : NiFi n'orchestrait pas les couches du médaillon ni la RAG. Les
+raisons de son abandon sont résumées dans la section « Orchestration » du `CLAUDE.md` racine
+et chiffrées dans `docs/choix_contexte.md`.
 
 ## Ce que ça change (et ce que ça ne change pas)
 

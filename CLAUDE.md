@@ -4,16 +4,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-This is stage 1 (data collection / RAW layer) of a larger genomics RAG pipeline:
-**collecte (APIs) → pipeline Bronze/Silver/Gold (médaillon) → RAG (chunking, embeddings,
-vector store, LLM) → web app**. Only the collection stage exists so far — do not build ahead
-into normalization or RAG concerns; that boundary is intentional (see "Known limitations"
-below, which lists issues deliberately deferred to the next stage).
+This repo holds the data engineering side of a genomics RAG pipeline:
+**collecte (APIs) → médaillon `raw` → `bronze` → `silver` → `gold` → RAG (chunking,
+embeddings, vector store, LLM) → web app**. What exists today: the collection code
+(`src/ingestion/`), ingestion scripts that write the `raw` layer, the Airflow DAGs and Docker
+stack that orchestrate them, and documented **stubs** for the `raw → bronze → silver → gold`
+transformations. Those transformations are sub-projects B, C and D of
+`docs/superpowers/specs/2026-09-15-architecture-quatre-couches-design.md`; do not implement
+them, or anything RAG-side, outside their own spec and plan.
 
 This stage collects raw data for a fixed panel of 18 genes (`ALL_GENES` in
 `src/ingestion/config.py`) — 12 hereditary breast cancer genes + 6 sickle cell disease /
-HbF-modifier genes — from four public sources, and writes one JSON document per gene to
-`data/raw/`.
+HbF-modifier genes. The legacy CLI `scripts/run_collection.py` collects four public sources
+and writes one JSON document per gene to `data/raw/` (sections below); the medallion pipeline
+instead writes per-source partitions to the `raw` layer through `scripts/ingest_*.py`.
 
 Project docs and requirements notes (in French) live in `fichiers de base /` and
 `docs/superpowers/plans/`.
@@ -78,15 +82,15 @@ Shared infrastructure:
 - **`config.py`** — gene panel (`ALL_GENES`), path constants (anchored to the repo root via
   `Path(__file__).resolve().parents[2]`, independent of CWD), and E-utilities constants.
 
-### Output contract (`data/raw/{GENE}.json`)
+### Legacy output contract (`data/raw/{GENE}.json`)
 
-This is the interface handed to the next stage (Bronze). Each document has: `gene_symbol`,
+Output of `scripts/run_collection.py` only — the medallion pipeline does not consume it. Each document has: `gene_symbol`,
 `gene_info` (raw NCBI Gene esummary), `variants` (raw ClinVar rows, original 43 columns),
 `medgen_concepts` (raw + derived fields from `conceptmeta`), `hpo_terms` (each row enriched
 with `definition`/`synonyms`/`xrefs`), and `_provenance` (collection timestamp + source
 versions).
 
-### Known limitations (intentionally deferred to Bronze, not to fix here)
+### Known limitations (intentionally deferred to the Silver layer, not to fix here)
 
 - `variants` is ClinVar column names as-is (e.g. `#AlleleID`, `RS# (dbSNP)`) — no renaming.
 - `filter_clinvar` does exact matching on `GeneSymbol`, so ~0.3% of ClinVar rows where multiple
