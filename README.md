@@ -78,6 +78,7 @@ Démarrer la stack (Airflow 3 + PostgreSQL + MinIO, quatre buckets du médaillon
 cp .env.docker.example .env.docker
 # puis renseigner .env.docker, notamment :
 python3 -c "import secrets; print(secrets.token_urlsafe(32))"   # -> AIRFLOW_JWT_SECRET
+echo "AIRFLOW_UID=$(id -u)" >> .env.docker   # les conteneurs écrivent dans data/ du dépôt
 
 docker compose --env-file .env.docker up -d --build
 ```
