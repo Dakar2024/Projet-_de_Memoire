@@ -1,9 +1,15 @@
-# Système RAG génomique — Étape 1 : collecte de données (couche RAW)
+# Système RAG génomique — pipeline de données
 
-Première étape d'un pipeline de data engineering pour un système RAG d'interrogation de
-variants ADN. Cette étape **collecte** les données brutes depuis quatre sources publiques et
-les assemble en un document JSON par gène. Elle ne fait **que** cela : la normalisation
-(architecture médaillon Bronze/Silver/Gold), l'indexation et le RAG sont les étapes suivantes.
+Pipeline de data engineering pour un système RAG d'interrogation de variants ADN. Il collecte
+les données brutes de sources publiques et les organise en architecture médaillon à quatre
+couches : `raw` (format de la source), `bronze` (Parquet), `silver` et `gold` (Delta),
+orchestrées par Airflow sur MinIO. **Aujourd'hui**, la collecte et le dépôt en `raw` sont
+opérationnels ; les passages `raw → bronze → silver → gold` sont câblés mais pas encore
+implémentés (voir « Lancer le pipeline médaillon »). L'indexation et le RAG sont les étapes
+suivantes.
+
+Le script historique `scripts/run_collection.py` reste disponible : il assemble quatre sources
+en un document JSON par gène, décrit plus bas.
 
 ## Sources collectées
 
@@ -108,16 +114,16 @@ docker compose --env-file .env.docker exec airflow-scheduler \
   airflow dags trigger dag_acquisition_sources --logical-date 2026-09-01
 ```
 
-## Lancer la collecte via NiFi (optionnel)
+## NiFi : alternative évaluée et écartée
 
-`nifi/` fait tourner `run_collection.py` comme un flow Apache NiFi planifié (cron
-quotidien, routage succès/échec, journalisation) plutôt qu'un lancement manuel — voir
-`nifi/README.md`. NiFi ne fait qu'orchestrer cette étape : la logique de collecte reste
-intégralement dans `src/ingestion/`, inchangée et testée par `pytest` comme ci-dessus.
+`nifi/` contient un flow Apache NiFi qui orchestrait `run_collection.py`. Il est conservé pour
+documenter un choix évalué puis écarté avec mesures (voir `CLAUDE.md` et
+`docs/choix_contexte.md`) ; ce n'est plus un moyen de lancer le pipeline. L'orchestration
+active est assurée par Airflow (`dags/`).
 
 ## Schéma d'un `data/raw/{GENE}.json`
 
-Contrat de sortie de cette étape — c'est l'entrée de l'étape 2. Chaque document a ces clés :
+Sortie du script historique `run_collection.py` ; le pipeline médaillon ne la consomme pas. Chaque document a ces clés :
 
 | Clé | Type | Contenu |
 |---|---|---|
@@ -135,7 +141,7 @@ Contrat de sortie de cette étape — c'est l'entrée de l'étape 2. Chaque docu
 - **`variants` est incomplet d'environ 0,3 %** : `filter_clinvar` fait une correspondance
   exacte sur `GeneSymbol` et ignore donc les lignes ClinVar où plusieurs gènes sont joints par
   `;` (~270 associations, surtout ATM, PTEN, HBB, BRCA1, MYB). Les récupérer (`split(";")` +
-  explode) est une décision de modélisation qui appartient à Bronze.
+  explode) est une décision de modélisation qui appartient au Silver.
 - **Champs MedGen singuliers non exhaustifs** : `mim_number`, `mode_inheritance`,
   `clinical_summary` ne gardent que la **première** occurrence. Un concept peut en avoir
   plusieurs (beta Thalassemia a 2 MIM et 2 modes d'hérédité). Consommer les pluriels
