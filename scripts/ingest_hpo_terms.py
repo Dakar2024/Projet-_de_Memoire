@@ -44,8 +44,12 @@ def ingest_hpo_terms(
         flat_path.unlink(missing_ok=True)
 
     details = fetch_hpo_term_details([row["hpo_id"] for row in rows])
+    # Une ligne déposée par ligne du panel, même quand l'API ne reconnaît plus le
+    # terme (retiré ou fusionné) : ses détails restent vides plutôt que la ligne ne
+    # disparaisse. Construire les enregistrements depuis la réponse de l'API perdrait
+    # silencieusement ces termes, comme pour un CUI MedGen non résolu.
     records = [
-        {"hpo_id": hpo_id, "details": detail} for hpo_id, detail in details.items()
+        {**row, "details": details.get(row["hpo_id"], {})} for row in rows
     ]
 
     partition = partition_uri(RAW, "hpo_terms", logical_date, panel=panel, lake_uri=lake_uri)

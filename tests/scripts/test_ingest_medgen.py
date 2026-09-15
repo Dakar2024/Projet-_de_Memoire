@@ -1,10 +1,11 @@
 import gzip
 import json
+from unittest.mock import patch
 
 import responses
 
 from ingestion.http_client import NcbiClient, RateLimiter
-from ingestion.storage import get_bytes, partition_is_complete, put_bytes
+from ingestion.storage import get_bytes, open_stream, partition_is_complete, put_bytes
 from scripts.ingest_medgen import cuis_from_raw_clinvar, ingest_medgen
 
 ESEARCH = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
@@ -53,6 +54,19 @@ def test_cuis_from_raw_clinvar_deduplicates_in_order(tmp_path):
         "C0002895",
         "C9999999",
     ]
+
+
+def test_cuis_from_raw_clinvar_streams_the_bulk(tmp_path):
+    """Le bulk fait ~4 Go décompressés : il doit être lu par `open_stream`. Sur un
+    fichier de test de quelques octets, un chargement complet en mémoire donnerait le
+    même résultat — seule la vérification de l'appel attrape cette régression."""
+    partition = _seed_raw_clinvar(tmp_path)
+
+    with patch("scripts.ingest_medgen.open_stream", wraps=open_stream) as espion:
+        assert cuis_from_raw_clinvar(partition, ["HBB"]) == ["C0002895"]
+
+    assert espion.call_count == 1
+    assert espion.call_args.args[0] == f"{partition}/variant_summary.txt.gz"
 
 
 @responses.activate
