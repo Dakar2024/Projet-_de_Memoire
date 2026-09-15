@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-SPEC = "docs/superpowers/specs/2026-09-15-architecture-quatre-couches-design.md"
+from transformations import SPEC
 
 
 def raw_to_bronze(

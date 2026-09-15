@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from transformations.raw_to_bronze import SPEC
+from transformations import SPEC
 
 
 def silver_to_gold_rag(
@@ -12,5 +12,8 @@ def silver_to_gold_rag(
     références de citation (accession ClinVar, version, date de collecte).
     `chunk_id` est un hash déterministe du contenu, pour ne ré-embedder par `MERGE`
     que les documents modifiés. Lit le Silver, jamais `gold/analytique/`.
+
+    Interdit : nettoyer. Le Silver est la seule couche qui nettoie ; une donnée qui
+    arrive ici incorrecte se corrige dans `bronze_to_silver`, pas dans le Gold.
     """
     raise NotImplementedError(f"silver_to_gold_rag : implémenté par le sous-projet D ({SPEC}, §7)")
