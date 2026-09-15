@@ -156,7 +156,38 @@ agrégat.
 
 ---
 
-## 4. Contrôles qualité entre couches
+## 4. Orchestration par Airflow et contrôles qualité
+
+### 4.1 Rôle d'Airflow
+
+Airflow 3 reste l'ordonnanceur du pipeline, comme décidé le 2026-09-04. Il **déclenche,
+ordonne, surveille et rejoue** les tâches ; il ne transporte ni ne transforme aucune donnée.
+
+Concrètement, pour chaque passage de couche :
+
+| Qui | Fait quoi |
+|---|---|
+| **Airflow** | lance la tâche au bon moment, dans le bon ordre, avec la date logique `{{ ds }}` et le panel ; retente en cas d'échec transitoire ; bloque la suite si un contrôle échoue |
+| **Code Python dans `src/`** | contient toute la logique : ingestion, conversion Polars, règles Silver, mise en forme Gold |
+| **Polars** | exécute les calculs, **à l'intérieur du processus de la tâche** lancé par Airflow |
+| **MinIO** | stocke les quatre couches |
+
+Aucune logique métier ne réside dans un DAG. C'est ce qui permet de tester chaque
+transformation par `pytest` sans Airflow ni conteneur.
+
+Ce qui change par rapport au 2026-09-04 : chaque DAG gagne les tâches `raw_to_bronze`,
+`check_bronze`, `bronze_to_silver`, `silver_to_gold_rag` et `silver_to_gold_analytique`. Ce
+qui ne change pas : Airflow 3 avec `LocalExecutor`, métadonnées dans PostgreSQL, trois
+retries avec backoff, erreurs de configuration non retentées (`AirflowFailException`),
+déclenchement des DAGs de panel par un Asset.
+
+**Contrainte à vérifier au sous-projet B.** Avec `LocalExecutor`, les tâches s'exécutent dans
+le conteneur du scheduler, limité à 2 Go. La conversion du bulk ClinVar complet (~6 millions
+de lignes) doit tenir dans cette limite : elle se fait en mode lazy et en flux, jamais en
+chargeant le fichier en mémoire. Mesure de référence : 5 millions de lignes filtrées en
+mode eager ont occupé 928 Mo.
+
+### 4.2 Contrôles qualité entre couches
 
 Chaque passage est précédé d'une tâche de contrôle qui bloque la propagation en cas d'échec :
 `check_raw`, `check_bronze`, `quality_check_silver`.
