@@ -33,7 +33,11 @@ def require_logical_date(ds: str | None) -> str:
         raise ConfigurationError(
             f"date logique invalide : {ds!r} — format attendu AAAA-MM-JJ"
         )
-    return f"{ds[:7]}-01"
+    return _first_of_month(ds)
+
+
+def _first_of_month(date: str) -> str:
+    return f"{date[:7]}-01"
 
 
 def record_sources_date(outlet_events: Any, asset: Any, sources_date: str) -> None:
@@ -47,7 +51,7 @@ def resolve_sources_date(triggering_events: Any, asset: Any, conf: dict | None) 
     Priorité à l'événement d'Asset le plus récent qui porte une date : plusieurs
     événements s'accumulent si plusieurs acquisitions ont eu lieu depuis le dernier run
     de panel. À défaut (déclenchement manuel), `sources_date` de la configuration du
-    run, au format AAAA-MM-JJ.
+    run, au format AAAA-MM-JJ, ramenée au premier du mois comme la date d'acquisition.
     """
     events = triggering_events[asset] if triggering_events is not None else []
     dated = [
@@ -59,7 +63,7 @@ def resolve_sources_date(triggering_events: Any, asset: Any, conf: dict | None) 
         return max(dated)[1]
     candidate = (conf or {}).get(SOURCES_DATE_KEY)
     if candidate and LOGICAL_DATE_PATTERN.match(candidate):
-        return candidate
+        return _first_of_month(candidate)
     raise ConfigurationError(
         "date des sources absente : un run de panel lancé à la main doit fournir "
         "--conf '{\"sources_date\": \"AAAA-MM-JJ\"}'"
