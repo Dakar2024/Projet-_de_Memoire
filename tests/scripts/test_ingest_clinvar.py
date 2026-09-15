@@ -20,7 +20,7 @@ def test_ingest_clinvar_deposits_the_bulk_and_finalises_the_partition(tmp_path):
 
     partition = ingest_clinvar("2026-09-01", lake_uri=lake, cache_dir=tmp_path / "cache")
 
-    assert partition == f"{lake}/bronze/clinvar/dt=2026-09-01"
+    assert partition == f"{lake}/raw/clinvar/dt=2026-09-01"
     assert get_bytes(f"{partition}/variant_summary.txt.gz") == b"bulk gzippe"
     assert partition_is_complete(partition) is True
 
@@ -41,7 +41,7 @@ def test_ingest_clinvar_manifest_pins_the_source_version(tmp_path):
 
 @responses.activate
 def test_ingest_clinvar_deposits_the_bulk_unfiltered(tmp_path):
-    """Bronze est strictement brut : aucun filtrage sur le panel à ce stade."""
+    """La couche raw est strictement brute : aucun filtrage sur le panel à ce stade."""
     contenu = b"#AlleleID\tGeneSymbol\n1\tINCONNU\n2\tBRCA1\n"
     responses.add(responses.GET, ARCHIVE, body=contenu, status=200)
     lake = f"file://{tmp_path}/lake"

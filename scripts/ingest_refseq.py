@@ -1,4 +1,4 @@
-"""Ingestion du catalogue des transcrits RefSeq par panel en Bronze."""
+"""Ingestion du catalogue des transcrits RefSeq par panel dans la couche raw."""
 from __future__ import annotations
 
 import argparse
@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from ingestion.config import BRONZE
+from ingestion.config import RAW
 from ingestion.http_client import NcbiClient
 from ingestion.jsonl import dumps_gzipped
 from ingestion.refseq import fetch_transcripts
@@ -24,16 +24,16 @@ def ingest_refseq(
     client: NcbiClient,
     lake_uri: str | None = None,
 ) -> str:
-    """Dépose le catalogue des transcrits RefSeq du panel en Bronze.
+    """Dépose le catalogue des transcrits RefSeq du panel dans la couche raw.
 
     Un gène sans transcrit garde une entrée à liste vide : l'absence est une
-    information, et le verdict qualité appartient à `check_bronze`.
+    information, et le verdict qualité appartient à `check_raw`.
     """
     records = [
         {"gene_symbol": gene, "transcripts": fetch_transcripts(client, gene)}
         for gene in genes
     ]
-    partition = partition_uri(BRONZE, "refseq", logical_date, panel=panel, lake_uri=lake_uri)
+    partition = partition_uri(RAW, "refseq", logical_date, panel=panel, lake_uri=lake_uri)
     payload = dumps_gzipped(records)
     put_bytes(f"{partition}/{OBJECT_NAME}", payload)
 
@@ -53,7 +53,7 @@ def ingest_refseq(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Dépose les transcrits RefSeq en Bronze.")
+    parser = argparse.ArgumentParser(description="Dépose les transcrits RefSeq dans la couche raw.")
     parser.add_argument("--logical-date", required=True)
     parser.add_argument("--panel", required=True)
     parser.add_argument("--genes", required=True, help="symboles séparés par des virgules")

@@ -47,7 +47,7 @@ def filter_clinvar(source_path: Path, genes: list[str]) -> pl.DataFrame:
     `GeneSymbol` joint plusieurs gènes par `;` sont ignorées — environ 270 associations
     variant-gène sur 97 000 (0,3 %), surtout ATM, PTEN, HBB, BRCA1 et MYB. Éclater ces
     lignes ferait apparaître un même variant sous plusieurs gènes : c'est une décision de
-    modélisation qui appartient à la couche Bronze, pas à la couche RAW.
+    modélisation qui appartient à la couche Silver, pas à la couche raw.
     """
     return (
         pl.scan_csv(source_path, separator="\t", infer_schema_length=0)

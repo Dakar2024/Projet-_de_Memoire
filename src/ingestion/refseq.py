@@ -17,7 +17,7 @@ def fetch_transcripts(client: NcbiClient, gene_symbol: str) -> list[dict]:
 
     Un symbole que nuccore ne résout pas renvoie une liste vide plutôt qu'une
     erreur, comme l'absence de CUI MedGen résolvable ailleurs dans ce dépôt : le
-    verdict de complétude appartient à `check_bronze`, pas à l'ingestion.
+    verdict de complétude appartient à `check_raw`, pas à l'ingestion.
 
     Coût : un `esummary` par UID, soit ~6 à 8 appels par gène et ~120 sur le panel
     de 18 — plus lourd que `ncbi_gene.py`, qui n'en fait qu'un par gène. Le batching

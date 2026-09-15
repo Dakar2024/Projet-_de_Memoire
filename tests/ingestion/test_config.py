@@ -31,7 +31,7 @@ def test_eutils_base_url_is_https():
 
 from pathlib import Path
 
-from ingestion.config import BRONZE, GOLD, SILVER, current_lake_uri
+from ingestion.config import BRONZE, GOLD, RAW, SILVER, current_lake_uri
 
 
 def test_current_lake_uri_defaults_to_local_data_lake(monkeypatch):
@@ -47,5 +47,5 @@ def test_current_lake_uri_reads_environment(monkeypatch):
     assert current_lake_uri() == "s3://"
 
 
-def test_layer_names_are_the_three_medallion_buckets():
-    assert (BRONZE, SILVER, GOLD) == ("bronze", "silver", "gold")
+def test_layer_names_are_the_four_medallion_buckets():
+    assert (RAW, BRONZE, SILVER, GOLD) == ("raw", "bronze", "silver", "gold")

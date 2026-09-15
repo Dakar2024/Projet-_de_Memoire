@@ -33,7 +33,7 @@ def test_ingest_refseq_writes_one_record_per_gene(tmp_path):
 
     partition = ingest_refseq("2026-09-01", "brca", ["BRCA2"], _client(), lake_uri=lake)
 
-    assert partition == f"{lake}/bronze/refseq/dt=2026-09-01/panel=brca"
+    assert partition == f"{lake}/raw/refseq/dt=2026-09-01/panel=brca"
     assert _records(partition) == [{
         "gene_symbol": "BRCA2",
         "transcripts": [{"accessionversion": "NM_001432077.1", "slen": 11863}],
@@ -44,7 +44,7 @@ def test_ingest_refseq_writes_one_record_per_gene(tmp_path):
 @responses.activate
 def test_ingest_refseq_keeps_genes_without_transcripts(tmp_path):
     """Un gène sans transcrit garde son entrée : un symbole en échec doit rester
-    traçable depuis la partition, le verdict appartient à `check_bronze`."""
+    traçable depuis la partition, le verdict appartient à `check_raw`."""
     responses.add(responses.GET, ESEARCH,
                   json={"esearchresult": {"idlist": []}}, status=200)
     lake = f"file://{tmp_path}/lake"
