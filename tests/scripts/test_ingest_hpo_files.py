@@ -72,3 +72,56 @@ def test_an_interrupted_replay_leaves_the_partition_incomplete(tmp_path):
             ingest_hpo_files("2026-09-01", **kwargs)
 
     assert partition_is_complete(partition) is False
+
+
+def _refuse_network():
+    raise AssertionError("/releases/latest ne doit pas être interrogé")
+
+
+@responses.activate
+def test_a_replay_reuses_the_release_tag_of_the_existing_manifest(tmp_path):
+    """Rejouer un mois passé ne doit pas écraser sa partition avec la release courante :
+    le tag déjà inscrit au manifest prime sur `/releases/latest`."""
+    responses.add(responses.GET, RELEASE, body=b"contenu", status=200)
+    lake = f"file://{tmp_path}/lake"
+    ingest_hpo_files(
+        "2026-09-01", lake_uri=lake, cache_dir=tmp_path / "cache",
+        release_tag="v2026-09-01",
+    )
+
+    with patch("scripts.ingest_hpo_files.resolve_release_tag", side_effect=_refuse_network):
+        partition = ingest_hpo_files("2026-09-01", lake_uri=lake, cache_dir=tmp_path / "cache")
+
+    manifest = json.loads(get_bytes(f"{partition}/manifest.json"))
+    assert manifest["source_version"] == "v2026-09-01"
+
+
+@responses.activate
+def test_a_first_run_resolves_the_latest_release(tmp_path):
+    responses.add(responses.GET, RELEASE, body=b"contenu", status=200)
+    lake = f"file://{tmp_path}/lake"
+
+    with patch(
+        "scripts.ingest_hpo_files.resolve_release_tag", return_value="v2026-09-01"
+    ) as espion:
+        partition = ingest_hpo_files("2026-09-01", lake_uri=lake, cache_dir=tmp_path / "cache")
+
+    assert espion.call_count == 1
+    assert json.loads(get_bytes(f"{partition}/manifest.json"))["source_version"] == "v2026-09-01"
+
+
+@responses.activate
+def test_an_explicit_release_tag_overrides_the_existing_manifest(tmp_path):
+    other = RELEASE.replace("v2026-09-01", "v2026-10-01")
+    responses.add(responses.GET, RELEASE, body=b"contenu", status=200)
+    responses.add(responses.GET, other, body=b"autre", status=200)
+    lake = f"file://{tmp_path}/lake"
+    cache = tmp_path / "cache"
+    ingest_hpo_files("2026-09-01", lake_uri=lake, cache_dir=cache, release_tag="v2026-09-01")
+
+    with patch("scripts.ingest_hpo_files.resolve_release_tag", side_effect=_refuse_network):
+        partition = ingest_hpo_files(
+            "2026-09-01", lake_uri=lake, cache_dir=cache, release_tag="v2026-10-01"
+        )
+
+    assert json.loads(get_bytes(f"{partition}/manifest.json"))["source_version"] == "v2026-10-01"
