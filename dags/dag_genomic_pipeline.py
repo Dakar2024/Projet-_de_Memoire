@@ -10,6 +10,7 @@ sys.path[:0] = [str(REPO_ROOT / "src"), str(REPO_ROOT)]
 from airflow.sdk import DAG, task
 from airflow.sdk.exceptions import AirflowFailException
 
+from dags.common.dates import resolve_sources_date
 from dags.common.panels import PANEL_LABELS, PANEL_SOURCES, PANELS, SOURCES_READY
 from ingestion.errors import ConfigurationError
 from ingestion.http_client import NcbiClient
@@ -56,21 +57,36 @@ def build_panel_dag(panel: str, genes: list[str]) -> DAG:
         tags=["medaillon", panel],
     ) as dag:
 
+        @task(task_id="resolve_sources_date")
+        def task_resolve_sources_date(**context) -> str:
+            """Date des sources partagées : relue dans l'événement d'Asset, ou fournie
+            par `--conf` lors d'un déclenchement manuel. Un run de panel n'a pas de date
+            logique propre dans Airflow 3."""
+            dag_run = context.get("dag_run")
+            try:
+                return resolve_sources_date(
+                    context.get("triggering_asset_events"),
+                    SOURCES_READY,
+                    dag_run.conf if dag_run else None,
+                )
+            except ConfigurationError as exc:
+                raise AirflowFailException(str(exc)) from exc
+
         @task(task_id="ingest_ncbi_gene")
-        def task_ncbi_gene(**context) -> str:
-            return ingest_ncbi_gene(context["ds"], panel, genes, client_or_fail())
+        def task_ncbi_gene(sources_date: str) -> str:
+            return ingest_ncbi_gene(sources_date, panel, genes, client_or_fail())
 
         @task(task_id="ingest_refseq")
-        def task_refseq(**context) -> str:
-            return ingest_refseq(context["ds"], panel, genes, client_or_fail())
+        def task_refseq(sources_date: str) -> str:
+            return ingest_refseq(sources_date, panel, genes, client_or_fail())
 
         @task(task_id="ingest_hpo_terms")
-        def task_hpo_terms(**context) -> str:
-            return ingest_hpo_terms(context["ds"], panel, genes)
+        def task_hpo_terms(sources_date: str) -> str:
+            return ingest_hpo_terms(sources_date, panel, genes)
 
         @task(task_id="ingest_medgen")
-        def task_medgen(**context) -> str:
-            return ingest_medgen(context["ds"], panel, genes, client_or_fail())
+        def task_medgen(sources_date: str) -> str:
+            return ingest_medgen(sources_date, panel, genes, client_or_fail())
 
         @task(task_id="check_raw")
         def task_check_raw(
@@ -87,42 +103,46 @@ def build_panel_dag(panel: str, genes: list[str]) -> DAG:
             ])
 
         @task(task_id="raw_to_bronze")
-        def task_raw_to_bronze(**context) -> list[str]:
-            return raw_to_bronze(context["ds"], PANEL_SOURCES, panel=panel)
+        def task_raw_to_bronze(sources_date: str) -> list[str]:
+            return raw_to_bronze(sources_date, PANEL_SOURCES, panel=panel)
 
         @task(task_id="check_bronze")
         def task_check_bronze(bronze_partitions: list[str]) -> None:
             assert_partitions_complete(bronze_partitions)
 
         @task(task_id="bronze_to_silver")
-        def task_bronze_to_silver(**context) -> None:
-            bronze_to_silver(context["ds"], panel)
+        def task_bronze_to_silver(sources_date: str) -> None:
+            bronze_to_silver(sources_date, panel)
 
         @task(task_id="quality_check_silver")
-        def task_quality_check_silver(**context) -> None:
+        def task_quality_check_silver() -> None:
             raise NotImplementedError(
                 f"quality_check_silver : implémenté par le sous-projet C ({SPEC}, §7)"
             )
 
         @task(task_id="silver_to_gold_rag")
-        def task_silver_to_gold_rag(**context) -> None:
-            silver_to_gold_rag(context["ds"], panel)
+        def task_silver_to_gold_rag(sources_date: str) -> None:
+            silver_to_gold_rag(sources_date, panel)
 
         @task(task_id="silver_to_gold_analytique")
-        def task_silver_to_gold_analytique(**context) -> None:
-            silver_to_gold_analytique(context["ds"], panel)
+        def task_silver_to_gold_analytique(sources_date: str) -> None:
+            silver_to_gold_analytique(sources_date, panel)
 
+        sources_date = task_resolve_sources_date()
         checked_raw = task_check_raw(
-            task_ncbi_gene(), task_refseq(), task_hpo_terms(), task_medgen()
+            task_ncbi_gene(sources_date),
+            task_refseq(sources_date),
+            task_hpo_terms(sources_date),
+            task_medgen(sources_date),
         )
-        bronze = task_raw_to_bronze()
+        bronze = task_raw_to_bronze(sources_date)
         checked_raw >> bronze
         checked_bronze = task_check_bronze(bronze)
-        silver = task_bronze_to_silver()
+        silver = task_bronze_to_silver(sources_date)
         quality = task_quality_check_silver()
         checked_bronze >> silver >> quality >> [
-            task_silver_to_gold_rag(),
-            task_silver_to_gold_analytique(),
+            task_silver_to_gold_rag(sources_date),
+            task_silver_to_gold_analytique(sources_date),
         ]
 
     return dag
