@@ -19,6 +19,7 @@ en un document JSON par gène, décrit plus bas.
 | **NCBI Gene** | Métadonnées du gène (nom, description, localisation) | E-utilities (esearch + esummary) |
 | **MedGen** | Concepts maladie, MIM, mode d'hérédité, features HPO | E-utilities (esearch + esummary) |
 | **HPO** | Termes phénotypiques associés au gène, enrichis de leur definition/synonyms/xrefs | Fichier plat public (`genes_to_phenotype.txt`) + API `ontology.jax.org/api/hp/terms` (sans clé, par lots) |
+| **RefSeq** | Catalogue des transcrits de référence du gène (accession, version, longueur), pour la normalisation HGVS en Silver — pipeline médaillon uniquement | E-utilities (esearch + esummary sur `nuccore`) |
 
 Panel : **18 gènes** — cancer du sein héréditaire (12) + drépanocytose et modificateurs (6).
 Voir `src/ingestion/config.py`.
@@ -115,6 +116,19 @@ docker compose --env-file .env.docker exec airflow-scheduler \
   airflow dags trigger dag_acquisition_sources --logical-date 2026-09-01
 ```
 
+### Notes d'exploitation
+
+- Le DAG d'acquisition tourne le 10 du mois à 06:00 UTC (l'archive ClinVar du mois paraît
+  entre le 2 et le 6) ; sa date de travail est ramenée au 1er du mois (`dt=AAAA-MM-01`).
+- Quand plusieurs événements d'Asset se sont accumulés depuis le dernier run d'un DAG de
+  panel, celui-ci traite **le plus récent** : les mois intermédiaires ne sont pas traités.
+  Un mois sauté se rattrape à la main :
+
+  ```bash
+  docker compose --env-file .env.docker exec airflow-scheduler \
+    airflow dags trigger dag_genomic_pipeline_<panel> --conf '{"sources_date": "AAAA-MM-01"}'
+  ```
+
 ## NiFi : alternative évaluée et écartée
 
 `nifi/` contient un flow Apache NiFi qui orchestrait `run_collection.py`. Il est conservé pour
@@ -160,17 +174,35 @@ Sortie du script historique `run_collection.py` ; le pipeline médaillon ne la c
 
 ```
 src/ingestion/
-  config.py        panel de gènes, chemins, constantes
+  config.py        panel de gènes, chemins, couches du médaillon, constantes
   download.py      téléchargement atomique avec cache (partagé ClinVar/HPO)
   http_client.py   RateLimiter + NcbiClient (retry, rate limit)
-  clinvar.py       download + filtrage du bulk ClinVar
+  clinvar.py       URL d'archive mensuelle, download + filtrage du bulk ClinVar
   ncbi_gene.py     fetch_gene_info
+  refseq.py        fetch_transcripts (catalogue RefSeq par gène)
   medgen.py        extraction CUI, fetch concept, parsing conceptmeta
-  hpo.py           download + parsing genes_to_phenotype, enrichissement via l'API HPO
-  orchestrate.py   assemblage des 4 sources en un document par gène
+  hpo.py           release HPO, parsing genes_to_phenotype, enrichissement via l'API HPO
+  storage.py       E/S du lac (file:// ou s3://), partitions, manifest, _SUCCESS
+  jsonl.py         sérialisation JSONL gzippée des réponses d'API
+  errors.py        ConfigurationError (échec non retenté)
+  orchestrate.py   assemblage des 4 sources en un document par gène (CLI historique)
+src/transformations/
+  raw_to_bronze.py, bronze_to_silver.py, silver_to_gold_rag.py,
+  silver_to_gold_analytique.py   stubs documentés (sous-projets B, C, D)
 scripts/
-  run_collection.py   point d'entrée CLI
+  run_collection.py   CLI historique (un document JSON par gène)
+  ingest_*.py         dépôt d'une source dans la couche raw (clinvar, hpo_files,
+                      ncbi_gene, refseq, medgen, hpo_terms)
+dags/
+  dag_acquisition_sources.py   sources partagées (mensuel) : raw puis bronze, publie l'Asset
+  dag_genomic_pipeline.py      un DAG par panel, déclenché par l'Asset
+  common/                      panels, pool NCBI, résolution des dates
+docker/            image Airflow, création des buckets MinIO
+docker-compose.yml Airflow 3 + PostgreSQL + MinIO
+tests/             passe rapide (logique, sans réseau ni conteneur)
+tests_airflow/     structure des DAGs
 data/
   external/        fichiers sources téléchargés (gitignoré)
-  raw/             documents produits, un par gène (gitignoré)
+  raw/             documents produits par le CLI historique, un par gène (gitignoré)
+  lake/            lac local quand LAKE_URI n'est pas défini (gitignoré)
 ```
