@@ -1,6 +1,8 @@
 import gzip
 import json
+from unittest.mock import patch
 
+import pytest
 import responses
 
 from ingestion.http_client import NcbiClient, RateLimiter
@@ -47,3 +49,17 @@ def test_ingest_ncbi_gene_keeps_unresolved_genes_as_empty_summaries(tmp_path):
 
     raw = gzip.decompress(get_bytes(f"{partition}/gene_summaries.jsonl.gz")).decode()
     assert json.loads(raw.strip()) == {"gene_symbol": "HBS1L", "esummary": {}}
+
+
+@responses.activate
+def test_an_interrupted_replay_leaves_the_partition_incomplete(tmp_path):
+    responses.add(responses.GET, ESEARCH,
+                  json={"esearchresult": {"idlist": []}}, status=200)
+    lake = f"file://{tmp_path}/lake"
+    partition = ingest_ncbi_gene("2026-09-01", "sickle", ["HBS1L"], _client(), lake_uri=lake)
+
+    with patch("scripts.ingest_ncbi_gene.put_bytes", side_effect=OSError("connexion perdue en pleine écriture")):
+        with pytest.raises(OSError):
+            ingest_ncbi_gene("2026-09-01", "sickle", ["HBS1L"], _client(), lake_uri=lake)
+
+    assert partition_is_complete(partition) is False

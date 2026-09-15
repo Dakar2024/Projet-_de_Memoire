@@ -7,7 +7,9 @@ from botocore.exceptions import ClientError
 from ingestion.storage import (
     IncompletePartitionError,
     assert_partitions_complete,
+    begin_partition,
     build_manifest,
+    delete,
     exists,
     finalize_partition,
     get_bytes,
@@ -52,6 +54,10 @@ class FakeS3:
         if (Bucket, Key) not in self.objects:
             raise _client_error(404, "404")
         return {"ContentLength": len(self.objects[(Bucket, Key)])}
+
+    def delete_object(self, Bucket, Key):
+        # Comme S3 : supprimer une clé absente n'est pas une erreur.
+        self.objects.pop((Bucket, Key), None)
 
 
 class _Body:
@@ -323,3 +329,53 @@ def test_read_manifest_on_s3():
     finalize_partition(partition, manifest, client=client)
 
     assert read_manifest(partition, client=client)["source_version"] == "v2026-09-01"
+
+
+def test_delete_removes_a_local_object_and_tolerates_its_absence(tmp_path):
+    uri = f"file://{tmp_path}/raw/hpo/dt=2026-09-01/data.txt"
+    put_bytes(uri, b"x")
+
+    delete(uri)
+    delete(uri)
+
+    assert exists(uri) is False
+
+
+def test_delete_removes_an_s3_object():
+    client = FakeS3()
+    uri = "s3://raw/hpo/dt=2026-09-01/data.txt"
+    put_bytes(uri, b"x", client=client)
+
+    delete(uri, client=client)
+
+    assert exists(uri, client=client) is False
+
+
+def test_begin_partition_makes_a_complete_partition_incomplete(tmp_path):
+    """Un rejeu interrompu ne doit pas laisser l'ancien `_SUCCESS` à côté de données
+    à moitié réécrites : la partition redevient incomplète dès le début du rejeu."""
+    partition = f"file://{tmp_path}/raw/clinvar/dt=2026-09-01"
+    _finalize(partition)
+
+    begin_partition(partition)
+
+    assert partition_is_complete(partition) is False
+
+
+def test_begin_partition_on_a_new_partition_is_harmless(tmp_path):
+    begin_partition(f"file://{tmp_path}/raw/clinvar/dt=2026-09-01")
+
+
+def test_begin_partition_on_s3():
+    client = FakeS3()
+    partition = "s3://raw/clinvar/dt=2026-09-01"
+    begin_partition(partition, client=client)
+    manifest = build_manifest(
+        source="clinvar", logical_date="2026-09-01", source_url="u",
+        source_version="v", files={}, record_count=1,
+    )
+    finalize_partition(partition, manifest, client=client)
+
+    begin_partition(partition, client=client)
+
+    assert partition_is_complete(partition, client=client) is False

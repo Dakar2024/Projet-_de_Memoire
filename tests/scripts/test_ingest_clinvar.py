@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 import responses
 
 from ingestion.storage import get_bytes, partition_is_complete, put_file
@@ -65,3 +66,18 @@ def test_ingest_clinvar_uploads_the_bulk_from_disk_not_from_memory(tmp_path):
     assert espion.call_count == 1
     _uri, source = espion.call_args.args
     assert isinstance(source, Path), "le bulk doit être téléversé depuis un chemin"
+
+
+@responses.activate
+def test_an_interrupted_replay_leaves_the_partition_incomplete(tmp_path):
+    """Un rejeu qui échoue en cours d'écriture ne doit pas laisser l'ancien `_SUCCESS`
+    faire passer des données à moitié réécrites pour une partition complète."""
+    responses.add(responses.GET, ARCHIVE, body=b"bulk gzippe", status=200)
+    lake = f"file://{tmp_path}/lake"
+    partition = ingest_clinvar("2026-09-01", lake_uri=lake, cache_dir=tmp_path / "cache")
+
+    with patch("scripts.ingest_clinvar.put_file", side_effect=OSError("connexion perdue en pleine écriture")):
+        with pytest.raises(OSError):
+            ingest_clinvar("2026-09-01", lake_uri=lake, cache_dir=tmp_path / "cache")
+
+    assert partition_is_complete(partition) is False

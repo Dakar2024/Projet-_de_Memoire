@@ -10,6 +10,7 @@ from ingestion.config import DATA_EXTERNAL_DIR, RAW
 from ingestion.download import download_to_file
 from ingestion.hpo import release_url_for, resolve_release_tag
 from ingestion.storage import (
+    begin_partition,
     build_manifest,
     finalize_partition,
     partition_uri,
@@ -36,6 +37,7 @@ def ingest_hpo_files(
     local = download_to_file(url, cache_dir / f"genes_to_phenotype_{release_tag}.txt")
 
     partition = partition_uri(RAW, "hpo", logical_date, lake_uri=lake_uri)
+    begin_partition(partition)
     put_file(f"{partition}/{OBJECT_NAME}", local)
 
     finalize_partition(

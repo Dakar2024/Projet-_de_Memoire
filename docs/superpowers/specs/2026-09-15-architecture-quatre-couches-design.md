@@ -310,8 +310,20 @@ prendront le relais.
   tables Gold alimente l'application Streamlit annoncée dans le mémoire.
 - **Taux de reclassification** à confirmer sur le fichier ClinVar complet.
 - **Schéma explicite des JSONL** en Bronze, à définir au sous-projet B.
-- **Rejeu interrompu en `raw` et `bronze`.** Delta ferme la fenêtre d'incohérence en Silver et
-  en Gold, mais `raw` et `bronze` restent des fichiers simples sur stockage objet : un rejeu
-  interrompu peut y laisser un `_SUCCESS` ancien au-dessus de données nouvelles. Piste :
-  supprimer le `_SUCCESS` avant toute réécriture d'une partition. À trancher au sous-projet A
-  ou B.
+- ~~**Rejeu interrompu en `raw` et `bronze`.**~~ Résolu au sous-projet A : voir le protocole
+  d'écriture d'une partition ci-dessous.
+
+### Protocole d'écriture d'une partition (`raw`, puis `bronze`)
+
+`raw` et `bronze` sont des fichiers simples sur stockage objet, sans renommage atomique. Une
+partition s'écrit donc toujours dans cet ordre :
+
+1. **begin** : `begin_partition` supprime le `_SUCCESS` éventuel d'un run précédent ;
+2. **données** : dépôt des fichiers de la partition ;
+3. **manifest** : `manifest.json` ;
+4. **`_SUCCESS`** en dernier (`finalize_partition`).
+
+Un rejeu interrompu à n'importe quelle étape laisse une partition sans `_SUCCESS`, que
+`check_raw` ou `check_bronze` refuse : il ne peut plus y rester un `_SUCCESS` ancien au-dessus
+de données à moitié réécrites. La conversion `raw_to_bronze` (sous-projet B) suit le même
+protocole.

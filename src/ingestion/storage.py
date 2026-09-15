@@ -132,6 +132,15 @@ def exists(uri: str, client=None) -> bool:
     return _local_path(uri).exists()
 
 
+def delete(uri: str, client=None) -> None:
+    """Supprime un objet ; une absence n'est pas une erreur (comme `delete_object` S3)."""
+    if uri.startswith(S3_SCHEME):
+        bucket, key = _split_s3(uri)
+        (client or _s3_client()).delete_object(Bucket=bucket, Key=key)
+        return
+    _local_path(uri).unlink(missing_ok=True)
+
+
 def build_manifest(
     source: str,
     logical_date: str,
@@ -157,6 +166,17 @@ def build_manifest(
         "record_count": record_count,
         "written_at": datetime.now(timezone.utc).isoformat(),
     }
+
+
+def begin_partition(partition: str, client=None) -> None:
+    """Ouvre l'écriture d'une partition : retire son marqueur `_SUCCESS` éventuel.
+
+    Pendant de `finalize_partition`. Un rejeu réécrit la partition en place : sans
+    ce retrait, un rejeu interrompu laisserait l'ancien `_SUCCESS` à côté de données
+    à moitié réécrites, et la partition passerait pour complète. Le protocole est
+    donc begin → données → manifest → `_SUCCESS`.
+    """
+    delete(f"{partition}/{SUCCESS_MARKER}", client=client)
 
 
 def finalize_partition(partition: str, manifest: dict, client=None) -> None:
