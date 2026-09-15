@@ -1,0 +1,10 @@
+# Le Dockerfile ne copie que requirements.txt : le contexte de build n'a besoin de rien
+# d'autre. Exclure le reste accélère le build et évite d'y envoyer secrets et données.
+.git/
+venv/
+data/
+.env
+.env.*
+.superpowers/
+__pycache__/
+.pytest_cache/
