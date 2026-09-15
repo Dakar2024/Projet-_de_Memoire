@@ -581,7 +581,7 @@ if __name__ == "__main__":
 - [ ] **Step 8: Vérifier la suite complète**
 
 Run: `venv/bin/pytest -q`
-Expected: PASS, 116 passed, 1 deselected, en moins de 3 s
+Expected: PASS, 115 passed, 1 deselected, en moins de 3 s
 
 - [ ] **Step 9: Commit**
 
@@ -763,7 +763,7 @@ Expected: PASS, 4 passed
 - [ ] **Step 5: Vérifier la suite complète et l'absence de moteur**
 
 Run: `venv/bin/pytest -q && (grep -rnE "^(import|from) (polars|deltalake|pyspark|pandas)" src/transformations/ || echo "aucun moteur importe")`
-Expected: `120 passed, 1 deselected`, puis `aucun moteur importe`
+Expected: `119 passed, 1 deselected`, puis `aucun moteur importe`
 
 - [ ] **Step 6: Commit**
 
@@ -859,7 +859,7 @@ def assert_partitions_complete(partitions: list[str], client=None) -> None:
 - [ ] **Step 4: Vérifier la passe rapide**
 
 Run: `venv/bin/pytest -q`
-Expected: PASS, 122 passed, 1 deselected, en moins de 3 s
+Expected: PASS, 121 passed, 1 deselected, en moins de 3 s
 
 - [ ] **Step 5: Installer Airflow pour les tests de DAG**
 
@@ -1053,7 +1053,7 @@ with DAG(
 - [ ] **Step 10: Vérifier les deux passes**
 
 Run: `venv/bin/pytest tests_airflow -q && venv/bin/pytest -q`
-Expected: `8 passed` pour `tests_airflow`, puis `122 passed, 1 deselected` en moins de 3 s pour la passe rapide — qui ne doit pas avoir ralenti, puisqu'elle n'importe pas Airflow.
+Expected: `8 passed` pour `tests_airflow`, puis `121 passed, 1 deselected` en moins de 3 s pour la passe rapide — qui ne doit pas avoir ralenti, puisqu'elle n'importe pas Airflow.
 
 - [ ] **Step 11: Commit**
 
@@ -1309,7 +1309,7 @@ Expected: PASS, 9 passed
 - [ ] **Step 5: Vérifier les deux passes**
 
 Run: `venv/bin/pytest tests_airflow -q && venv/bin/pytest -q`
-Expected: `17 passed` pour `tests_airflow`, puis `122 passed, 1 deselected` en moins de 3 s
+Expected: `17 passed` pour `tests_airflow`, puis `121 passed, 1 deselected` en moins de 3 s
 
 - [ ] **Step 6: Commit**
 
@@ -1633,7 +1633,7 @@ git commit -m "feat: add the Airflow 3 + MinIO stack with four medallion buckets
 - [ ] **Passe rapide**
 
 Run: `venv/bin/pytest -q`
-Expected: `122 passed, 1 deselected`, en moins de 3 s, sans réseau ni conteneur
+Expected: `121 passed, 1 deselected`, en moins de 3 s, sans réseau ni conteneur
 
 - [ ] **Passe Airflow**
 
