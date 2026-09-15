@@ -87,6 +87,12 @@ def test_resolve_sources_date_falls_back_to_the_run_conf_when_manual():
     assert resolve_sources_date(FakeEvents([]), ASSET, {"sources_date": "2026-08-01"}) == "2026-08-01"
 
 
+def test_resolve_sources_date_normalises_a_manual_date_to_the_month():
+    """Les partitions partagées sont mensuelles : un jour quelconque saisi à la main
+    doit viser `dt=AAAA-MM-01`, pas une partition qui n'existe pas."""
+    assert resolve_sources_date(FakeEvents([]), ASSET, {"sources_date": "2026-08-15"}) == "2026-08-01"
+
+
 @pytest.mark.parametrize("conf", [None, {}, {"sources_date": "2026/08/01"}])
 def test_resolve_sources_date_explains_how_to_trigger_manually(conf):
     with pytest.raises(ConfigurationError, match="--conf"):

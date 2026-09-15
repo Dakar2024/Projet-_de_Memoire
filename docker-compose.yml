@@ -5,7 +5,7 @@ x-airflow-common: &airflow-common
   # Le dépôt est monté en écriture (`data/external/` reçoit le bulk ClinVar) : le
   # conteneur doit tourner sous le uid propriétaire de ces dossiers sur l'hôte. Groupe 0
   # et uid arbitraire, selon la convention de l'image officielle.
-  user: "${AIRFLOW_UID:-50000}:0"
+  user: "${AIRFLOW_UID:?AIRFLOW_UID obligatoire, sortie de id -u sur l hôte}:0"
   environment:
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
