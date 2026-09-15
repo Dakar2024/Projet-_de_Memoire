@@ -15,7 +15,9 @@ def raw_to_bronze(
     (marqueur `_SUCCESS` présent).
 
     Contrat de sortie : partitions `bronze/<source>/dt=<date>[/panel=<panel>]` en
-    Parquet, closes par `manifest.json` puis `_SUCCESS`. Renvoie leurs URI.
+    Parquet, écrites selon le même protocole que la couche raw : `begin_partition`
+    (retrait du `_SUCCESS` d'un run précédent), données, `manifest.json`, puis
+    `_SUCCESS`. Renvoie leurs URI.
 
     Règle : ce passage change le format et rien d'autre. Colonnes lues en chaînes,
     noms de colonnes normalisés, colonnes techniques `_source_version`,

@@ -13,6 +13,7 @@ from ingestion.config import RAW
 from ingestion.hpo import HP_TERMS_URL, fetch_hpo_term_details, parse_genes_to_phenotype
 from ingestion.jsonl import dumps_gzipped
 from ingestion.storage import (
+    begin_partition,
     build_manifest,
     finalize_partition,
     get_bytes,
@@ -53,6 +54,7 @@ def ingest_hpo_terms(
     ]
 
     partition = partition_uri(RAW, "hpo_terms", logical_date, panel=panel, lake_uri=lake_uri)
+    begin_partition(partition)
     payload = dumps_gzipped(records)
     put_bytes(f"{partition}/{OBJECT_NAME}", payload)
 

@@ -16,6 +16,7 @@ from ingestion.http_client import NcbiClient
 from ingestion.jsonl import dumps_gzipped
 from ingestion.medgen import extract_medgen_cuis, fetch_medgen_concept
 from ingestion.storage import (
+    begin_partition,
     build_manifest,
     finalize_partition,
     open_stream,
@@ -72,6 +73,7 @@ def ingest_medgen(
         {"cui": cui, "esummary": fetch_medgen_concept(client, cui)} for cui in cuis
     ]
     partition = partition_uri(RAW, "medgen", logical_date, panel=panel, lake_uri=lake_uri)
+    begin_partition(partition)
     payload = dumps_gzipped(records)
     put_bytes(f"{partition}/{OBJECT_NAME}", payload)
 

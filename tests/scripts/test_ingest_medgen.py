@@ -2,6 +2,7 @@ import gzip
 import json
 from unittest.mock import patch
 
+import pytest
 import responses
 
 from ingestion.http_client import NcbiClient, RateLimiter
@@ -98,3 +99,17 @@ def test_ingest_medgen_keeps_the_conceptmeta_xml_unparsed(tmp_path):
     )
     assert "mim_number" not in record["esummary"]
     assert record["esummary"]["conceptmeta"] == "<OMIM><MIM>603903</MIM></OMIM>"
+
+
+@responses.activate
+def test_an_interrupted_replay_leaves_the_partition_incomplete(tmp_path):
+    _seed_raw_clinvar(tmp_path)
+    _mock_one_concept()
+    lake = f"file://{tmp_path}/lake"
+    partition = ingest_medgen("2026-09-01", "sickle", ["HBB"], _client(), lake_uri=lake)
+
+    with patch("scripts.ingest_medgen.put_bytes", side_effect=OSError("connexion perdue en pleine écriture")):
+        with pytest.raises(OSError):
+            ingest_medgen("2026-09-01", "sickle", ["HBB"], _client(), lake_uri=lake)
+
+    assert partition_is_complete(partition) is False

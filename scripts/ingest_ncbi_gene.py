@@ -15,7 +15,13 @@ from ingestion.errors import ConfigurationError
 from ingestion.http_client import NcbiClient
 from ingestion.jsonl import dumps_gzipped
 from ingestion.ncbi_gene import fetch_gene_info
-from ingestion.storage import build_manifest, finalize_partition, partition_uri, put_bytes
+from ingestion.storage import (
+    begin_partition,
+    build_manifest,
+    finalize_partition,
+    partition_uri,
+    put_bytes,
+)
 
 OBJECT_NAME = "gene_summaries.jsonl.gz"
 
@@ -48,6 +54,7 @@ def ingest_ncbi_gene(
         for gene in genes
     ]
     partition = partition_uri(RAW, "ncbi_gene", logical_date, panel=panel, lake_uri=lake_uri)
+    begin_partition(partition)
     payload = dumps_gzipped(records)
     put_bytes(f"{partition}/{OBJECT_NAME}", payload)
 

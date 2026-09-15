@@ -1,6 +1,8 @@
 import gzip
 import json
+from unittest.mock import patch
 
+import pytest
 import responses
 
 from ingestion.http_client import NcbiClient, RateLimiter
@@ -68,3 +70,17 @@ def test_ingest_refseq_manifest_records_the_panel_and_count(tmp_path):
     assert manifest["source"] == "refseq"
     assert manifest["panel"] == "sickle"
     assert manifest["record_count"] == 2
+
+
+@responses.activate
+def test_an_interrupted_replay_leaves_the_partition_incomplete(tmp_path):
+    responses.add(responses.GET, ESEARCH,
+                  json={"esearchresult": {"idlist": []}}, status=200)
+    lake = f"file://{tmp_path}/lake"
+    partition = ingest_refseq("2026-09-01", "brca", ["INCONNU"], _client(), lake_uri=lake)
+
+    with patch("scripts.ingest_refseq.put_bytes", side_effect=OSError("connexion perdue en pleine écriture")):
+        with pytest.raises(OSError):
+            ingest_refseq("2026-09-01", "brca", ["INCONNU"], _client(), lake_uri=lake)
+
+    assert partition_is_complete(partition) is False

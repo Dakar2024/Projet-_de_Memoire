@@ -11,7 +11,13 @@ from ingestion.config import RAW
 from ingestion.http_client import NcbiClient
 from ingestion.jsonl import dumps_gzipped
 from ingestion.refseq import fetch_transcripts
-from ingestion.storage import build_manifest, finalize_partition, partition_uri, put_bytes
+from ingestion.storage import (
+    begin_partition,
+    build_manifest,
+    finalize_partition,
+    partition_uri,
+    put_bytes,
+)
 from scripts.ingest_ncbi_gene import build_client
 
 OBJECT_NAME = "transcripts.jsonl.gz"
@@ -34,6 +40,7 @@ def ingest_refseq(
         for gene in genes
     ]
     partition = partition_uri(RAW, "refseq", logical_date, panel=panel, lake_uri=lake_uri)
+    begin_partition(partition)
     payload = dumps_gzipped(records)
     put_bytes(f"{partition}/{OBJECT_NAME}", payload)
 

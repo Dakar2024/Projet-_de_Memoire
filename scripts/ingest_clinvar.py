@@ -10,6 +10,7 @@ from ingestion.clinvar import archive_url_for, archive_version_for
 from ingestion.config import DATA_EXTERNAL_DIR, RAW
 from ingestion.download import download_to_file
 from ingestion.storage import (
+    begin_partition,
     build_manifest,
     finalize_partition,
     partition_uri,
@@ -32,6 +33,7 @@ def ingest_clinvar(
     local = download_to_file(url, cache_dir / f"variant_summary_{archive_version_for(logical_date)}.txt.gz")
 
     partition = partition_uri(RAW, "clinvar", logical_date, lake_uri=lake_uri)
+    begin_partition(partition)
     put_file(f"{partition}/{OBJECT_NAME}", local)
 
     finalize_partition(
