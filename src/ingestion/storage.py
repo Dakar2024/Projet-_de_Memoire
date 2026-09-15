@@ -173,3 +173,18 @@ def finalize_partition(partition: str, manifest: dict, client=None) -> None:
 
 def partition_is_complete(partition: str, client=None) -> bool:
     return exists(f"{partition}/{SUCCESS_MARKER}", client=client)
+
+
+class IncompletePartitionError(RuntimeError):
+    """Une ou plusieurs partitions n'ont pas de marqueur `_SUCCESS`."""
+
+
+def assert_partitions_complete(partitions: list[str], client=None) -> None:
+    """Lève si une partition est incomplète, en les nommant toutes.
+
+    Utilisée par les tâches de contrôle des DAGs pour bloquer la propagation vers la
+    couche suivante. Toutes les partitions sont vérifiées avant de lever.
+    """
+    incomplete = [p for p in partitions if not partition_is_complete(p, client=client)]
+    if incomplete:
+        raise IncompletePartitionError("partitions incomplètes : " + ", ".join(incomplete))
