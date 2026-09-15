@@ -21,7 +21,7 @@ def test_ingest_hpo_files_deposits_the_flat_file_and_finalises_the_partition(tmp
         release_tag="v2026-09-01",
     )
 
-    assert partition == f"{lake}/bronze/hpo/dt=2026-09-01"
+    assert partition == f"{lake}/raw/hpo/dt=2026-09-01"
     assert get_bytes(f"{partition}/genes_to_phenotype.txt") == b"ncbi_gene_id\tgene_symbol\n"
     assert partition_is_complete(partition) is True
 

@@ -69,25 +69,25 @@ class _Body:
 
 
 def test_layer_uri_joins_a_local_directory():
-    assert layer_uri("bronze", "file:///tmp/lac/") == "file:///tmp/lac/bronze"
+    assert layer_uri("raw", "file:///tmp/lac/") == "file:///tmp/lac/raw"
 
 
 def test_layer_uri_treats_each_layer_as_a_bucket_on_s3():
-    assert layer_uri("bronze", "s3://") == "s3://bronze"
+    assert layer_uri("raw", "s3://") == "s3://raw"
 
 
 def test_partition_uri_without_panel():
-    uri = partition_uri("bronze", "clinvar", "2026-09-01", lake_uri="s3://")
-    assert uri == "s3://bronze/clinvar/dt=2026-09-01"
+    uri = partition_uri("raw", "clinvar", "2026-09-01", lake_uri="s3://")
+    assert uri == "s3://raw/clinvar/dt=2026-09-01"
 
 
 def test_partition_uri_with_panel():
-    uri = partition_uri("bronze", "medgen", "2026-09-01", panel="brca", lake_uri="s3://")
-    assert uri == "s3://bronze/medgen/dt=2026-09-01/panel=brca"
+    uri = partition_uri("raw", "medgen", "2026-09-01", panel="brca", lake_uri="s3://")
+    assert uri == "s3://raw/medgen/dt=2026-09-01/panel=brca"
 
 
 def test_put_and_get_bytes_on_local_filesystem(tmp_path):
-    uri = f"file://{tmp_path}/bronze/clinvar/dt=2026-09-01/data.txt"
+    uri = f"file://{tmp_path}/raw/clinvar/dt=2026-09-01/data.txt"
     put_bytes(uri, b"contenu")
     assert get_bytes(uri) == b"contenu"
     assert exists(uri) is True
@@ -95,9 +95,9 @@ def test_put_and_get_bytes_on_local_filesystem(tmp_path):
 
 def test_put_and_get_bytes_on_s3():
     client = FakeS3()
-    uri = "s3://bronze/clinvar/dt=2026-09-01/data.txt"
+    uri = "s3://raw/clinvar/dt=2026-09-01/data.txt"
     put_bytes(uri, b"contenu", client=client)
-    assert client.objects[("bronze", "clinvar/dt=2026-09-01/data.txt")] == b"contenu"
+    assert client.objects[("raw", "clinvar/dt=2026-09-01/data.txt")] == b"contenu"
     assert get_bytes(uri, client=client) == b"contenu"
 
 
@@ -107,9 +107,9 @@ def test_put_file_streams_from_disk(tmp_path):
     source.write_bytes(b"donnees volumineuses")
     client = FakeS3()
 
-    put_file("s3://bronze/clinvar/dt=2026-09-01/bulk.gz", source, client=client)
+    put_file("s3://raw/clinvar/dt=2026-09-01/bulk.gz", source, client=client)
 
-    assert client.objects[("bronze", "clinvar/dt=2026-09-01/bulk.gz")] == b"donnees volumineuses"
+    assert client.objects[("raw", "clinvar/dt=2026-09-01/bulk.gz")] == b"donnees volumineuses"
 
 
 def test_exists_is_false_for_missing_object(tmp_path):
@@ -119,7 +119,7 @@ def test_exists_is_false_for_missing_object(tmp_path):
 def test_open_stream_reads_without_materialising_the_whole_object(tmp_path):
     """Le bulk ClinVar fait 442 Mo compressés (~4 Go décompressés) : les
     consommateurs doivent pouvoir le parcourir sans le charger en mémoire."""
-    uri = f"file://{tmp_path}/bronze/clinvar/dt=2026-09-01/data.bin"
+    uri = f"file://{tmp_path}/raw/clinvar/dt=2026-09-01/data.bin"
     put_bytes(uri, b"premier|second")
 
     with open_stream(uri) as stream:
@@ -129,7 +129,7 @@ def test_open_stream_reads_without_materialising_the_whole_object(tmp_path):
 
 def test_open_stream_reads_from_s3():
     client = FakeS3()
-    uri = "s3://bronze/clinvar/dt=2026-09-01/data.bin"
+    uri = "s3://raw/clinvar/dt=2026-09-01/data.bin"
     put_bytes(uri, b"flux s3", client=client)
 
     with open_stream(uri, client=client) as stream:
@@ -155,7 +155,7 @@ def test_build_manifest_records_source_version_and_sizes():
 
 
 def test_finalize_partition_writes_manifest_then_success_marker(tmp_path):
-    partition = f"file://{tmp_path}/bronze/clinvar/dt=2026-09-01"
+    partition = f"file://{tmp_path}/raw/clinvar/dt=2026-09-01"
     manifest = build_manifest(
         source="clinvar", logical_date="2026-09-01", source_url="u",
         source_version="v", files={}, record_count=0,
@@ -169,7 +169,7 @@ def test_finalize_partition_writes_manifest_then_success_marker(tmp_path):
 
 
 def test_partition_is_complete_only_after_finalize(tmp_path):
-    partition = f"file://{tmp_path}/bronze/hpo/dt=2026-09-01"
+    partition = f"file://{tmp_path}/raw/hpo/dt=2026-09-01"
     put_bytes(f"{partition}/genes_to_phenotype.txt.gz", b"x")
 
     assert partition_is_complete(partition) is False
@@ -184,13 +184,13 @@ def test_partition_is_complete_only_after_finalize(tmp_path):
 
 def test_exists_propagates_a_permission_error_instead_of_reporting_absence():
     """Un 403 n'est pas une absence : le confondre ferait lire une partition
-    complète comme incomplète, et `check_bronze` échouerait pour la mauvaise raison."""
+    complète comme incomplète, et `check_raw` échouerait pour la mauvaise raison."""
     class Forbidden(FakeS3):
         def head_object(self, Bucket, Key):
             raise _client_error(403, "403")
 
     with pytest.raises(ClientError):
-        exists("s3://bronze/clinvar/dt=2026-09-01/data.txt", client=Forbidden())
+        exists("s3://raw/clinvar/dt=2026-09-01/data.txt", client=Forbidden())
 
 
 def test_exists_propagates_a_connection_failure():
@@ -202,7 +202,7 @@ def test_exists_propagates_a_connection_failure():
             raise EndpointConnectionError(endpoint_url="http://minio:9000")
 
     with pytest.raises(EndpointConnectionError):
-        exists("s3://bronze/clinvar/dt=2026-09-01/data.txt", client=Unreachable())
+        exists("s3://raw/clinvar/dt=2026-09-01/data.txt", client=Unreachable())
 
 
 @pytest.mark.integration
@@ -210,9 +210,9 @@ def test_storage_round_trip_against_a_real_minio():
     """Le client factice valide la logique ; ce test valide le contrat S3 réel.
 
     Exclu de la passe rapide (`addopts = -m "not integration"`). Prérequis :
-    un MinIO joignable et les variables AWS_* renseignées, avec un bucket `bronze`.
+    un MinIO joignable et les variables AWS_* renseignées, avec un bucket `raw`.
     """
-    partition = partition_uri("bronze", "test_integration", "2026-09-01", lake_uri="s3://")
+    partition = partition_uri("raw", "test_integration", "2026-09-01", lake_uri="s3://")
     put_bytes(f"{partition}/data.txt", b"aller-retour")
 
     assert get_bytes(f"{partition}/data.txt") == b"aller-retour"

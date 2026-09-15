@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from ingestion.config import BRONZE, DATA_EXTERNAL_DIR
+from ingestion.config import DATA_EXTERNAL_DIR, RAW
 from ingestion.download import download_to_file
 from ingestion.hpo import release_url_for, resolve_release_tag
 from ingestion.storage import (
@@ -25,7 +25,7 @@ def ingest_hpo_files(
     cache_dir: Path | None = None,
     release_tag: str | None = None,
 ) -> str:
-    """Dépose `genes_to_phenotype.txt` en Bronze, épinglé sur un tag de release.
+    """Dépose `genes_to_phenotype.txt` dans la couche raw, épinglé sur un tag de release.
 
     Le tag résolu est inscrit au manifest : c'est lui, et non la date du run, qui
     identifie la version de la source.
@@ -35,7 +35,7 @@ def ingest_hpo_files(
     cache_dir = cache_dir or DATA_EXTERNAL_DIR
     local = download_to_file(url, cache_dir / f"genes_to_phenotype_{release_tag}.txt")
 
-    partition = partition_uri(BRONZE, "hpo", logical_date, lake_uri=lake_uri)
+    partition = partition_uri(RAW, "hpo", logical_date, lake_uri=lake_uri)
     put_file(f"{partition}/{OBJECT_NAME}", local)
 
     finalize_partition(
@@ -53,7 +53,7 @@ def ingest_hpo_files(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Dépose les fichiers plats HPO en Bronze.")
+    parser = argparse.ArgumentParser(description="Dépose les fichiers plats HPO dans la couche raw.")
     parser.add_argument("--logical-date", required=True)
     parser.add_argument("--lake-uri", default=None)
     parser.add_argument("--release-tag", default=None, help="défaut : résolu depuis /releases/latest")

@@ -14,8 +14,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_EXTERNAL_DIR = PROJECT_ROOT / "data" / "external"
 DATA_RAW_DIR = PROJECT_ROOT / "data" / "raw"
 
-# Couches du médaillon. Sur MinIO, chaque couche est un bucket ; en local, un
-# sous-dossier de DEFAULT_LAKE_DIR.
+# Couches du médaillon : raw (format de la source), bronze (Parquet), silver et
+# gold (Delta). Sur MinIO, chaque couche est un bucket ; en local, un sous-dossier
+# de DEFAULT_LAKE_DIR.
+RAW = "raw"
 BRONZE = "bronze"
 SILVER = "silver"
 GOLD = "gold"

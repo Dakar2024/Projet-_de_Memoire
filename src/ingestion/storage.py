@@ -20,7 +20,7 @@ MANIFEST_NAME = "manifest.json"
 def layer_uri(layer: str, lake_uri: str | None = None) -> str:
     """URI d'une couche du médaillon.
 
-    Sur MinIO chaque couche est un bucket (`s3://bronze`) ; en local c'est un
+    Sur MinIO chaque couche est un bucket (`s3://raw`) ; en local c'est un
     sous-dossier de la racine du lac.
     """
     base = lake_uri if lake_uri is not None else current_lake_uri()
@@ -141,7 +141,7 @@ def build_manifest(
     record_count: int,
     panel: str | None = None,
 ) -> dict:
-    """Décrit une partition Bronze de façon auto-portante.
+    """Décrit une partition de façon auto-portante.
 
     `source_version` est la version épinglée de la source (mois d'archive ClinVar,
     tag de release HPO), et non l'horodatage local : c'est ce qui rend deux rejeux

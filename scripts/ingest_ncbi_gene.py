@@ -1,4 +1,4 @@
-"""Ingestion des métadonnées NCBI Gene par panel en Bronze."""
+"""Ingestion des métadonnées NCBI Gene par panel dans la couche raw."""
 from __future__ import annotations
 
 import argparse
@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from dotenv import load_dotenv
 
-from ingestion.config import BRONZE
+from ingestion.config import RAW
 from ingestion.errors import ConfigurationError
 from ingestion.http_client import NcbiClient
 from ingestion.jsonl import dumps_gzipped
@@ -38,16 +38,16 @@ def ingest_ncbi_gene(
     client: NcbiClient,
     lake_uri: str | None = None,
 ) -> str:
-    """Dépose les esummary NCBI Gene du panel en Bronze, un enregistrement par gène.
+    """Dépose les esummary NCBI Gene du panel dans la couche raw, un enregistrement par gène.
 
     Un gène que NCBI Gene ne résout pas conserve une entrée à `esummary` vide : le
-    verdict qualité appartient à la tâche `check_bronze`, pas à l'ingestion.
+    verdict qualité appartient à la tâche `check_raw`, pas à l'ingestion.
     """
     records = [
         {"gene_symbol": gene, "esummary": fetch_gene_info(client, gene)}
         for gene in genes
     ]
-    partition = partition_uri(BRONZE, "ncbi_gene", logical_date, panel=panel, lake_uri=lake_uri)
+    partition = partition_uri(RAW, "ncbi_gene", logical_date, panel=panel, lake_uri=lake_uri)
     payload = dumps_gzipped(records)
     put_bytes(f"{partition}/{OBJECT_NAME}", payload)
 
@@ -67,7 +67,7 @@ def ingest_ncbi_gene(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Dépose les métadonnées NCBI Gene en Bronze.")
+    parser = argparse.ArgumentParser(description="Dépose les métadonnées NCBI Gene dans la couche raw.")
     parser.add_argument("--logical-date", required=True)
     parser.add_argument("--panel", required=True)
     parser.add_argument("--genes", required=True, help="symboles séparés par des virgules")

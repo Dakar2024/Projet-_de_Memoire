@@ -28,7 +28,7 @@ def test_ingest_ncbi_gene_writes_one_jsonl_record_per_gene(tmp_path):
 
     partition = ingest_ncbi_gene("2026-09-01", "sickle", ["HBB"], _client(), lake_uri=lake)
 
-    assert partition == f"{lake}/bronze/ncbi_gene/dt=2026-09-01/panel=sickle"
+    assert partition == f"{lake}/raw/ncbi_gene/dt=2026-09-01/panel=sickle"
     raw = gzip.decompress(get_bytes(f"{partition}/gene_summaries.jsonl.gz")).decode()
     records = [json.loads(line) for line in raw.splitlines()]
     assert records == [{"gene_symbol": "HBB", "esummary": {"name": "HBB"}}]
