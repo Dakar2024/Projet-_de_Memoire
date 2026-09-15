@@ -5,6 +5,9 @@ x-airflow-common: &airflow-common
   environment:
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    # Plafond de tâches simultanées : avec LocalExecutor chaque tâche est un processus du
+    # conteneur scheduler (limité à 2g sur le VPS). Le défaut de 32 risquerait l'OOM.
+    AIRFLOW__CORE__PARALLELISM: "4"
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:${POSTGRES_PASSWORD}@postgres:5432/airflow
     AIRFLOW__CORE__DAGS_FOLDER: /opt/projet/dags
     # Les tâches joignent l'API d'exécution de l'api-server : localhost désignerait
@@ -95,7 +98,16 @@ services:
 
   airflow-init:
     <<: *airflow-common
-    command: ["db", "migrate"]
+    # Migration puis création du pool `ncbi` (NCBI_POOL des DAGs) : un slot, parce que le
+    # limiteur de débit NCBI est par processus. `pools set` écrase le pool existant, donc
+    # la commande est idempotente. `bash` passe par l'entrypoint de l'image, qui prépare
+    # l'utilisateur au uid arbitraire avant d'exécuter la commande.
+    command:
+      - bash
+      - -c
+      - >-
+        airflow db migrate &&
+        airflow pools set ncbi 1 "E-utilities NCBI : une tâche à la fois, limite de débit globale"
     restart: "no"
 
   airflow-apiserver:

@@ -1,6 +1,6 @@
 import pytest
 
-from dags.common.panels import SOURCES_READY
+from dags.common.panels import NCBI_POOL, SOURCES_READY
 from dags.dag_genomic_pipeline import build_panel_dag
 
 INGESTIONS = {"ingest_ncbi_gene", "ingest_refseq", "ingest_hpo_terms", "ingest_medgen"}
@@ -56,6 +56,16 @@ def test_the_two_gold_outputs_read_silver_not_each_other(dag):
         "quality_check_silver",
         "resolve_sources_date",
     }
+
+
+def test_ncbi_ingestions_share_a_single_slot_pool(dag):
+    """Le limiteur de débit NCBI est par processus : deux panels en parallèle
+    dépasseraient la limite globale. Le pool sérialise les tâches E-utilities ;
+    les termes HPO interrogent ontology.jax.org et n'y ont pas leur place."""
+    assert NCBI_POOL == "ncbi"
+    for task_id in ("ingest_ncbi_gene", "ingest_refseq", "ingest_medgen"):
+        assert dag.get_task(task_id).pool == NCBI_POOL
+    assert dag.get_task("ingest_hpo_terms").pool != NCBI_POOL
 
 
 def test_transient_failures_are_retried(dag):

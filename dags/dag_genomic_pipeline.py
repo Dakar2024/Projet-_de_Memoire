@@ -11,7 +11,13 @@ from airflow.sdk import DAG, task
 from airflow.sdk.exceptions import AirflowFailException
 
 from dags.common.dates import resolve_sources_date
-from dags.common.panels import PANEL_LABELS, PANEL_SOURCES, PANELS, SOURCES_READY
+from dags.common.panels import (
+    NCBI_POOL,
+    PANEL_LABELS,
+    PANEL_SOURCES,
+    PANELS,
+    SOURCES_READY,
+)
 from ingestion.errors import ConfigurationError
 from ingestion.http_client import NcbiClient
 from ingestion.storage import assert_partitions_complete
@@ -72,11 +78,14 @@ def build_panel_dag(panel: str, genes: list[str]) -> DAG:
             except ConfigurationError as exc:
                 raise AirflowFailException(str(exc)) from exc
 
-        @task(task_id="ingest_ncbi_gene")
+        # Les trois ingestions NCBI passent par un pool à un slot : le limiteur de débit
+        # est par processus, il ne protège pas contre des tâches parallèles. Les termes
+        # HPO interrogent ontology.jax.org et restent hors du pool.
+        @task(task_id="ingest_ncbi_gene", pool=NCBI_POOL)
         def task_ncbi_gene(sources_date: str) -> str:
             return ingest_ncbi_gene(sources_date, panel, genes, client_or_fail())
 
-        @task(task_id="ingest_refseq")
+        @task(task_id="ingest_refseq", pool=NCBI_POOL)
         def task_refseq(sources_date: str) -> str:
             return ingest_refseq(sources_date, panel, genes, client_or_fail())
 
@@ -84,7 +93,7 @@ def build_panel_dag(panel: str, genes: list[str]) -> DAG:
         def task_hpo_terms(sources_date: str) -> str:
             return ingest_hpo_terms(sources_date, panel, genes)
 
-        @task(task_id="ingest_medgen")
+        @task(task_id="ingest_medgen", pool=NCBI_POOL)
         def task_medgen(sources_date: str) -> str:
             return ingest_medgen(sources_date, panel, genes, client_or_fail())
 
