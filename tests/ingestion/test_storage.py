@@ -17,6 +17,7 @@ from ingestion.storage import (
     partition_uri,
     put_bytes,
     put_file,
+    read_manifest,
 )
 
 
@@ -226,10 +227,10 @@ def test_storage_round_trip_against_a_real_minio():
     assert partition_is_complete(partition) is True
 
 
-def _finalize(partition):
+def _finalize(partition, record_count=1):
     finalize_partition(partition, build_manifest(
         source="s", logical_date="2026-09-01", source_url="u",
-        source_version="v", files={}, record_count=0,
+        source_version="v", files={}, record_count=record_count,
     ))
 
 
@@ -257,3 +258,68 @@ def test_assert_partitions_complete_names_every_incomplete_partition(tmp_path):
     assert missing_a in message
     assert missing_b in message
     assert complete not in message
+
+
+def test_assert_partitions_complete_rejects_an_empty_list():
+    """Une liste vide ne prouve rien : un contrôle qui réussirait sans rien vérifier
+    laisserait passer une tâche amont qui n'a renvoyé aucune partition."""
+    with pytest.raises(IncompletePartitionError):
+        assert_partitions_complete([])
+
+
+def test_assert_partitions_complete_rejects_a_partition_without_records(tmp_path):
+    """`_SUCCESS` atteste que l'écriture est allée au bout, pas qu'elle a produit
+    quelque chose : une partition finalisée vide ne doit pas alimenter bronze."""
+    empty = f"file://{tmp_path}/raw/medgen/dt=2026-09-01/panel=brca"
+    _finalize(empty, record_count=0)
+
+    with pytest.raises(IncompletePartitionError, match="record_count nul") as excinfo:
+        assert_partitions_complete([empty])
+
+    assert empty in str(excinfo.value)
+
+
+def test_assert_partitions_complete_rejects_a_manifest_without_record_count(tmp_path):
+    partition = f"file://{tmp_path}/raw/hpo/dt=2026-09-01"
+    finalize_partition(partition, {"source": "hpo"})
+
+    with pytest.raises(IncompletePartitionError, match="record_count nul"):
+        assert_partitions_complete([partition])
+
+
+def test_assert_partitions_complete_names_every_failure_with_its_reason(tmp_path):
+    missing = f"file://{tmp_path}/raw/hpo/dt=2026-09-01"
+    empty = f"file://{tmp_path}/raw/medgen/dt=2026-09-01/panel=brca"
+    _finalize(empty, record_count=0)
+
+    with pytest.raises(IncompletePartitionError) as excinfo:
+        assert_partitions_complete([missing, empty])
+
+    message = str(excinfo.value)
+    assert f"{missing} (_SUCCESS absent)" in message
+    assert f"{empty} (record_count nul)" in message
+
+
+def test_read_manifest_returns_the_written_manifest(tmp_path):
+    partition = f"file://{tmp_path}/raw/hpo/dt=2026-09-01"
+    _finalize(partition)
+
+    assert read_manifest(partition)["source"] == "s"
+
+
+def test_read_manifest_returns_none_when_the_partition_has_none(tmp_path):
+    assert read_manifest(f"file://{tmp_path}/raw/hpo/dt=2026-09-01") is None
+
+
+def test_read_manifest_on_s3():
+    client = FakeS3()
+    partition = "s3://raw/hpo/dt=2026-09-01"
+    assert read_manifest(partition, client=client) is None
+
+    manifest = build_manifest(
+        source="hpo", logical_date="2026-09-01", source_url="u",
+        source_version="v2026-09-01", files={}, record_count=1,
+    )
+    finalize_partition(partition, manifest, client=client)
+
+    assert read_manifest(partition, client=client)["source_version"] == "v2026-09-01"

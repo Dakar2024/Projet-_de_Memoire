@@ -171,20 +171,45 @@ def finalize_partition(partition: str, manifest: dict, client=None) -> None:
     put_bytes(f"{partition}/{SUCCESS_MARKER}", b"", client=client)
 
 
+def read_manifest(partition: str, client=None) -> dict | None:
+    """Manifest d'une partition, ou None si elle n'en a pas."""
+    uri = f"{partition}/{MANIFEST_NAME}"
+    if not exists(uri, client=client):
+        return None
+    return json.loads(get_bytes(uri, client=client))
+
+
 def partition_is_complete(partition: str, client=None) -> bool:
     return exists(f"{partition}/{SUCCESS_MARKER}", client=client)
 
 
 class IncompletePartitionError(RuntimeError):
-    """Une ou plusieurs partitions n'ont pas de marqueur `_SUCCESS`."""
+    """Une ou plusieurs partitions sont incomplètes ou vides."""
 
 
 def assert_partitions_complete(partitions: list[str], client=None) -> None:
-    """Lève si une partition est incomplète, en les nommant toutes.
+    """Lève si une partition est incomplète ou vide, en les nommant toutes.
 
     Utilisée par les tâches de contrôle des DAGs pour bloquer la propagation vers la
     couche suivante. Toutes les partitions sont vérifiées avant de lever.
+
+    Contrôle de complétude et de non-vacuité seulement : `_SUCCESS` présent et
+    `record_count` du manifest strictement positif. Les contrôles de contenu
+    (colonnes attendues, gènes résolus) relèvent de `check_bronze`.
     """
-    incomplete = [p for p in partitions if not partition_is_complete(p, client=client)]
-    if incomplete:
-        raise IncompletePartitionError("partitions incomplètes : " + ", ".join(incomplete))
+    if not partitions:
+        # Une liste vide ferait réussir le contrôle sans rien vérifier.
+        raise IncompletePartitionError("aucune partition à contrôler")
+    failures = []
+    for partition in partitions:
+        if not partition_is_complete(partition, client=client):
+            failures.append(f"{partition} (_SUCCESS absent)")
+            continue
+        manifest = read_manifest(partition, client=client) or {}
+        record_count = manifest.get("record_count")
+        if not isinstance(record_count, int) or record_count <= 0:
+            failures.append(f"{partition} (record_count nul)")
+    if failures:
+        raise IncompletePartitionError(
+            "partitions incomplètes ou vides : " + ", ".join(failures)
+        )
