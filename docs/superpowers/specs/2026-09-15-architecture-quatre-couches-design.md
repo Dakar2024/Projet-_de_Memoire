@@ -167,10 +167,16 @@ Concrètement, pour chaque passage de couche :
 
 | Qui | Fait quoi |
 |---|---|
-| **Airflow** | lance la tâche au bon moment, dans le bon ordre, avec la date logique `{{ ds }}` et le panel ; retente en cas d'échec transitoire ; bloque la suite si un contrôle échoue |
+| **Airflow** | lance la tâche au bon moment, dans le bon ordre, avec la date de travail et le panel ; retente en cas d'échec transitoire ; bloque la suite si un contrôle échoue |
 | **Code Python dans `src/`** | contient toute la logique : ingestion, conversion Polars, règles Silver, mise en forme Gold |
 | **Polars** | exécute les calculs, **à l'intérieur du processus de la tâche** lancé par Airflow |
 | **MinIO** | stocke les quatre couches |
+
+**Date de travail.** Dans Airflow 3, seuls les runs planifiés ont une date logique : un
+run déclenché par un Asset, ou lancé à la main sans `--logical-date`, n'a pas de `ds`. Le
+DAG d'acquisition travaille sur sa date logique et l'inscrit dans l'événement d'Asset qu'il
+publie ; les DAGs de panel relisent cette date dans l'événement (ou dans `--conf` pour un
+run manuel). Toutes les partitions d'un même mois portent ainsi la même date `dt=`.
 
 Aucune logique métier ne réside dans un DAG. C'est ce qui permet de tester chaque
 transformation par `pytest` sans Airflow ni conteneur.
