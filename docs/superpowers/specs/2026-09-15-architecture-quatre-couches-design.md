@@ -178,6 +178,13 @@ DAG d'acquisition travaille sur sa date logique et l'inscrit dans l'événement 
 publie ; les DAGs de panel relisent cette date dans l'événement (ou dans `--conf` pour un
 run manuel). Toutes les partitions d'un même mois portent ainsi la même date `dt=`.
 
+**Horaire et normalisation.** Le DAG d'acquisition tourne le 10 de chaque mois à 06:00 UTC
+(`0 6 10 * *`), et non le 1er : l'archive mensuelle ClinVar paraît entre le 2 et le 6 du mois
+(Last-Modified observés : 2026-06-04, 07-02, 08-06, 09-03). Sa date logique est validée
+(`AAAA-MM-JJ`) puis **ramenée au premier jour du mois** : un run planifié le 10 et un rejeu
+manuel du même mois écrivent la même partition `dt=AAAA-MM-01`, et la version d'archive
+ClinVar ne dépend que du mois.
+
 Aucune logique métier ne réside dans un DAG. C'est ce qui permet de tester chaque
 transformation par `pytest` sans Airflow ni conteneur.
 
@@ -310,6 +317,9 @@ prendront le relais.
   tables Gold alimente l'application Streamlit annoncée dans le mémoire.
 - **Taux de reclassification** à confirmer sur le fichier ClinVar complet.
 - **Schéma explicite des JSONL** en Bronze, à définir au sous-projet B.
+- **Rejeux très anciens de ClinVar non pris en charge.** Les archives des années ≤ 2022 sont
+  rangées dans des sous-dossiers par année (`archive/2022/…`) ; l'URL épinglée
+  `archive/variant_summary_AAAA-MM.txt.gz` ne couvre que les mois récents.
 - ~~**Rejeu interrompu en `raw` et `bronze`.**~~ Résolu au sous-projet A : voir le protocole
   d'écriture d'une partition ci-dessous.
 

@@ -11,20 +11,29 @@ from __future__ import annotations
 
 from typing import Any
 
-from ingestion.clinvar import LOGICAL_DATE_PATTERN
+from ingestion.config import LOGICAL_DATE_PATTERN
 from ingestion.errors import ConfigurationError
 
 SOURCES_DATE_KEY = "sources_date"
 
 
 def require_logical_date(ds: str | None) -> str:
-    """Date logique du DAG d'acquisition, ou erreur de configuration explicite."""
+    """Date de travail du DAG d'acquisition, ramenée au premier jour du mois.
+
+    Le run planifié tombe le 10 (le temps que l'archive ClinVar du mois paraisse), un
+    rejeu manuel peut porter n'importe quel jour : tous deux doivent écrire la même
+    partition `dt=AAAA-MM-01`, d'autant que `archive_version_for` ne dépend que du mois.
+    """
     if not ds:
         raise ConfigurationError(
             "date logique absente : un run manuel du DAG d'acquisition doit être "
             "déclenché avec --logical-date AAAA-MM-JJ"
         )
-    return ds
+    if not LOGICAL_DATE_PATTERN.match(ds):
+        raise ConfigurationError(
+            f"date logique invalide : {ds!r} — format attendu AAAA-MM-JJ"
+        )
+    return f"{ds[:7]}-01"
 
 
 def record_sources_date(outlet_events: Any, asset: Any, sources_date: str) -> None:

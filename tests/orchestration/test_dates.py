@@ -1,4 +1,7 @@
 import datetime as dt
+import subprocess
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -28,6 +31,33 @@ def _event(sources_date, minute):
 
 def test_require_logical_date_returns_the_scheduled_date():
     assert require_logical_date("2026-09-01") == "2026-09-01"
+
+
+@pytest.mark.parametrize("ds", ["2026-09-10", "2026-09-30"])
+def test_require_logical_date_normalises_to_the_first_day_of_the_month(ds):
+    """Un run planifié le 10 et un rejeu manuel du même mois doivent écrire la même
+    partition `dt=` : la version des sources ne dépend que du mois."""
+    assert require_logical_date(ds) == "2026-09-01"
+
+
+@pytest.mark.parametrize("malformed", ["2026/09/10", "2026-09", "10-09-2026"])
+def test_require_logical_date_rejects_a_malformed_date(malformed):
+    with pytest.raises(ConfigurationError, match="AAAA-MM-JJ"):
+        require_logical_date(malformed)
+
+
+def test_dates_module_does_not_import_polars():
+    """Le dag-processor importe ce module à chaque parsing de DAG : il ne doit pas
+    tirer `ingestion.clinvar`, qui importe polars."""
+    code = (
+        "import sys, dags.common.dates; "
+        "print('polars' in sys.modules or 'ingestion.clinvar' in sys.modules)"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True,
+        cwd=Path(__file__).resolve().parents[2], env={"PYTHONPATH": "src:."},
+    )
+    assert result.stdout.strip() == "False"
 
 
 @pytest.mark.parametrize("absent", [None, ""])

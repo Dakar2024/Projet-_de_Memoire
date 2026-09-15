@@ -27,7 +27,10 @@ DEFAULT_ARGS = {
 with DAG(
     dag_id="dag_acquisition_sources",
     description="Sources communes à tous les panels : dépôt raw puis conversion bronze",
-    schedule="@monthly",
+    # Le 10 à 06:00 UTC, pas le 1er : l'archive mensuelle ClinVar paraît entre le 2 et
+    # le 6 du mois (Last-Modified observés : 06-04, 07-02, 08-06, 09-03). Un run le 1er
+    # la trouverait absente. La date de travail est ramenée au 1er du mois.
+    schedule="0 6 10 * *",
     start_date=dt.datetime(2026, 1, 1),
     catchup=False,
     default_args=DEFAULT_ARGS,

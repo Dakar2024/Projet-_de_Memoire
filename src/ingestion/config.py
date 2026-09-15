@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 EUTILS_BASE_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
@@ -23,6 +24,10 @@ SILVER = "silver"
 GOLD = "gold"
 
 DEFAULT_LAKE_DIR = PROJECT_ROOT / "data" / "lake"
+
+# Format de la date logique d'un run (`AAAA-MM-JJ`). Vit ici plutôt que dans
+# `clinvar.py` : les DAGs la valident à chaque parsing, et `clinvar.py` importe polars.
+LOGICAL_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def current_lake_uri() -> str:

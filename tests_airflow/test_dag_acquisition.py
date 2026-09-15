@@ -5,8 +5,10 @@ from dags.common.panels import SOURCES_READY
 from dags.dag_acquisition_sources import dag
 
 
-def test_acquisition_dag_runs_monthly_without_catchup():
-    assert dag.schedule == "@monthly"
+def test_acquisition_dag_runs_monthly_after_the_clinvar_archive_is_published():
+    """L'archive ClinVar du mois paraît entre le 2 et le 6 : un run le 1er la
+    trouverait absente."""
+    assert dag.schedule == "0 6 10 * *"
     assert dag.catchup is False
 
 
