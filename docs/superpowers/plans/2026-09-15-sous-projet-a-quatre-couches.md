@@ -1281,7 +1281,7 @@ git commit -m "feat: add per-panel four-layer DAGs triggered by the sources Asse
 
 **Interfaces:**
 - Consumes: `requirements.txt`, `dags/`, `src/`, `scripts/`.
-- Produces: une stack lancée par `docker compose --env-file .env.docker up -d --build`, quatre buckets créés, Airflow sur `http://localhost:8080`, console MinIO sur `http://localhost:9001`.
+- Produces: une stack lancée par `docker compose --env-file .env.docker up -d --build`, quatre buckets créés, Airflow sur `http://localhost:8080`, console MinIO sur `http://localhost:${MINIO_CONSOLE_PORT}` (9001 par défaut).
 
 **Trois défauts de l'ancien plan corrigés ici, vérifiés sur Airflow 3.3.1 :**
 
@@ -1381,8 +1381,11 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      # Ports hôte configurables : sur une machine de développement, 9000 et 9001
+      # sont souvent déjà pris (Portainer, un autre MinIO). Les services Airflow
+      # joignent MinIO par le réseau Docker (minio:9000), pas par ces ports.
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - minio-data:/data
     healthcheck:
@@ -1465,6 +1468,10 @@ POSTGRES_PASSWORD=
 MINIO_ROOT_USER=minioadmin
 MINIO_ROOT_PASSWORD=
 
+# Ports hôte de MinIO. Changer si 9000/9001 sont déjà occupés (ex. 9010 et 9011).
+MINIO_API_PORT=9000
+MINIO_CONSOLE_PORT=9001
+
 # Secret partagé entre composants Airflow. Générer avec :
 #   python3 -c "import secrets; print(secrets.token_urlsafe(32))"
 AIRFLOW_JWT_SECRET=
@@ -1524,7 +1531,7 @@ Ajouter à `README.md`, après la section « Tests », une section « Lancer le 
 
 - les deux passes de tests : `venv/bin/pytest -q` (logique, sans infrastructure) et `venv/bin/pytest tests_airflow -q` (structure des DAGs, nécessite `apache-airflow`) ;
 - la copie de `.env.docker.example`, la génération de `AIRFLOW_JWT_SECRET`, et `docker compose --env-file .env.docker up -d --build` ;
-- l'accès à Airflow sur `http://localhost:8080` (mot de passe dans `/opt/airflow/simple_auth_manager_passwords.json.generated` du conteneur `airflow-apiserver`) et à la console MinIO sur `http://localhost:9001` ;
+- l'accès à Airflow sur `http://localhost:8080` (mot de passe dans `/opt/airflow/simple_auth_manager_passwords.json.generated` du conteneur `airflow-apiserver`) et à la console MinIO sur `http://localhost:<MINIO_CONSOLE_PORT>` (9001 par défaut) ;
 - l'état volontaire du pipeline : les passages `raw_to_bronze`, `bronze_to_silver`, `quality_check_silver`, `silver_to_gold_rag` et `silver_to_gold_analytique` échouent explicitement en nommant le sous-projet qui les implémentera. Conséquence : tant que le sous-projet B n'est pas livré, `check_bronze_shared` ne réussit pas, l'Asset n'est pas publié, et les DAGs de panel ne se déclenchent pas automatiquement. Pour exercer l'ingestion par panel, les déclencher à la main (`airflow dags trigger dag_genomic_pipeline_brca`) : les quatre ingestions et `check_raw` s'exécutent, puis le run s'arrête à `raw_to_bronze`.
 
 - [ ] **Step 10: Mettre à jour `CLAUDE.md` et `nifi/README.md`**
