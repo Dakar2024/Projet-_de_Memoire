@@ -4,6 +4,8 @@
 **Étape :** 2 du projet (la collecte RAW est l'étape 1, déjà livrée)
 **Statut :** validé, prêt pour le plan d'implémentation
 
+> **Amendé le 2026-09-15** par `2026-09-15-architecture-quatre-couches-design.md` : quatre couches (raw, bronze, silver, gold), Polars comme moteur, formats par couche, gold séparé en rag et analytique. Les sections sur les couches et les formats ci-dessous sont remplacées par ce document.
+
 ---
 
 ## 1. Contexte et périmètre
