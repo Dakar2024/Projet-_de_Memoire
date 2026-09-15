@@ -179,11 +179,12 @@ Créer `tests/scripts/test_ingest_medgen.py` :
 ```python
 import gzip
 import json
+from unittest.mock import patch
 
 import responses
 
 from ingestion.http_client import NcbiClient, RateLimiter
-from ingestion.storage import get_bytes, partition_is_complete, put_bytes
+from ingestion.storage import get_bytes, open_stream, partition_is_complete, put_bytes
 from scripts.ingest_medgen import cuis_from_raw_clinvar, ingest_medgen
 
 ESEARCH = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
@@ -232,6 +233,19 @@ def test_cuis_from_raw_clinvar_deduplicates_in_order(tmp_path):
         "C0002895",
         "C9999999",
     ]
+
+
+def test_cuis_from_raw_clinvar_streams_the_bulk(tmp_path):
+    """Le bulk fait ~4 Go décompressés : il doit être lu par `open_stream`. Sur un
+    fichier de test de quelques octets, un chargement complet en mémoire donnerait le
+    même résultat — seule la vérification de l'appel attrape cette régression."""
+    partition = _seed_raw_clinvar(tmp_path)
+
+    with patch("scripts.ingest_medgen.open_stream", wraps=open_stream) as espion:
+        assert cuis_from_raw_clinvar(partition, ["HBB"]) == ["C0002895"]
+
+    assert espion.call_count == 1
+    assert espion.call_args.args[0] == f"{partition}/variant_summary.txt.gz"
 
 
 @responses.activate
@@ -381,7 +395,7 @@ if __name__ == "__main__":
 - [ ] **Step 4: Vérifier que les tests MedGen passent**
 
 Run: `venv/bin/pytest tests/scripts/test_ingest_medgen.py -q`
-Expected: PASS, 4 passed
+Expected: PASS, 5 passed
 
 - [ ] **Step 5: Écrire les tests des termes HPO**
 
@@ -428,6 +442,35 @@ def test_ingest_hpo_terms_enriches_only_the_panel_genes(tmp_path):
     assert [r["hpo_id"] for r in records] == ["HP:0001903"]
     assert records[0]["details"]["definition"] == "A reduction in erythrocytes."
     assert partition_is_complete(partition) is True
+
+
+@responses.activate
+def test_ingest_hpo_terms_keeps_unresolved_terms_and_queries_only_the_panel(tmp_path):
+    """Un terme que l'API ne reconnaît plus garde sa ligne, détails vides. Et l'API ne
+    reçoit que les termes du panel : `responses` ignore les paramètres de requête, donc
+    seule l'inspection de la requête envoyée prouve le filtrage."""
+    lake = f"file://{tmp_path}/lake"
+    flat = (
+        "ncbi_gene_id\tgene_symbol\thpo_id\thpo_name\n"
+        "3043\tHBB\tHP:0001903\tAnemia\n"
+        "3043\tHBB\tHP:0009999\tTerme retire\n"
+        "9999\tAUTRE\tHP:0000118\tPhenotypic abnormality\n"
+    )
+    put_bytes(f"{lake}/raw/hpo/dt=2026-09-01/genes_to_phenotype.txt", flat.encode())
+    responses.add(responses.GET, HP_TERMS, json=[
+        {"id": "HP:0001903", "definition": "A reduction in erythrocytes."}], status=200)
+
+    partition = ingest_hpo_terms("2026-09-01", "sickle", ["HBB"], lake_uri=lake)
+
+    raw = gzip.decompress(get_bytes(f"{partition}/hpo_terms.jsonl.gz")).decode()
+    records = [json.loads(line) for line in raw.splitlines()]
+    assert [(r["gene_symbol"], r["hpo_id"]) for r in records] == [
+        ("HBB", "HP:0001903"),
+        ("HBB", "HP:0009999"),
+    ]
+    assert records[1]["details"] == {}
+    demandes = set(responses.calls[0].request.params["filter"].split(","))
+    assert demandes == {"HP:0001903", "HP:0009999"}
 
 
 @responses.activate
@@ -496,8 +539,12 @@ def ingest_hpo_terms(
         flat_path.unlink(missing_ok=True)
 
     details = fetch_hpo_term_details([row["hpo_id"] for row in rows])
+    # Une ligne déposée par ligne du panel, même quand l'API ne reconnaît plus le
+    # terme (retiré ou fusionné) : ses détails restent vides plutôt que la ligne ne
+    # disparaisse. Construire les enregistrements depuis la réponse de l'API perdrait
+    # silencieusement ces termes, comme pour un CUI MedGen non résolu.
     records = [
-        {"hpo_id": hpo_id, "details": detail} for hpo_id, detail in details.items()
+        {**row, "details": details.get(row["hpo_id"], {})} for row in rows
     ]
 
     partition = partition_uri(RAW, "hpo_terms", logical_date, panel=panel, lake_uri=lake_uri)
@@ -534,7 +581,7 @@ if __name__ == "__main__":
 - [ ] **Step 8: Vérifier la suite complète**
 
 Run: `venv/bin/pytest -q`
-Expected: PASS, 113 passed, 1 deselected, en moins de 3 s
+Expected: PASS, 116 passed, 1 deselected, en moins de 3 s
 
 - [ ] **Step 9: Commit**
 
@@ -716,7 +763,7 @@ Expected: PASS, 4 passed
 - [ ] **Step 5: Vérifier la suite complète et l'absence de moteur**
 
 Run: `venv/bin/pytest -q && (grep -rnE "^(import|from) (polars|deltalake|pyspark|pandas)" src/transformations/ || echo "aucun moteur importe")`
-Expected: `117 passed, 1 deselected`, puis `aucun moteur importe`
+Expected: `120 passed, 1 deselected`, puis `aucun moteur importe`
 
 - [ ] **Step 6: Commit**
 
@@ -812,7 +859,7 @@ def assert_partitions_complete(partitions: list[str], client=None) -> None:
 - [ ] **Step 4: Vérifier la passe rapide**
 
 Run: `venv/bin/pytest -q`
-Expected: PASS, 119 passed, 1 deselected, en moins de 3 s
+Expected: PASS, 122 passed, 1 deselected, en moins de 3 s
 
 - [ ] **Step 5: Installer Airflow pour les tests de DAG**
 
@@ -1006,7 +1053,7 @@ with DAG(
 - [ ] **Step 10: Vérifier les deux passes**
 
 Run: `venv/bin/pytest tests_airflow -q && venv/bin/pytest -q`
-Expected: `8 passed` pour `tests_airflow`, puis `119 passed, 1 deselected` en moins de 3 s pour la passe rapide — qui ne doit pas avoir ralenti, puisqu'elle n'importe pas Airflow.
+Expected: `8 passed` pour `tests_airflow`, puis `122 passed, 1 deselected` en moins de 3 s pour la passe rapide — qui ne doit pas avoir ralenti, puisqu'elle n'importe pas Airflow.
 
 - [ ] **Step 11: Commit**
 
@@ -1262,7 +1309,7 @@ Expected: PASS, 9 passed
 - [ ] **Step 5: Vérifier les deux passes**
 
 Run: `venv/bin/pytest tests_airflow -q && venv/bin/pytest -q`
-Expected: `17 passed` pour `tests_airflow`, puis `119 passed, 1 deselected` en moins de 3 s
+Expected: `17 passed` pour `tests_airflow`, puis `122 passed, 1 deselected` en moins de 3 s
 
 - [ ] **Step 6: Commit**
 
@@ -1586,7 +1633,7 @@ git commit -m "feat: add the Airflow 3 + MinIO stack with four medallion buckets
 - [ ] **Passe rapide**
 
 Run: `venv/bin/pytest -q`
-Expected: `119 passed, 1 deselected`, en moins de 3 s, sans réseau ni conteneur
+Expected: `122 passed, 1 deselected`, en moins de 3 s, sans réseau ni conteneur
 
 - [ ] **Passe Airflow**
 
