@@ -25,3 +25,9 @@ PANEL_SOURCES: list[str] = ["ncbi_gene", "refseq", "medgen", "hpo_terms"]
 # Publié quand le bronze des sources partagées est complet : les DAGs de panel se
 # déclenchent sur la donnée réellement disponible, pas sur un horaire.
 SOURCES_READY = Asset("s3://bronze/_sources_pretes")
+
+# Pool Airflow à un seul slot pour les tâches qui interrogent les E-utilities NCBI.
+# Le `RateLimiter` de `http_client` est par processus : deux DAGs de panel lancés
+# ensemble, chacun avec trois tâches NCBI, dépasseraient la limite globale de NCBI
+# (3 req/s, 10 avec clé). Le pool est créé par le service `airflow-init`.
+NCBI_POOL = "ncbi"
