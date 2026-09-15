@@ -50,6 +50,7 @@
 | `dags/common/panels.py` | Panels, sources partagées et par panel, Asset |
 | `dags/dag_acquisition_sources.py` | DAG mensuel des sources partagées |
 | `dags/dag_genomic_pipeline.py` | DAGs par panel |
+| `dags/common/dates.py` | Date de travail des runs sans date logique (Asset, manuel) |
 | `tests_airflow/` | Tests de structure des DAGs |
 | `docker-compose.yml`, `docker/airflow/Dockerfile`, `docker/minio/create-buckets.sh`, `.env.docker.example` | Infrastructure |
 
@@ -1342,7 +1343,596 @@ git commit -m "feat: add per-panel four-layer DAGs triggered by the sources Asse
 
 ---
 
-### Task 6 (A6): Stack Docker et documentation
+### Task 6 (A5-bis): Date de travail des runs sans date logique
+
+**Files:**
+- Create: `dags/common/dates.py`
+- Create: `tests/orchestration/__init__.py` (vide), `tests/orchestration/test_dates.py`
+- Modify: `dags/dag_acquisition_sources.py` (contenu complet ci-dessous)
+- Modify: `dags/dag_genomic_pipeline.py` (contenu complet ci-dessous)
+- Modify: `tests_airflow/test_dag_acquisition.py`, `tests_airflow/test_dag_genomic_pipeline.py` (contenus complets ci-dessous)
+
+**Interfaces:**
+- Consumes: `ingestion.clinvar.LOGICAL_DATE_PATTERN`, `ingestion.errors.ConfigurationError`, et tout ce que consomment déjà les deux DAGs (tâches 4 et 5).
+- Produces:
+  - `dags.common.dates.SOURCES_DATE_KEY = "sources_date"`
+  - `dags.common.dates.require_logical_date(ds: str | None) -> str`
+  - `dags.common.dates.record_sources_date(outlet_events, asset, sources_date: str) -> None`
+  - `dags.common.dates.resolve_sources_date(triggering_events, asset, conf: dict | None) -> str`
+  - Nouvelles tâches : `resolve_logical_date` (acquisition), `resolve_sources_date` (panel).
+
+**Pourquoi cette tâche existe.** Les tâches 4 et 5 lisaient la date par `context["ds"]`. Vérifié dans le code d'Airflow 3.3.1 : un run déclenché par un Asset est créé avec `logical_date=None` (`scheduler_job_runner.py`), et un run manuel sans `--logical-date` aussi (`trigger_dag.py`). Dans ces cas, la clé `ds` **n'existe pas** dans le contexte (`task_runner.py`). Chaque tâche des DAGs de panel aurait levé `KeyError` à chaque exécution, et un déclenchement manuel du DAG d'acquisition aussi.
+
+Même avec une date, le DAG de panel lisait les partitions `raw` partagées sous **sa** date, alors qu'elles sont écrites sous celle de l'acquisition.
+
+**Mécanisme retenu, vérifié en exécution réelle.** Le DAG d'acquisition inscrit sa date dans l'`extra` de l'événement d'Asset (`outlet_events[asset].extra`). Un `airflow dags test` réel a enregistré l'événement avec `extra = {'sources_date': '2026-09-01'}`. Le DAG de panel relit cette date dans `triggering_asset_events` (accesseur vérifié : liste des événements, `[]` s'il n'y en a pas), et, pour un run manuel, dans `--conf '{"sources_date": "AAAA-MM-JJ"}'`. La logique vit dans `dags/common/dates.py`, qui n'importe pas Airflow : elle se teste dans la passe rapide.
+
+- [ ] **Step 1: Écrire les tests de résolution de date (passe rapide)**
+
+Créer `tests/orchestration/__init__.py` (vide) et `tests/orchestration/test_dates.py` :
+
+```python
+import datetime as dt
+from types import SimpleNamespace
+
+import pytest
+
+from dags.common.dates import record_sources_date, require_logical_date, resolve_sources_date
+from ingestion.errors import ConfigurationError
+
+ASSET = "s3://bronze/_sources_pretes"
+
+
+class FakeEvents:
+    """Imite l'accesseur `triggering_asset_events` : indexé par Asset, liste d'événements."""
+
+    def __init__(self, events):
+        self._events = events
+
+    def __getitem__(self, asset):
+        return self._events
+
+
+def _event(sources_date, minute):
+    return SimpleNamespace(
+        timestamp=dt.datetime(2026, 9, 15, 12, minute, tzinfo=dt.timezone.utc),
+        extra={"sources_date": sources_date},
+    )
+
+
+def test_require_logical_date_returns_the_scheduled_date():
+    assert require_logical_date("2026-09-01") == "2026-09-01"
+
+
+@pytest.mark.parametrize("absent", [None, ""])
+def test_require_logical_date_explains_how_to_trigger_manually(absent):
+    """Un run manuel sans --logical-date n'a pas de `ds` dans Airflow 3 : l'erreur doit
+    dire comment relancer, pas lever un KeyError."""
+    with pytest.raises(ConfigurationError, match="--logical-date"):
+        require_logical_date(absent)
+
+
+def test_record_sources_date_writes_into_the_asset_event_extra():
+    outlet_events = {ASSET: SimpleNamespace(extra={})}
+
+    record_sources_date(outlet_events, ASSET, "2026-09-01")
+
+    assert outlet_events[ASSET].extra == {"sources_date": "2026-09-01"}
+
+
+def test_resolve_sources_date_takes_the_most_recent_event_whatever_the_order():
+    """Plusieurs acquisitions depuis le dernier run de panel : la plus récente gagne."""
+    events = FakeEvents([_event("2026-09-01", 5), _event("2026-08-01", 1)])
+
+    assert resolve_sources_date(events, ASSET, conf=None) == "2026-09-01"
+
+
+def test_resolve_sources_date_falls_back_to_the_run_conf_when_manual():
+    assert resolve_sources_date(FakeEvents([]), ASSET, {"sources_date": "2026-08-01"}) == "2026-08-01"
+
+
+@pytest.mark.parametrize("conf", [None, {}, {"sources_date": "2026/08/01"}])
+def test_resolve_sources_date_explains_how_to_trigger_manually(conf):
+    with pytest.raises(ConfigurationError, match="--conf"):
+        resolve_sources_date(FakeEvents([]), ASSET, conf)
+```
+
+- [ ] **Step 2: Vérifier qu'ils échouent**
+
+Run: `venv/bin/pytest tests/orchestration -q`
+Expected: FAIL avec `ModuleNotFoundError: No module named 'dags.common.dates'`
+
+- [ ] **Step 3: Implémenter `dags/common/dates.py`**
+
+```python
+"""Date de travail des DAGs, quel que soit le mode de déclenchement.
+
+Dans Airflow 3, seuls les runs planifiés ont une date logique. Un run déclenché par un
+Asset, ou lancé à la main sans `--logical-date`, a `logical_date = None` : la clé `ds`
+est alors absente du contexte. La date doit donc être résolue explicitement.
+
+Ce module n'importe pas Airflow : sa logique se teste dans la passe rapide.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from ingestion.clinvar import LOGICAL_DATE_PATTERN
+from ingestion.errors import ConfigurationError
+
+SOURCES_DATE_KEY = "sources_date"
+
+
+def require_logical_date(ds: str | None) -> str:
+    """Date logique du DAG d'acquisition, ou erreur de configuration explicite."""
+    if not ds:
+        raise ConfigurationError(
+            "date logique absente : un run manuel du DAG d'acquisition doit être "
+            "déclenché avec --logical-date AAAA-MM-JJ"
+        )
+    return ds
+
+
+def record_sources_date(outlet_events: Any, asset: Any, sources_date: str) -> None:
+    """Inscrit la date des sources dans l'événement d'Asset publié par l'acquisition."""
+    outlet_events[asset].extra[SOURCES_DATE_KEY] = sources_date
+
+
+def resolve_sources_date(triggering_events: Any, asset: Any, conf: dict | None) -> str:
+    """Date des sources partagées sur laquelle travaille un run de panel.
+
+    Priorité à l'événement d'Asset le plus récent qui porte une date : plusieurs
+    événements s'accumulent si plusieurs acquisitions ont eu lieu depuis le dernier run
+    de panel. À défaut (déclenchement manuel), `sources_date` de la configuration du
+    run, au format AAAA-MM-JJ.
+    """
+    events = triggering_events[asset] if triggering_events is not None else []
+    dated = [
+        (event.timestamp, event.extra[SOURCES_DATE_KEY])
+        for event in events
+        if event.extra.get(SOURCES_DATE_KEY)
+    ]
+    if dated:
+        return max(dated)[1]
+    candidate = (conf or {}).get(SOURCES_DATE_KEY)
+    if candidate and LOGICAL_DATE_PATTERN.match(candidate):
+        return candidate
+    raise ConfigurationError(
+        "date des sources absente : un run de panel lancé à la main doit fournir "
+        "--conf '{\"sources_date\": \"AAAA-MM-JJ\"}'"
+    )
+```
+
+- [ ] **Step 4: Vérifier la passe rapide**
+
+Run: `venv/bin/pytest -q`
+Expected: PASS, 130 passed, 1 deselected, en moins de 3 s
+
+- [ ] **Step 5: Mettre les tests de DAG au nouveau graphe (ils doivent échouer)**
+
+Remplacer le contenu de `tests_airflow/test_dag_acquisition.py` par :
+
+```python
+import pytest
+from airflow.sdk.exceptions import AirflowFailException
+
+from dags.common.panels import SOURCES_READY
+from dags.dag_acquisition_sources import dag
+
+
+def test_acquisition_dag_runs_monthly_without_catchup():
+    assert dag.schedule == "@monthly"
+    assert dag.catchup is False
+
+
+def test_acquisition_dag_has_the_expected_tasks():
+    assert sorted(t.task_id for t in dag.tasks) == [
+        "check_bronze_shared",
+        "check_raw_shared",
+        "download_clinvar_bulk",
+        "download_hpo_files",
+        "raw_to_bronze_shared",
+        "resolve_logical_date",
+    ]
+
+
+def test_both_downloads_run_in_parallel_then_gate_on_check_raw():
+    assert dag.get_task("download_clinvar_bulk").upstream_task_ids == {"resolve_logical_date"}
+    assert dag.get_task("download_hpo_files").upstream_task_ids == {"resolve_logical_date"}
+    assert dag.get_task("check_raw_shared").upstream_task_ids == {
+        "download_clinvar_bulk",
+        "download_hpo_files",
+    }
+
+
+def test_bronze_conversion_is_gated_on_both_sides():
+    assert dag.get_task("raw_to_bronze_shared").upstream_task_ids == {
+        "check_raw_shared",
+        "resolve_logical_date",
+    }
+    assert dag.get_task("check_bronze_shared").upstream_task_ids == {
+        "raw_to_bronze_shared",
+        "resolve_logical_date",
+    }
+
+
+def test_the_asset_is_published_only_once_bronze_is_complete():
+    """Les DAGs de panel lisent le bronze des sources partagées : les déclencher
+    après check_raw les ferait démarrer avant que ce bronze existe."""
+    assert SOURCES_READY in dag.get_task("check_bronze_shared").outlets
+    assert SOURCES_READY not in dag.get_task("check_raw_shared").outlets
+
+
+def test_a_manual_run_without_logical_date_fails_with_instructions():
+    """Dans Airflow 3, un run manuel sans --logical-date n'a pas de `ds` : la résolution
+    échoue définitivement, sans consommer les retries, en disant comment relancer."""
+    with pytest.raises(AirflowFailException, match="--logical-date"):
+        dag.get_task("resolve_logical_date").python_callable()
+```
+
+Remplacer le contenu de `tests_airflow/test_dag_genomic_pipeline.py` par :
+
+```python
+import pytest
+
+from dags.common.panels import SOURCES_READY
+from dags.dag_genomic_pipeline import build_panel_dag
+
+INGESTIONS = {"ingest_ncbi_gene", "ingest_refseq", "ingest_hpo_terms", "ingest_medgen"}
+
+
+@pytest.fixture
+def dag():
+    return build_panel_dag("brca", ["BRCA1", "BRCA2"])
+
+
+def test_panel_dag_is_triggered_by_the_shared_sources_asset(dag):
+    assert dag.schedule == [SOURCES_READY]
+    assert dag.catchup is False
+
+
+def test_panel_dag_has_the_expected_tasks(dag):
+    assert sorted(t.task_id for t in dag.tasks) == sorted(INGESTIONS | {
+        "resolve_sources_date",
+        "check_raw",
+        "raw_to_bronze",
+        "check_bronze",
+        "bronze_to_silver",
+        "quality_check_silver",
+        "silver_to_gold_rag",
+        "silver_to_gold_analytique",
+    })
+
+
+def test_the_four_ingestions_run_in_parallel_on_the_resolved_sources_date(dag):
+    """MedGen et les termes HPO lisent les partitions raw partagées : ils doivent
+    utiliser la date de l'acquisition, résolue une fois, et non une date propre au run."""
+    for task_id in INGESTIONS:
+        assert dag.get_task(task_id).upstream_task_ids == {"resolve_sources_date"}
+
+
+def test_check_raw_waits_for_all_four_ingestions(dag):
+    assert dag.get_task("check_raw").upstream_task_ids == INGESTIONS
+
+
+def test_the_layers_are_strictly_sequential(dag):
+    assert dag.get_task("raw_to_bronze").upstream_task_ids == {"check_raw", "resolve_sources_date"}
+    assert dag.get_task("check_bronze").upstream_task_ids == {"raw_to_bronze"}
+    assert dag.get_task("bronze_to_silver").upstream_task_ids == {"check_bronze", "resolve_sources_date"}
+    assert dag.get_task("quality_check_silver").upstream_task_ids == {"bronze_to_silver"}
+
+
+def test_the_two_gold_outputs_read_silver_not_each_other(dag):
+    assert dag.get_task("silver_to_gold_rag").upstream_task_ids == {
+        "quality_check_silver",
+        "resolve_sources_date",
+    }
+    assert dag.get_task("silver_to_gold_analytique").upstream_task_ids == {
+        "quality_check_silver",
+        "resolve_sources_date",
+    }
+
+
+def test_transient_failures_are_retried(dag):
+    assert dag.get_task("ingest_ncbi_gene").retries == 3
+
+
+def test_configuration_errors_fail_without_consuming_retries(monkeypatch):
+    """Une configuration manquante est permanente : AirflowFailException échoue la
+    tâche immédiatement, sans passer par les trois retries."""
+    from airflow.sdk.exceptions import AirflowFailException
+
+    from dags import dag_genomic_pipeline
+    from ingestion.errors import ConfigurationError
+
+    def refuser():
+        raise ConfigurationError("NCBI_EMAIL manquant")
+
+    monkeypatch.setattr(dag_genomic_pipeline, "build_client", refuser)
+
+    with pytest.raises(AirflowFailException, match="NCBI_EMAIL"):
+        dag_genomic_pipeline.client_or_fail()
+
+
+def test_both_panel_dags_are_exposed_at_module_level():
+    from dags import dag_genomic_pipeline
+
+    assert dag_genomic_pipeline.dag_genomic_pipeline_brca.dag_id == "dag_genomic_pipeline_brca"
+    assert dag_genomic_pipeline.dag_genomic_pipeline_sickle.dag_id == "dag_genomic_pipeline_sickle"
+
+
+def test_a_manual_run_without_sources_date_fails_with_instructions(dag):
+    """Un run de panel n'a pas de date logique dans Airflow 3. Sans événement d'Asset ni
+    `--conf`, la résolution échoue définitivement en disant comment relancer."""
+    from airflow.sdk.exceptions import AirflowFailException
+
+    with pytest.raises(AirflowFailException, match="--conf"):
+        dag.get_task("resolve_sources_date").python_callable()
+```
+
+Run: `venv/bin/pytest tests_airflow -q`
+Expected: FAIL — tâches `resolve_logical_date` et `resolve_sources_date` absentes.
+
+- [ ] **Step 6: Remplacer le DAG d'acquisition**
+
+Contenu complet de `dags/dag_acquisition_sources.py` :
+
+```python
+from __future__ import annotations
+
+import datetime as dt
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path[:0] = [str(REPO_ROOT / "src"), str(REPO_ROOT)]
+
+from airflow.sdk import DAG, task
+from airflow.sdk.exceptions import AirflowFailException
+
+from dags.common.dates import record_sources_date, require_logical_date
+from dags.common.panels import SHARED_SOURCES, SOURCES_READY
+from ingestion.errors import ConfigurationError
+from ingestion.storage import assert_partitions_complete
+from scripts.ingest_clinvar import ingest_clinvar
+from scripts.ingest_hpo_files import ingest_hpo_files
+from transformations.raw_to_bronze import raw_to_bronze
+
+DEFAULT_ARGS = {
+    "retries": 3,
+    "retry_delay": dt.timedelta(minutes=5),
+    "execution_timeout": dt.timedelta(hours=2),
+}
+
+with DAG(
+    dag_id="dag_acquisition_sources",
+    description="Sources communes à tous les panels : dépôt raw puis conversion bronze",
+    schedule="@monthly",
+    start_date=dt.datetime(2026, 1, 1),
+    catchup=False,
+    default_args=DEFAULT_ARGS,
+    tags=["raw", "bronze", "acquisition"],
+) as dag:
+
+    @task(task_id="resolve_logical_date")
+    def resolve_logical_date(**context) -> str:
+        try:
+            return require_logical_date(context.get("ds"))
+        except ConfigurationError as exc:
+            raise AirflowFailException(str(exc)) from exc
+
+    @task(task_id="download_clinvar_bulk")
+    def download_clinvar_bulk(logical_date: str) -> str:
+        return ingest_clinvar(logical_date)
+
+    @task(task_id="download_hpo_files")
+    def download_hpo_files(logical_date: str) -> str:
+        return ingest_hpo_files(logical_date)
+
+    @task(task_id="check_raw_shared")
+    def check_raw_shared(clinvar_partition: str, hpo_partition: str) -> None:
+        assert_partitions_complete([clinvar_partition, hpo_partition])
+
+    @task(task_id="raw_to_bronze_shared")
+    def raw_to_bronze_shared(logical_date: str) -> list[str]:
+        return raw_to_bronze(logical_date, SHARED_SOURCES)
+
+    @task(task_id="check_bronze_shared", outlets=[SOURCES_READY])
+    def check_bronze_shared(bronze_partitions: list[str], logical_date: str, **context) -> None:
+        assert_partitions_complete(bronze_partitions)
+        # Les DAGs de panel sont déclenchés sans date logique : ils relisent celle-ci
+        # dans l'événement d'Asset pour travailler sur les mêmes partitions.
+        record_sources_date(context["outlet_events"], SOURCES_READY, logical_date)
+
+    logical_date = resolve_logical_date()
+    checked_raw = check_raw_shared(
+        download_clinvar_bulk(logical_date), download_hpo_files(logical_date)
+    )
+    bronze = raw_to_bronze_shared(logical_date)
+    checked_raw >> bronze
+    check_bronze_shared(bronze, logical_date)
+```
+
+- [ ] **Step 7: Remplacer le DAG de panel**
+
+Contenu complet de `dags/dag_genomic_pipeline.py` :
+
+```python
+from __future__ import annotations
+
+import datetime as dt
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path[:0] = [str(REPO_ROOT / "src"), str(REPO_ROOT)]
+
+from airflow.sdk import DAG, task
+from airflow.sdk.exceptions import AirflowFailException
+
+from dags.common.dates import resolve_sources_date
+from dags.common.panels import PANEL_LABELS, PANEL_SOURCES, PANELS, SOURCES_READY
+from ingestion.errors import ConfigurationError
+from ingestion.http_client import NcbiClient
+from ingestion.storage import assert_partitions_complete
+from scripts.ingest_hpo_terms import ingest_hpo_terms
+from scripts.ingest_medgen import ingest_medgen
+from scripts.ingest_ncbi_gene import build_client, ingest_ncbi_gene
+from scripts.ingest_refseq import ingest_refseq
+from transformations.bronze_to_silver import bronze_to_silver
+from transformations import SPEC
+from transformations.raw_to_bronze import raw_to_bronze
+from transformations.silver_to_gold_analytique import silver_to_gold_analytique
+from transformations.silver_to_gold_rag import silver_to_gold_rag
+
+DEFAULT_ARGS = {
+    "retries": 3,
+    "retry_delay": dt.timedelta(minutes=5),
+    "execution_timeout": dt.timedelta(hours=3),
+}
+
+
+def client_or_fail() -> NcbiClient:
+    """Construit le client NCBI, ou échoue définitivement.
+
+    Une configuration manquante ne se résout pas en réessayant : `AirflowFailException`
+    marque la tâche en échec sans consommer les retries.
+    """
+    try:
+        return build_client()
+    except ConfigurationError as exc:
+        raise AirflowFailException(str(exc)) from exc
+
+
+def build_panel_dag(panel: str, genes: list[str]) -> DAG:
+    """Construit le DAG médaillon d'un panel de gènes, déclenché par l'Asset
+    publié quand le bronze des sources partagées est complet."""
+    with DAG(
+        dag_id=f"dag_genomic_pipeline_{panel}",
+        description=f"Pipeline médaillon — {PANEL_LABELS.get(panel, panel)}",
+        schedule=[SOURCES_READY],
+        start_date=dt.datetime(2026, 1, 1),
+        catchup=False,
+        default_args=DEFAULT_ARGS,
+        tags=["medaillon", panel],
+    ) as dag:
+
+        @task(task_id="resolve_sources_date")
+        def task_resolve_sources_date(**context) -> str:
+            """Date des sources partagées : relue dans l'événement d'Asset, ou fournie
+            par `--conf` lors d'un déclenchement manuel. Un run de panel n'a pas de date
+            logique propre dans Airflow 3."""
+            dag_run = context.get("dag_run")
+            try:
+                return resolve_sources_date(
+                    context.get("triggering_asset_events"),
+                    SOURCES_READY,
+                    dag_run.conf if dag_run else None,
+                )
+            except ConfigurationError as exc:
+                raise AirflowFailException(str(exc)) from exc
+
+        @task(task_id="ingest_ncbi_gene")
+        def task_ncbi_gene(sources_date: str) -> str:
+            return ingest_ncbi_gene(sources_date, panel, genes, client_or_fail())
+
+        @task(task_id="ingest_refseq")
+        def task_refseq(sources_date: str) -> str:
+            return ingest_refseq(sources_date, panel, genes, client_or_fail())
+
+        @task(task_id="ingest_hpo_terms")
+        def task_hpo_terms(sources_date: str) -> str:
+            return ingest_hpo_terms(sources_date, panel, genes)
+
+        @task(task_id="ingest_medgen")
+        def task_medgen(sources_date: str) -> str:
+            return ingest_medgen(sources_date, panel, genes, client_or_fail())
+
+        @task(task_id="check_raw")
+        def task_check_raw(
+            ncbi_gene_partition: str,
+            refseq_partition: str,
+            hpo_terms_partition: str,
+            medgen_partition: str,
+        ) -> None:
+            assert_partitions_complete([
+                ncbi_gene_partition,
+                refseq_partition,
+                hpo_terms_partition,
+                medgen_partition,
+            ])
+
+        @task(task_id="raw_to_bronze")
+        def task_raw_to_bronze(sources_date: str) -> list[str]:
+            return raw_to_bronze(sources_date, PANEL_SOURCES, panel=panel)
+
+        @task(task_id="check_bronze")
+        def task_check_bronze(bronze_partitions: list[str]) -> None:
+            assert_partitions_complete(bronze_partitions)
+
+        @task(task_id="bronze_to_silver")
+        def task_bronze_to_silver(sources_date: str) -> None:
+            bronze_to_silver(sources_date, panel)
+
+        @task(task_id="quality_check_silver")
+        def task_quality_check_silver() -> None:
+            raise NotImplementedError(
+                f"quality_check_silver : implémenté par le sous-projet C ({SPEC}, §7)"
+            )
+
+        @task(task_id="silver_to_gold_rag")
+        def task_silver_to_gold_rag(sources_date: str) -> None:
+            silver_to_gold_rag(sources_date, panel)
+
+        @task(task_id="silver_to_gold_analytique")
+        def task_silver_to_gold_analytique(sources_date: str) -> None:
+            silver_to_gold_analytique(sources_date, panel)
+
+        sources_date = task_resolve_sources_date()
+        checked_raw = task_check_raw(
+            task_ncbi_gene(sources_date),
+            task_refseq(sources_date),
+            task_hpo_terms(sources_date),
+            task_medgen(sources_date),
+        )
+        bronze = task_raw_to_bronze(sources_date)
+        checked_raw >> bronze
+        checked_bronze = task_check_bronze(bronze)
+        silver = task_bronze_to_silver(sources_date)
+        quality = task_quality_check_silver()
+        checked_bronze >> silver >> quality >> [
+            task_silver_to_gold_rag(sources_date),
+            task_silver_to_gold_analytique(sources_date),
+        ]
+
+    return dag
+
+
+dag_genomic_pipeline_brca = build_panel_dag("brca", PANELS["brca"])
+dag_genomic_pipeline_sickle = build_panel_dag("sickle", PANELS["sickle"])
+```
+
+- [ ] **Step 8: Vérifier les deux passes**
+
+Run: `venv/bin/pytest tests_airflow -q && venv/bin/pytest -q`
+Expected: `19 passed`, puis `130 passed, 1 deselected` en moins de 3 s
+
+- [ ] **Step 9: Vérifier qu'aucune tâche ne lit encore `ds` directement**
+
+Run: `grep -n 'context\["ds"\]' dags/*.py || echo "aucune lecture directe de ds"`
+Expected: `aucune lecture directe de ds`
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add dags/common/dates.py dags/dag_acquisition_sources.py dags/dag_genomic_pipeline.py tests/orchestration/ tests_airflow/test_dag_acquisition.py tests_airflow/test_dag_genomic_pipeline.py
+git commit -m "fix: resolve the working date for runs without a logical date"
+```
+
+---
+
+### Task 7 (A6): Stack Docker et documentation
 
 **Files:**
 - Create: `docker/airflow/Dockerfile`, `docker/minio/create-buckets.sh`, `docker-compose.yml`, `.env.docker.example`
@@ -1578,7 +2168,7 @@ Expected: quatre lignes `bucket raw pret`, `bucket bronze pret`, `bucket silver 
 Ce contrôle prouve que l'API d'exécution et le secret JWT sont correctement configurés — c'est le défaut n°3 de l'ancien plan. Il déclenche un vrai téléchargement ClinVar (442 Mo) et appelle GitHub, mais aucune API NCBI.
 
 ```bash
-docker compose --env-file .env.docker exec airflow-scheduler airflow dags trigger dag_acquisition_sources
+docker compose --env-file .env.docker exec airflow-scheduler airflow dags trigger dag_acquisition_sources --logical-date 2026-09-01
 ```
 
 Attendre la fin du run, puis, dans l'interface ou via `airflow tasks states-for-dag-run` :
@@ -1601,7 +2191,7 @@ Ajouter à `README.md`, après la section « Tests », une section « Lancer le 
 - les deux passes de tests : `venv/bin/pytest -q` (logique, sans infrastructure) et `venv/bin/pytest tests_airflow -q` (structure des DAGs, nécessite `apache-airflow`) ;
 - la copie de `.env.docker.example`, la génération de `AIRFLOW_JWT_SECRET`, et `docker compose --env-file .env.docker up -d --build` ;
 - l'accès à Airflow sur `http://localhost:8080` (mot de passe dans `/opt/airflow/simple_auth_manager_passwords.json.generated` du conteneur `airflow-apiserver`) et à la console MinIO sur `http://localhost:<MINIO_CONSOLE_PORT>` (9001 par défaut) ;
-- l'état volontaire du pipeline : les passages `raw_to_bronze`, `bronze_to_silver`, `quality_check_silver`, `silver_to_gold_rag` et `silver_to_gold_analytique` échouent explicitement en nommant le sous-projet qui les implémentera. Conséquence : tant que le sous-projet B n'est pas livré, `check_bronze_shared` ne réussit pas, l'Asset n'est pas publié, et les DAGs de panel ne se déclenchent pas automatiquement. Pour exercer l'ingestion par panel, les déclencher à la main (`airflow dags trigger dag_genomic_pipeline_brca`) : les quatre ingestions et `check_raw` s'exécutent, puis le run s'arrête à `raw_to_bronze`.
+- l'état volontaire du pipeline : les passages `raw_to_bronze`, `bronze_to_silver`, `quality_check_silver`, `silver_to_gold_rag` et `silver_to_gold_analytique` échouent explicitement en nommant le sous-projet qui les implémentera. Conséquence : tant que le sous-projet B n'est pas livré, `check_bronze_shared` ne réussit pas, l'Asset n'est pas publié, et les DAGs de panel ne se déclenchent pas automatiquement. Pour exercer l'ingestion par panel, les déclencher à la main en indiquant la date des sources partagées déjà déposées (`airflow dags trigger dag_genomic_pipeline_brca --conf '{"sources_date": "2026-09-01"}'`) : la date est résolue, les quatre ingestions et `check_raw` s'exécutent, puis le run s'arrête à `raw_to_bronze`. Un déclenchement manuel du DAG d'acquisition demande `--logical-date AAAA-MM-JJ` : dans Airflow 3, un run manuel n'a pas de date logique sans cette option.
 
 - [ ] **Step 10: Mettre à jour `CLAUDE.md` et `nifi/README.md`**
 
@@ -1655,12 +2245,12 @@ git commit -m "feat: add the Airflow 3 + MinIO stack with four medallion buckets
 - [ ] **Passe rapide**
 
 Run: `venv/bin/pytest -q`
-Expected: `121 passed, 1 deselected`, en moins de 3 s, sans réseau ni conteneur
+Expected: `130 passed, 1 deselected`, en moins de 3 s, sans réseau ni conteneur
 
 - [ ] **Passe Airflow**
 
 Run: `venv/bin/pytest tests_airflow -q`
-Expected: `17 passed`
+Expected: `19 passed`
 
 - [ ] **Aucune ingestion hors de `raw`**
 
