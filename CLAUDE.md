@@ -109,20 +109,26 @@ versions).
 except for `.gitkeep`; regenerate their contents by running the collection script rather than
 expecting them to be present in a fresh checkout.
 
-## Orchestration (NiFi) — scoped to stage 1 only
+## Orchestration — Airflow 3 (NiFi : alternative évaluée, écartée)
 
-`nifi/` runs `scripts/run_collection.py` as a scheduled Apache NiFi flow instead of a
-manual/cron invocation. NiFi wraps and schedules the existing, pytest-covered pipeline via
-`ExecuteStreamCommand` — it does **not** reimplement the HTTP calls, retries, polars
-filtering, or XML parsing as native NiFi processors; that logic stays in `src/ingestion/`,
-untouched and still under test. See `nifi/README.md` for the flow's composition and what has
-actually been verified (the failure path — missing `NCBI_EMAIL` — end to end; the success
-path deliberately not, for the same reason `run_collection.py` itself isn't network-tested).
+**NiFi est retiré du chemin d'implémentation.** Le dossier `nifi/` est conservé comme
+alternative implémentée, mesurée et écartée : ses apports ici (déclenchement planifié,
+routage succès/échec, journalisation) sont un sous-ensemble strict de ceux d'Airflow,
+pour un coût mesuré de 1,37 Gio de RAM au repos. Chiffres : `docs/choix_contexte.md`.
 
-**NiFi is deliberately not a pipeline-wide orchestrator.** It is a dataflow/ETL tool (move
-data from point A to point B, with routing/backpressure/provenance) — not a task scheduler
-like Airflow (DAGs of heterogeneous jobs, retries, backfill). Extending it to sequence
-Bronze/Silver/Gold/RAG once those stages exist would misuse the tool for a job it isn't built
-for, and — like the rest of this repo's scope — that decision is deferred, not made here:
-when stage 2 exists, a plain sequential script (or, only if genuinely warranted by scale, a
-real orchestrator) is the more honest fit than repurposing NiFi.
+**Architecture en quatre couches** (spec : `docs/superpowers/specs/2026-09-15-architecture-quatre-couches-design.md`) :
+`raw` (format de la source) → `bronze` (Parquet) → `silver` (Delta) → `gold/rag` et
+`gold/analytique` (Delta), chacune dans un bucket MinIO. Moteur : Polars.
+
+- `scripts/ingest_*.py` écrivent uniquement en `raw`.
+- `src/transformations/` contient les passages entre couches (stubs tant que les
+  sous-projets B, C et D ne sont pas livrés).
+- `dags/` : un DAG d'acquisition mensuel pour les sources partagées, un DAG par panel.
+- `docker/` et `docker-compose.yml` : Airflow 3, PostgreSQL, MinIO.
+
+**Règle non négociable :** la logique métier vit dans `src/` et `scripts/`, testée sans
+infrastructure ; Airflow ne fait qu'appeler des fonctions ; MinIO ne fait que stocker.
+
+**Deux passes de tests :** `pytest -q` (logique, moins de 3 s, sans réseau ni conteneur)
+et `pytest tests_airflow -q` (structure des DAGs ; séparée parce que `import airflow.sdk`
+prend à lui seul ~3 s).

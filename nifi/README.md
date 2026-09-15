@@ -1,5 +1,9 @@
 # NiFi — orchestration de l'étape 1 (collecte)
 
+> ⚠️ **Alternative écartée.** Ce dossier n'est plus le chemin d'orchestration du projet.
+> Il est conservé pour documenter un choix évalué puis écarté avec mesures — voir
+> `CLAUDE.md`. L'orchestration active vit dans `dags/`.
+
 Ce dossier fait tourner l'étape 1 (collecte RAW) via un flow Apache NiFi plutôt que via
 un lancement manuel/cron de `scripts/run_collection.py`. **Périmètre volontairement
 limité à la collecte** : NiFi n'orchestre pas les étapes Bronze/Silver/Gold ni la RAG —

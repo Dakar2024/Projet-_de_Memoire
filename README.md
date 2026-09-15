@@ -57,6 +57,57 @@ pytest -q
 Le script `run_collection.py` fait de vrais appels réseau et n'est pas testé automatiquement ;
 sa correction repose sur les fonctions unitaires des modules `src/ingestion/`.
 
+## Lancer le pipeline médaillon
+
+Deux passes de tests couvrent le pipeline complet (ingestion + orchestration Airflow) :
+
+```bash
+venv/bin/pytest -q               # logique, sans infrastructure
+venv/bin/pytest tests_airflow -q # structure des DAGs, nécessite apache-airflow
+```
+
+Démarrer la stack (Airflow 3 + PostgreSQL + MinIO, quatre buckets du médaillon) :
+
+```bash
+cp .env.docker.example .env.docker
+# puis renseigner .env.docker, notamment :
+python3 -c "import secrets; print(secrets.token_urlsafe(32))"   # -> AIRFLOW_JWT_SECRET
+
+docker compose --env-file .env.docker up -d --build
+```
+
+- Airflow est sur `http://localhost:8080` (utilisateur `admin`, mot de passe dans
+  `/opt/airflow/simple_auth_manager_passwords.json.generated` du conteneur
+  `airflow-apiserver`).
+- La console MinIO est sur `http://localhost:<MINIO_CONSOLE_PORT>` (9001 par défaut).
+
+### État volontaire du pipeline
+
+Les passages `raw_to_bronze`, `bronze_to_silver`, `quality_check_silver`,
+`silver_to_gold_rag` et `silver_to_gold_analytique` échouent explicitement, en nommant le
+sous-projet qui les implémentera. Conséquence : tant que le sous-projet B n'est pas livré,
+`check_bronze_shared` ne réussit pas, l'Asset n'est pas publié, et les DAGs de panel ne se
+déclenchent pas automatiquement.
+
+Pour exercer l'ingestion par panel, les déclencher à la main en indiquant la date des
+sources partagées déjà déposées :
+
+```bash
+docker compose --env-file .env.docker exec airflow-scheduler \
+  airflow dags trigger dag_genomic_pipeline_brca --conf '{"sources_date": "2026-09-01"}'
+```
+
+La date est résolue, les quatre ingestions et `check_raw` s'exécutent, puis le run s'arrête
+à `raw_to_bronze`.
+
+Un déclenchement manuel du DAG d'acquisition demande `--logical-date AAAA-MM-JJ` : dans
+Airflow 3, un run manuel n'a pas de date logique sans cette option.
+
+```bash
+docker compose --env-file .env.docker exec airflow-scheduler \
+  airflow dags trigger dag_acquisition_sources --logical-date 2026-09-01
+```
+
 ## Lancer la collecte via NiFi (optionnel)
 
 `nifi/` fait tourner `run_collection.py` comme un flow Apache NiFi planifié (cron
