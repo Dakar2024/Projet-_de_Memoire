@@ -44,33 +44,38 @@ with DAG(
         except ConfigurationError as exc:
             raise AirflowFailException(str(exc)) from exc
 
+    # Le paramètre ne s'appelle pas `logical_date` : c'est une clé de contexte réservée
+    # par Airflow (auto-injectée), et un paramètre TaskFlow de ce nom entre en collision
+    # avec elle (`ValueError: The key 'logical_date' in args is ... reserved`, vérifié en
+    # exécution réelle). `dag_genomic_pipeline.py` n'a pas ce problème : il utilise déjà
+    # `sources_date` pour la même donnée.
     @task(task_id="download_clinvar_bulk")
-    def download_clinvar_bulk(logical_date: str) -> str:
-        return ingest_clinvar(logical_date)
+    def download_clinvar_bulk(acquisition_date: str) -> str:
+        return ingest_clinvar(acquisition_date)
 
     @task(task_id="download_hpo_files")
-    def download_hpo_files(logical_date: str) -> str:
-        return ingest_hpo_files(logical_date)
+    def download_hpo_files(acquisition_date: str) -> str:
+        return ingest_hpo_files(acquisition_date)
 
     @task(task_id="check_raw_shared")
     def check_raw_shared(clinvar_partition: str, hpo_partition: str) -> None:
         assert_partitions_complete([clinvar_partition, hpo_partition])
 
     @task(task_id="raw_to_bronze_shared")
-    def raw_to_bronze_shared(logical_date: str) -> list[str]:
-        return raw_to_bronze(logical_date, SHARED_SOURCES)
+    def raw_to_bronze_shared(acquisition_date: str) -> list[str]:
+        return raw_to_bronze(acquisition_date, SHARED_SOURCES)
 
     @task(task_id="check_bronze_shared", outlets=[SOURCES_READY])
-    def check_bronze_shared(bronze_partitions: list[str], logical_date: str, **context) -> None:
+    def check_bronze_shared(bronze_partitions: list[str], acquisition_date: str, **context) -> None:
         assert_partitions_complete(bronze_partitions)
         # Les DAGs de panel sont déclenchés sans date logique : ils relisent celle-ci
         # dans l'événement d'Asset pour travailler sur les mêmes partitions.
-        record_sources_date(context["outlet_events"], SOURCES_READY, logical_date)
+        record_sources_date(context["outlet_events"], SOURCES_READY, acquisition_date)
 
-    logical_date = resolve_logical_date()
+    acquisition_date = resolve_logical_date()
     checked_raw = check_raw_shared(
-        download_clinvar_bulk(logical_date), download_hpo_files(logical_date)
+        download_clinvar_bulk(acquisition_date), download_hpo_files(acquisition_date)
     )
-    bronze = raw_to_bronze_shared(logical_date)
+    bronze = raw_to_bronze_shared(acquisition_date)
     checked_raw >> bronze
-    check_bronze_shared(bronze, logical_date)
+    check_bronze_shared(bronze, acquisition_date)
