@@ -1709,6 +1709,8 @@ git commit -m "feat: add per-panel NCBI Gene and RefSeq Bronze ingestion"
 
 ---
 
+> ⚠️ **Tâches 8 à 12 remplacées le 2026-09-15** par `docs/superpowers/plans/2026-09-15-sous-projet-a-quatre-couches.md` (architecture en quatre couches). Ne pas les exécuter : elles supposent trois couches, installent les dépendances dans un venv inutilisé par Airflow, et utilisent `airflow users create`, absent d'Airflow 3.3.1.
+
 ### Task 8: Scripts d'ingestion par panel — MedGen et termes HPO
 
 **Files:**
