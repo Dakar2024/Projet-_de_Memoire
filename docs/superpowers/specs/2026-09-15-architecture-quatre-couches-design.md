@@ -198,6 +198,11 @@ mode eager ont occupé 928 Mo.
 Chaque passage est précédé d'une tâche de contrôle qui bloque la propagation en cas d'échec :
 `check_raw`, `check_bronze`, `quality_check_silver`.
 
+`check_raw` contrôle la **complétude et la non-vacuité** des partitions : liste non vide,
+`_SUCCESS` présent, `record_count` du manifest strictement positif. Il ne regarde pas le
+contenu. Les contrôles de contenu (colonnes attendues, gènes résolus) sont la responsabilité
+de `check_bronze`, au sous-projet B.
+
 Le Bronze ne filtre pas sur le panel : la conversion d'une source partagée (bulk ClinVar,
 fichier plat HPO) est donc identique pour tous les panels. Elle s'exécute **une seule fois,
 dans le DAG d'acquisition**, sans quoi les 442 Mo du bulk seraient convertis une fois par
