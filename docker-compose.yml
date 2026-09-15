@@ -12,19 +12,19 @@ x-airflow-common: &airflow-common
     # Plafond de tâches simultanées : avec LocalExecutor chaque tâche est un processus du
     # conteneur scheduler (limité à 2g sur le VPS). Le défaut de 32 risquerait l'OOM.
     AIRFLOW__CORE__PARALLELISM: "4"
-    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:${POSTGRES_PASSWORD}@postgres:5432/airflow
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD obligatoire, à renseigner}@postgres:5432/airflow
     AIRFLOW__CORE__DAGS_FOLDER: /opt/projet/dags
     # Les tâches joignent l'API d'exécution de l'api-server : localhost désignerait
     # le conteneur du scheduler lui-même.
     AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-apiserver:8080/execution/
     # Partagé entre composants : sinon chaque conteneur génère le sien.
-    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET}
+    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:?AIRFLOW_JWT_SECRET obligatoire, à renseigner}
     AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_USERS: admin:admin
     PYTHONPATH: /opt/projet:/opt/projet/src
     LAKE_URI: "s3://"
     AWS_ENDPOINT_URL: "http://minio:9000"
     AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
-    AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+    AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD obligatoire, à renseigner}
     AWS_REGION: us-east-1
     NCBI_EMAIL: ${NCBI_EMAIL}
     NCBI_API_KEY: ${NCBI_API_KEY:-}
@@ -44,6 +44,9 @@ x-airflow-after-init: &airflow-after-init
     condition: service_healthy
   minio:
     condition: service_healthy
+  # Les buckets doivent exister avant qu'une tâche n'écrive dans le lac.
+  minio-init:
+    condition: service_completed_successfully
   airflow-init:
     condition: service_completed_successfully
 
@@ -52,7 +55,7 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: airflow
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD obligatoire, à renseigner}
       POSTGRES_DB: airflow
     volumes:
       - postgres-data:/var/lib/postgresql/data
@@ -70,7 +73,7 @@ services:
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD obligatoire, à renseigner}
     ports:
       # Ports hôte configurables : sur une machine de développement, 9000 et 9001
       # sont souvent déjà pris (Portainer, un autre MinIO). Les services Airflow
@@ -95,7 +98,7 @@ services:
         condition: service_healthy
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD obligatoire, à renseigner}
     entrypoint: ["/bin/sh", "/scripts/create-buckets.sh"]
     volumes:
       - ./docker/minio/create-buckets.sh:/scripts/create-buckets.sh:ro
