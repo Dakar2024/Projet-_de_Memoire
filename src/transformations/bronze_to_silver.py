@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from transformations.raw_to_bronze import SPEC
+from transformations import SPEC
 
 
 def bronze_to_silver(
