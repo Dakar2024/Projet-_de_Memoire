@@ -73,15 +73,14 @@ venv/bin/pytest -q               # logique, sans infrastructure
 venv/bin/pytest tests_airflow -q # structure des DAGs, nécessite apache-airflow
 ```
 
-Démarrer la stack (Airflow 3 + PostgreSQL + MinIO, quatre buckets du médaillon) :
+Démarrer la stack (Airflow 3 + PostgreSQL + MinIO, quatre buckets du médaillon) : compléter
+le `.env` créé plus haut avec les variables Docker (voir `.env.example`), notamment :
 
 ```bash
-cp .env.docker.example .env.docker
-# puis renseigner .env.docker, notamment :
 python3 -c "import secrets; print(secrets.token_urlsafe(32))"   # -> AIRFLOW_JWT_SECRET
-echo "AIRFLOW_UID=$(id -u)" >> .env.docker   # les conteneurs écrivent dans data/ du dépôt
+echo "AIRFLOW_UID=$(id -u)" >> .env   # les conteneurs écrivent dans data/ du dépôt
 
-docker compose --env-file .env.docker up -d --build
+docker compose --env-file .env up -d --build
 ```
 
 - Airflow est sur `http://localhost:8080` (utilisateur `admin`, mot de passe dans
@@ -101,7 +100,7 @@ Pour exercer l'ingestion par panel, les déclencher à la main en indiquant la d
 sources partagées déjà déposées :
 
 ```bash
-docker compose --env-file .env.docker exec airflow-scheduler \
+docker compose --env-file .env exec airflow-scheduler \
   airflow dags trigger dag_genomic_pipeline_brca --conf '{"sources_date": "2026-09-01"}'
 ```
 
@@ -112,7 +111,7 @@ Un déclenchement manuel du DAG d'acquisition demande `--logical-date AAAA-MM-JJ
 Airflow 3, un run manuel n'a pas de date logique sans cette option.
 
 ```bash
-docker compose --env-file .env.docker exec airflow-scheduler \
+docker compose --env-file .env exec airflow-scheduler \
   airflow dags trigger dag_acquisition_sources --logical-date 2026-09-01
 ```
 
@@ -125,7 +124,7 @@ docker compose --env-file .env.docker exec airflow-scheduler \
   Un mois sauté se rattrape à la main :
 
   ```bash
-  docker compose --env-file .env.docker exec airflow-scheduler \
+  docker compose --env-file .env exec airflow-scheduler \
     airflow dags trigger dag_genomic_pipeline_<panel> --conf '{"sources_date": "AAAA-MM-01"}'
   ```
 
