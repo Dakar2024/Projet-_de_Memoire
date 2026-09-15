@@ -11,5 +11,6 @@ __pycache__/
 SESSION_HANDOFF.md
 data/external/*
 data/raw/*
+data/lake/
 !data/external/.gitkeep
 !data/raw/.gitkeep

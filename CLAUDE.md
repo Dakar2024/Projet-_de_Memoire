@@ -38,8 +38,9 @@ python scripts/run_collection.py            # reuses the already-downloaded Clin
 python scripts/run_collection.py --refresh   # forces re-download of source files
 ```
 
-- `pytest.ini` sets `pythonpath = src`, so tests import as `from ingestion.xxx import ...`
-  (no package install needed).
+- `pytest.ini` sets `pythonpath = src .`, so tests import as `from ingestion.xxx import ...`
+  (no package install needed); the `.` makes the root-level `scripts` and `dags` packages
+  importable too (`from scripts.ingest_clinvar import ...`, `from dags.common.dates import ...`).
 - `NCBI_EMAIL` is required (NCBI E-utilities policy); real secrets go only in `.env`
   (gitignored), never in `.env.example`. Leave `NCBI_API_KEY` empty if you don't have one —
   a fake key would push the rate limiter into fast mode and cause errors mid-run.
@@ -50,9 +51,11 @@ python scripts/run_collection.py --refresh   # forces re-download of source file
 
 ## Architecture
 
-Each of the four sources is one module in `src/ingestion/`, and `orchestrate.py` assembles
-their outputs into per-gene documents. `scripts/run_collection.py` is the only orchestration
-entry point (a thin CLI wrapper) — it calls each module in sequence:
+Each source is one module in `src/ingestion/`. Two entry points use them:
+`scripts/run_collection.py`, the legacy CLI (a thin wrapper) where `orchestrate.py` assembles
+four sources into per-gene documents; and the medallion pipeline, where `scripts/ingest_*.py`
+write `raw` partitions and `dags/` orchestrates them. The legacy CLI calls each module in
+sequence:
 
 1. **`clinvar.py`** — downloads the ClinVar bulk file (`variant_summary.txt.gz`, shared/cached,
    ~440 MB) via `download.py`, then uses polars to filter it to the gene panel and dedupe by
@@ -70,7 +73,16 @@ entry point (a thin CLI wrapper) — it calls each module in sequence:
 4. **`orchestrate.py`** — joins all four sources per gene into one document; `find_empty_genes`
    flags genes missing variants or gene metadata (used by the CLI to decide the exit code).
 
+5. **`refseq.py`** — RefSeq transcript catalogue per gene (esearch + esummary on `nuccore`),
+   needed by the Silver HGVS normalisation; medallion pipeline only.
+
 Shared infrastructure:
+- **`storage.py`** — medallion lake I/O on `file://` or `s3://` (MinIO): partition URIs,
+  put/get/stream/delete, manifests, and the partition protocol `begin_partition` → data →
+  manifest → `_SUCCESS`, checked by `assert_partitions_complete`.
+- **`jsonl.py`** — gzipped JSONL serialisation of raw API responses for the `raw` layer.
+- **`errors.py`** — `ConfigurationError`, a permanent error that DAGs turn into a non-retried
+  Airflow failure.
 - **`http_client.py`** — `NcbiClient` (esearch/esummary, retry on 429/5xx via `urllib3.Retry`)
   and `RateLimiter`, which throttles calls to respect NCBI's global rate limit (faster with an
   API key). Also exports `build_retrying_session()`, the retry-configured `requests.Session`
@@ -111,7 +123,8 @@ versions).
 
 `data/external/` (downloaded source files) and `data/raw/` (per-gene output) are gitignored
 except for `.gitkeep`; regenerate their contents by running the collection script rather than
-expecting them to be present in a fresh checkout.
+expecting them to be present in a fresh checkout. `data/lake/` (gitignored) is the local
+medallion lake — one sub-directory per layer — used when `LAKE_URI` is unset.
 
 ## Orchestration — Airflow 3 (NiFi : alternative évaluée, écartée)
 
