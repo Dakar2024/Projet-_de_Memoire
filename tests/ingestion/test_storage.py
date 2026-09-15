@@ -5,6 +5,8 @@ import pytest
 from botocore.exceptions import ClientError
 
 from ingestion.storage import (
+    IncompletePartitionError,
+    assert_partitions_complete,
     build_manifest,
     exists,
     finalize_partition,
@@ -222,3 +224,36 @@ def test_storage_round_trip_against_a_real_minio():
         source_version="v", files={"data.txt": 12}, record_count=1,
     ))
     assert partition_is_complete(partition) is True
+
+
+def _finalize(partition):
+    finalize_partition(partition, build_manifest(
+        source="s", logical_date="2026-09-01", source_url="u",
+        source_version="v", files={}, record_count=0,
+    ))
+
+
+def test_assert_partitions_complete_accepts_finalized_partitions(tmp_path):
+    first = f"file://{tmp_path}/raw/clinvar/dt=2026-09-01"
+    second = f"file://{tmp_path}/raw/hpo/dt=2026-09-01"
+    _finalize(first)
+    _finalize(second)
+
+    assert_partitions_complete([first, second])
+
+
+def test_assert_partitions_complete_names_every_incomplete_partition(tmp_path):
+    """Toutes les partitions incomplètes sont nommées en une fois : un message qui
+    n'en citerait qu'une obligerait à relancer pour découvrir la suivante."""
+    complete = f"file://{tmp_path}/raw/clinvar/dt=2026-09-01"
+    missing_a = f"file://{tmp_path}/raw/hpo/dt=2026-09-01"
+    missing_b = f"file://{tmp_path}/raw/medgen/dt=2026-09-01/panel=brca"
+    _finalize(complete)
+
+    with pytest.raises(IncompletePartitionError) as excinfo:
+        assert_partitions_complete([complete, missing_a, missing_b])
+
+    message = str(excinfo.value)
+    assert missing_a in message
+    assert missing_b in message
+    assert complete not in message

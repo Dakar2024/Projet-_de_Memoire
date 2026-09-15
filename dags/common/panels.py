@@ -1,0 +1,27 @@
+from __future__ import annotations
+
+from airflow.sdk import Asset
+
+from ingestion.config import BREAST_CANCER_GENES, SICKLE_CELL_GENES
+
+# Source unique de vérité : les listes de gènes vivent dans ingestion.config, où
+# elles sont déjà sous test.
+PANELS: dict[str, list[str]] = {
+    "brca": BREAST_CANCER_GENES,
+    "sickle": SICKLE_CELL_GENES,
+}
+
+PANEL_LABELS: dict[str, str] = {
+    "brca": "Cancer du sein héréditaire",
+    "sickle": "Drépanocytose et modificateurs HbF",
+}
+
+# Le bronze ne filtre pas sur le panel : la conversion d'une source partagée est
+# identique pour tous les panels et s'exécute une seule fois, dans le DAG
+# d'acquisition. Les sources par panel sont converties dans chaque DAG de panel.
+SHARED_SOURCES: list[str] = ["clinvar", "hpo"]
+PANEL_SOURCES: list[str] = ["ncbi_gene", "refseq", "medgen", "hpo_terms"]
+
+# Publié quand le bronze des sources partagées est complet : les DAGs de panel se
+# déclenchent sur la donnée réellement disponible, pas sur un horaire.
+SOURCES_READY = Asset("s3://bronze/_sources_pretes")
