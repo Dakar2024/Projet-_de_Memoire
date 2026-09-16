@@ -1,6 +1,42 @@
+"""Passage bronze -> silver : neuf tables Delta typées, historique SCD2 sur
+`clinvar_variant`. Voir docs/superpowers/specs/2026-09-16-sous-projet-c-bronze-silver-design.md.
+"""
+
 from __future__ import annotations
 
+import io
+
+import polars as pl
+
+from ingestion.storage import get_bytes
 from transformations import SPEC
+
+
+# Jamais propagées dans une table Silver (contrainte globale de ce plan) : aucun
+# bâtisseur n'en a besoin, retirées une bonne fois ici plutôt que dans chacun.
+# `strict=False` : les fixtures de test, minimales, ne les incluent pas toujours —
+# ce n'est pas une erreur de les retirer quand elles sont déjà absentes.
+_BRONZE_TECHNICAL_COLUMNS = ["_source_version", "_logical_date", "_ingested_at"]
+
+
+def _read_bronze_table(bronze_partition: str) -> pl.DataFrame:
+    """Relit le Parquet d'une partition bronze (fichier unique `data.parquet`),
+    sans ses colonnes techniques (`_source_version`/`_logical_date`/`_ingested_at`)."""
+    df = pl.read_parquet(io.BytesIO(get_bytes(f"{bronze_partition}/data.parquet")))
+    return df.drop(_BRONZE_TECHNICAL_COLUMNS, strict=False)
+
+
+def _write_silver_snapshot(df: pl.DataFrame, table_uri: str, panel: str) -> None:
+    """Remplace entièrement les lignes du panel dans une table Silver sans historique.
+
+    `predicate` scinde l'overwrite à la seule partition `panel` courante : sans lui,
+    chaque run écraserait la table entière et effacerait l'autre panel.
+    """
+    df.write_delta(
+        table_uri,
+        mode="overwrite",
+        delta_write_options={"partition_by": ["panel"], "predicate": f"panel = '{panel}'"},
+    )
 
 
 def bronze_to_silver(
