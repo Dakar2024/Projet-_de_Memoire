@@ -492,10 +492,6 @@ Ajouter à `tests/transformations/test_bronze_to_silver.py` :
 ```python
 from transformations.bronze_to_silver import _write_clinvar_variant
 
-SCD2_COLS = [
-    "alleleid", "panel", "clinicalsignificance", "reviewstatus", "lastevaluated",
-]
-
 
 def _rows(alleleid, panel, significance, review="criteria provided", evaluated="2026-08-01"):
     return pl.DataFrame({
