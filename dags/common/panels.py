@@ -31,3 +31,11 @@ SOURCES_READY = Asset("s3://bronze/_sources_pretes")
 # ensemble, chacun avec trois tâches NCBI, dépasseraient la limite globale de NCBI
 # (3 req/s, 10 avec clé). Le pool est créé par le service `airflow-init`.
 NCBI_POOL = "ncbi"
+
+# Pool Airflow à un seul slot pour bronze_to_silver : les neuf tables Silver sont
+# partagées entre les deux panels (partitionnées par `panel`, pas par run), et les
+# deux DAGs de panel se déclenchent sur le même Asset SOURCES_READY — sans ce pool,
+# une création de table Delta concurrente (`DeltaTable.is_deltatable()` avant le
+# premier commit) peut effacer silencieusement le panel de l'autre run. Le pool est
+# créé par le service `airflow-init`, comme `NCBI_POOL`.
+SILVER_WRITE_POOL = "silver_write"

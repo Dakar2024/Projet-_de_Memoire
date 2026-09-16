@@ -16,6 +16,7 @@ from dags.common.panels import (
     PANEL_LABELS,
     PANEL_SOURCES,
     PANELS,
+    SILVER_WRITE_POOL,
     SOURCES_READY,
 )
 from ingestion.errors import ConfigurationError
@@ -119,7 +120,7 @@ def build_panel_dag(panel: str, genes: list[str]) -> DAG:
         def task_check_bronze(bronze_partitions: list[str]) -> None:
             assert_partitions_complete(bronze_partitions)
 
-        @task(task_id="bronze_to_silver")
+        @task(task_id="bronze_to_silver", pool=SILVER_WRITE_POOL)
         def task_bronze_to_silver(sources_date: str) -> None:
             bronze_to_silver(sources_date, panel)
 
