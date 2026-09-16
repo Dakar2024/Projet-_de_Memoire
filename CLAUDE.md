@@ -138,8 +138,9 @@ pour un coût mesuré de 1,37 Gio de RAM au repos. Chiffres : `docs/choix_contex
 `gold/analytique` (Delta), chacune dans un bucket MinIO. Moteur : Polars.
 
 - `scripts/ingest_*.py` écrivent uniquement en `raw`.
-- `src/transformations/` contient les passages entre couches (stubs tant que les
-  sous-projets B, C et D ne sont pas livrés).
+- `src/transformations/` contient les passages entre couches : `raw_to_bronze` livré
+  (sous-projet B), `bronze_to_silver`/`silver_to_gold_rag`/`silver_to_gold_analytique`
+  restent des stubs (sous-projets C et D).
 - `dags/` : un DAG d'acquisition mensuel pour les sources partagées, un DAG par panel.
 - `docker/` et `docker-compose.yml` : Airflow 3, PostgreSQL, MinIO.
 
