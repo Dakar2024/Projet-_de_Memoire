@@ -7,12 +7,14 @@ par source. Voir docs/superpowers/specs/2026-09-16-sous-projet-b-raw-bronze-desi
 
 from __future__ import annotations
 
+import gzip
+import json
 import re
 from pathlib import Path
 
 import polars as pl
 
-from ingestion.storage import open_stream
+from ingestion.storage import get_bytes, open_stream
 
 
 def _normalize_column_name(name: str) -> str:
@@ -62,6 +64,42 @@ def _convert_flat_source(
     )
     output_path = work_dir / "output.parquet"
     lf.sink_parquet(output_path)
+    return output_path
+
+
+def _convert_jsonl_source(
+    raw_partition: str,
+    object_name: str,
+    scalar_fields: tuple[str, ...],
+    nested_fields: tuple[str, ...],
+    technical_columns: dict[str, str],
+    work_dir: Path,
+) -> Path:
+    """Convertit une source JSONL en Parquet : champs scalaires en colonnes, champs
+    imbriqués sérialisés en chaîne JSON (`<champ>_json`), jamais aplatis.
+
+    Volume par gène/CUI du panel (quelques dizaines d'enregistrements au plus) :
+    traitement en mémoire, pas de mode lazy nécessaire, contrairement aux sources
+    flat.
+    """
+    raw = gzip.decompress(get_bytes(f"{raw_partition}/{object_name}")).decode("utf-8")
+    rows: list[dict] = []
+    for line in raw.splitlines():
+        if not line:
+            continue
+        record = json.loads(line)
+        row = {field: record.get(field) for field in scalar_fields}
+        row.update(
+            {f"{field}_json": json.dumps(record.get(field)) for field in nested_fields}
+        )
+        rows.append(row)
+
+    df = pl.DataFrame(rows)
+    df = df.with_columns(
+        [pl.lit(value).alias(key) for key, value in technical_columns.items()]
+    )
+    output_path = work_dir / "output.parquet"
+    df.write_parquet(output_path)
     return output_path
 
 
