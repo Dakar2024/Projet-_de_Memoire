@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import io
+import json
 import re
 
 import polars as pl
@@ -123,6 +124,41 @@ def _build_clinvar_variant_rows(
     )
 
     return filtered.join(hgvs_df, on="alleleid")
+
+
+def _build_ncbi_gene(bronze_partition: str) -> pl.DataFrame:
+    """Extrait les champs connus d'`esummary_json`. Un gène non résolu (esummary
+    vide) garde sa ligne, champs nuls — le verdict qualité appartient à
+    `quality_check_silver`, pas à cette étape."""
+    df = _read_bronze_table(bronze_partition)
+    rows = [
+        {
+            "gene_symbol": row["gene_symbol"],
+            **{
+                field: json.loads(row["esummary_json"]).get(field)
+                for field in ("name", "description", "maplocation", "summary")
+            },
+        }
+        for row in df.to_dicts()
+    ]
+    return pl.DataFrame(rows)
+
+
+def _build_refseq_transcript(bronze_partition: str) -> pl.DataFrame:
+    """Éclate `transcripts_json` (une ligne par transcrit), sépare `accessionversion`
+    (`"NM_007294.4"`) en `accession` + `version`. Un gène sans transcrit ne produit
+    aucune ligne (liste vide), sans que ce soit une erreur."""
+    df = _read_bronze_table(bronze_partition)
+    rows = []
+    for row in df.to_dicts():
+        for transcript in json.loads(row["transcripts_json"]):
+            accession, _, version = transcript["accessionversion"].partition(".")
+            rows.append({
+                "gene_symbol": row["gene_symbol"],
+                "accession": accession,
+                "version": int(version) if version else None,
+            })
+    return pl.DataFrame(rows, schema={"gene_symbol": pl.Utf8, "accession": pl.Utf8, "version": pl.Int64})
 
 
 # Seuls ces champs, mesurés comme ayant varié d'un mois à l'autre (spec du 15/09,
