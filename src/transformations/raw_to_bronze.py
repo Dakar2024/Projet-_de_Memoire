@@ -10,11 +10,23 @@ from __future__ import annotations
 import gzip
 import json
 import re
+import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 import polars as pl
 
-from ingestion.storage import get_bytes, open_stream
+from ingestion.config import BRONZE, RAW
+from ingestion.storage import (
+    begin_partition,
+    build_manifest,
+    finalize_partition,
+    get_bytes,
+    open_stream,
+    partition_uri,
+    put_file,
+    read_manifest,
+)
 
 
 def _normalize_column_name(name: str) -> str:
@@ -103,6 +115,40 @@ def _convert_jsonl_source(
     return output_path
 
 
+@dataclass(frozen=True)
+class _FlatSource:
+    object_name: str
+
+
+@dataclass(frozen=True)
+class _JsonlSource:
+    object_name: str
+    scalar_fields: tuple[str, ...]
+    nested_fields: tuple[str, ...]
+
+
+# Une source flat : uniquement son nom de fichier raw, converti tel quel colonne
+# par colonne. Une source JSONL : en plus, quels champs sont scalaires (colonnes
+# directes) et lesquels sont imbriqués (sérialisés en `<champ>_json`).
+_FLAT_SOURCES: dict[str, _FlatSource] = {
+    "clinvar": _FlatSource("variant_summary.txt.gz"),
+    "hpo": _FlatSource("genes_to_phenotype.txt"),
+}
+
+_JSONL_SOURCES: dict[str, _JsonlSource] = {
+    "ncbi_gene": _JsonlSource("gene_summaries.jsonl.gz", ("gene_symbol",), ("esummary",)),
+    "refseq": _JsonlSource("transcripts.jsonl.gz", ("gene_symbol",), ("transcripts",)),
+    "medgen": _JsonlSource("concepts.jsonl.gz", ("cui",), ("esummary",)),
+    "hpo_terms": _JsonlSource(
+        "hpo_terms.jsonl.gz",
+        ("gene_symbol", "hpo_id", "hpo_name"),
+        ("details",),
+    ),
+}
+
+OUTPUT_OBJECT_NAME = "data.parquet"
+
+
 def raw_to_bronze(
     logical_date: str,
     sources: list[str],
@@ -125,5 +171,60 @@ def raw_to_bronze(
     entièrement vide peut être retirée. Les payloads imbriqués des sources JSONL
     restent des chaînes JSON, jamais aplatis. Le bulk ClinVar se lit en mode lazy et
     s'écrit en flux, jamais chargé entièrement en mémoire.
+
+    Une source inconnue de la table déclarative lève immédiatement, avant tout accès
+    à sa partition raw (elle peut ne pas exister) : le message reste `ValueError`,
+    jamais un `TypeError` accidentel sur un manifest absent. Une source en échec
+    n'annule pas les sources précédentes du même appel, déjà finalisées (§4 de la
+    spec) : le message n'est levé qu'après que begin_partition/finalize_partition de
+    la source précédente ont eu lieu.
     """
-    raise NotImplementedError("raw_to_bronze : implémenté tâche par tâche — voir Task 4")
+    partitions: list[str] = []
+    for source in sources:
+        if source in _FLAT_SOURCES:
+            spec: _FlatSource | _JsonlSource = _FLAT_SOURCES[source]
+        elif source in _JSONL_SOURCES:
+            spec = _JSONL_SOURCES[source]
+        else:
+            raise ValueError(f"source inconnue de raw_to_bronze : {source!r}")
+
+        raw_partition = partition_uri(RAW, source, logical_date, panel=panel, lake_uri=lake_uri)
+        bronze_partition = partition_uri(BRONZE, source, logical_date, panel=panel, lake_uri=lake_uri)
+        raw_manifest = read_manifest(raw_partition)
+        technical_columns = {
+            "_source_version": raw_manifest["source_version"],
+            "_logical_date": logical_date,
+            "_ingested_at": raw_manifest["written_at"],
+        }
+
+        begin_partition(bronze_partition)
+        with tempfile.TemporaryDirectory() as tmp:
+            work_dir = Path(tmp)
+            if isinstance(spec, _FlatSource):
+                output_path = _convert_flat_source(
+                    raw_partition, spec.object_name, technical_columns, work_dir
+                )
+            else:
+                output_path = _convert_jsonl_source(
+                    raw_partition, spec.object_name, spec.scalar_fields,
+                    spec.nested_fields, technical_columns, work_dir,
+                )
+
+            record_count = pl.scan_parquet(output_path).select(pl.len()).collect().item()
+            file_size = output_path.stat().st_size
+            put_file(f"{bronze_partition}/{OUTPUT_OBJECT_NAME}", output_path)
+
+        finalize_partition(
+            bronze_partition,
+            build_manifest(
+                source=source,
+                logical_date=logical_date,
+                source_url=raw_partition,
+                source_version=raw_manifest["source_version"],
+                files={OUTPUT_OBJECT_NAME: file_size},
+                record_count=record_count,
+                panel=panel,
+            ),
+        )
+        partitions.append(bronze_partition)
+    return partitions
