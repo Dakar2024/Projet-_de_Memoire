@@ -326,12 +326,14 @@ def test_write_clinvar_variant_detects_a_null_to_value_transition(tmp_path):
 
 
 def test_write_clinvar_variant_replay_with_a_null_watched_field_is_idempotent(tmp_path):
-    """Rejouer le même mois quand un champ surveillé est `None` (donc `None` aussi
-    côté `current` après le premier run) ne doit créer aucune ligne d'historique
-    supplémentaire — le proxy `cur_clinicalsignificance.is_null()` confondait à tort
-    ce cas avec une absence de correspondance avant le correctif I1."""
+    """Rejouer le même mois quand `clinicalsignificance` (le premier champ surveillé)
+    est `None` (donc `None` aussi côté `current` après le premier run) ne doit créer
+    aucune ligne d'historique supplémentaire — le proxy `cur_clinicalsignificance.is_null()`
+    confondait à tort ce cas avec une absence de correspondance avant le correctif I1.
+    Champ choisi précisément parce que c'est lui que l'ancien proxy testait : un champ
+    surveillé différent ne discriminerait pas l'ancien code du nouveau."""
     uri = f"file://{tmp_path}/lake/silver/clinvar_variant"
-    rows = _rows("1", "brca", "Benign", evaluated=None)
+    rows = _rows("1", "brca", None)
     _write_clinvar_variant(rows, uri, "brca", "2026-08-01")
 
     _write_clinvar_variant(rows, uri, "brca", "2026-08-01")
