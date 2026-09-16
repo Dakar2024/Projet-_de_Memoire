@@ -15,6 +15,7 @@ from transformations.bronze_to_silver import (
     _read_bronze_table,
     _write_clinvar_variant,
     _write_silver_snapshot,
+    bronze_to_silver,
 )
 
 
@@ -406,3 +407,60 @@ def test_build_hpo_term_keeps_a_row_with_empty_details(tmp_path):
 
     assert result["hpo_id"].to_list() == ["HP:0009999"]
     assert result["definition"].to_list() == [None]
+
+
+def _seed_all_bronze(tmp_path, lake, panel):
+    _seed_bronze_parquet(tmp_path, "clinvar", None, pl.DataFrame({
+        "alleleid": ["1"], "genesymbol": ["HBB"], "assembly": ["GRCh38"],
+        "clinicalsignificance": ["Benign"], "reviewstatus": ["criteria provided"],
+        "lastevaluated": ["2026-08-01"], "rs_dbsnp": ["-1"],
+        "name": ["NM_000518.5(HBB):c.1A>G"],
+    }))
+    _seed_bronze_parquet(tmp_path, "hpo", None, pl.DataFrame({
+        "ncbi_gene_id": ["3043"], "gene_symbol": ["HBB"],
+        "hpo_id": ["HP:0001903"], "hpo_name": ["Anemia"],
+    }))
+    _seed_bronze_parquet(tmp_path, "ncbi_gene", panel, pl.DataFrame({
+        "gene_symbol": ["HBB"], "esummary_json": [_json.dumps({"name": "HBB"})],
+    }))
+    _seed_bronze_parquet(tmp_path, "refseq", panel, pl.DataFrame({
+        "gene_symbol": ["HBB"],
+        "transcripts_json": [_json.dumps([{"accessionversion": "NM_000518.5", "slen": 1000}])],
+    }))
+    _seed_bronze_parquet(tmp_path, "medgen", panel, pl.DataFrame({
+        "cui": ["C0002895"], "esummary_json": [_json.dumps({"conceptid": "C0002895"})],
+    }))
+    _seed_bronze_parquet(tmp_path, "hpo_terms", panel, pl.DataFrame({
+        "gene_symbol": ["HBB"], "hpo_id": ["HP:0001903"], "hpo_name": ["Anemia"],
+        "details_json": [_json.dumps({"definition": "A reduction in erythrocytes."})],
+    }))
+
+
+SILVER_TABLES = [
+    "clinvar_variant", "clinvar_variant_gene", "ncbi_gene", "refseq_transcript",
+    "medgen_concept", "medgen_mim", "medgen_inheritance", "hpo_gene_phenotype", "hpo_term",
+]
+
+
+def test_bronze_to_silver_writes_all_nine_tables(tmp_path):
+    lake = f"file://{tmp_path}/lake"
+    _seed_all_bronze(tmp_path, lake, "sickle")
+
+    bronze_to_silver("2026-09-01", "sickle", lake_uri=lake)
+
+    for table in SILVER_TABLES:
+        result = pl.read_delta(f"{lake}/silver/{table}")
+        assert "panel" in result.columns
+        assert set(result["panel"].to_list()) <= {"sickle"}
+
+
+def test_bronze_to_silver_does_not_disturb_the_other_panel(tmp_path):
+    lake = f"file://{tmp_path}/lake"
+    _seed_all_bronze(tmp_path, lake, "sickle")
+    bronze_to_silver("2026-09-01", "sickle", lake_uri=lake)
+
+    _seed_all_bronze(tmp_path, lake, "brca")
+    bronze_to_silver("2026-09-01", "brca", lake_uri=lake)
+
+    result = pl.read_delta(f"{lake}/silver/ncbi_gene")
+    assert set(result["panel"].to_list()) == {"brca", "sickle"}
