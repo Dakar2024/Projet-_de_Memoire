@@ -39,6 +39,23 @@ def _write_silver_snapshot(df: pl.DataFrame, table_uri: str, panel: str) -> None
     )
 
 
+def _build_clinvar_variant_gene(bronze_partition: str, genes: list[str]) -> pl.DataFrame:
+    """Éclate `genesymbol` (jointure `;` pour les variants multi-gènes) et filtre au panel.
+
+    C'est cette table, et non `clinvar_variant`, qui décide quels `alleleid`
+    appartiennent au panel : `clinvar_variant` la consulte plutôt que de refiltrer
+    `genesymbol` elle-même.
+    """
+    df = _read_bronze_table(bronze_partition)
+    exploded = (
+        df.select(["alleleid", "genesymbol"])
+        .with_columns(pl.col("genesymbol").str.split(";").alias("gene_symbol"))
+        .explode("gene_symbol")
+        .drop("genesymbol")
+    )
+    return exploded.filter(pl.col("gene_symbol").is_in(genes))
+
+
 def bronze_to_silver(
     logical_date: str, panel: str, lake_uri: str | None = None
 ) -> None:
