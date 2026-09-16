@@ -7,6 +7,8 @@ from ingestion.storage import put_bytes
 from transformations.bronze_to_silver import (
     _build_clinvar_variant_gene,
     _build_clinvar_variant_rows,
+    _build_hpo_gene_phenotype,
+    _build_hpo_term,
     _build_medgen_tables,
     _build_ncbi_gene,
     _build_refseq_transcript,
@@ -358,3 +360,49 @@ def test_build_medgen_tables_keeps_an_unresolved_cui_without_exploding_rows(tmp_
     assert concept["conceptmeta_xml"].to_list() == [None]
     assert len(mim) == 0
     assert len(inheritance) == 0
+
+
+def test_build_hpo_gene_phenotype_filters_to_the_panel(tmp_path):
+    df = pl.DataFrame({
+        "ncbi_gene_id": ["3043", "9999"],
+        "gene_symbol": ["HBB", "AUTRE"],
+        "hpo_id": ["HP:0001903", "HP:0000118"],
+        "hpo_name": ["Anemia", "Phenotypic abnormality"],
+    })
+    partition = _seed_bronze_parquet(tmp_path, "hpo", None, df)
+
+    result = _build_hpo_gene_phenotype(partition, ["HBB"])
+
+    assert result["gene_symbol"].to_list() == ["HBB"]
+    assert result["hpo_id"].to_list() == ["HP:0001903"]
+
+
+def test_build_hpo_term_extracts_details(tmp_path):
+    df = pl.DataFrame({
+        "gene_symbol": ["HBB"], "hpo_id": ["HP:0001903"], "hpo_name": ["Anemia"],
+        "details_json": [_json.dumps({
+            "definition": "A reduction in erythrocytes.",
+            "synonyms": ["Low blood count"], "xrefs": ["UMLS:C0002871"],
+        })],
+    })
+    partition = _seed_bronze_parquet(tmp_path, "hpo_terms", "sickle", df)
+
+    result = _build_hpo_term(partition)
+    row = result.row(0, named=True)
+
+    assert row["hpo_id"] == "HP:0001903"
+    assert row["definition"] == "A reduction in erythrocytes."
+    assert row["synonyms"] == ["Low blood count"]
+
+
+def test_build_hpo_term_keeps_a_row_with_empty_details(tmp_path):
+    df = pl.DataFrame({
+        "gene_symbol": ["HBB"], "hpo_id": ["HP:0009999"], "hpo_name": ["Terme retire"],
+        "details_json": ["{}"],
+    })
+    partition = _seed_bronze_parquet(tmp_path, "hpo_terms", "sickle", df)
+
+    result = _build_hpo_term(partition)
+
+    assert result["hpo_id"].to_list() == ["HP:0009999"]
+    assert result["definition"].to_list() == [None]

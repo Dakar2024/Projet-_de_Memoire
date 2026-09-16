@@ -197,6 +197,31 @@ def _build_medgen_tables(bronze_partition: str) -> tuple[pl.DataFrame, pl.DataFr
     )
 
 
+def _build_hpo_gene_phenotype(bronze_partition: str, genes: list[str]) -> pl.DataFrame:
+    """Filtre le fichier plat HPO partagé aux gènes du panel. Un panel sans aucune
+    ligne (HBS1L, MYB) produit une table vide, légitime — voir `quality_check_silver`."""
+    df = _read_bronze_table(bronze_partition)
+    return df.filter(pl.col("gene_symbol").is_in(genes))
+
+
+def _build_hpo_term(bronze_partition: str) -> pl.DataFrame:
+    """Extrait `definition`/`synonyms`/`xrefs` de `details_json`. Un terme retiré de
+    HPO (details vide) garde sa ligne, champs nuls."""
+    df = _read_bronze_table(bronze_partition)
+    rows = []
+    for row in df.to_dicts():
+        details = json.loads(row["details_json"])
+        rows.append({
+            "gene_symbol": row["gene_symbol"],
+            "hpo_id": row["hpo_id"],
+            "hpo_name": row["hpo_name"],
+            "definition": details.get("definition") or None,
+            "synonyms": details.get("synonyms") or [],
+            "xrefs": details.get("xrefs") or [],
+        })
+    return pl.DataFrame(rows)
+
+
 # Seuls ces champs, mesurés comme ayant varié d'un mois à l'autre (spec du 15/09,
 # §2.2), déclenchent une nouvelle version SCD2. Un autre champ qui change (ex. `name`
 # retraité par NCBI) n'est pas une reclassification et ne doit pas en créer une.
