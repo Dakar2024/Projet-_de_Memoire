@@ -1,4 +1,5 @@
 import io
+import json as _json
 
 import polars as pl
 
@@ -6,6 +7,8 @@ from ingestion.storage import put_bytes
 from transformations.bronze_to_silver import (
     _build_clinvar_variant_gene,
     _build_clinvar_variant_rows,
+    _build_ncbi_gene,
+    _build_refseq_transcript,
     _read_bronze_table,
     _write_clinvar_variant,
     _write_silver_snapshot,
@@ -266,3 +269,58 @@ def test_write_clinvar_variant_does_not_touch_the_other_panel(tmp_path):
     result = pl.read_delta(uri).sort("panel")
     assert result["panel"].to_list() == ["brca", "sickle"]
     assert result.filter(pl.col("panel") == "sickle")["clinicalsignificance"].to_list() == ["Benign"]
+
+
+def test_build_ncbi_gene_extracts_known_esummary_fields(tmp_path):
+    df = pl.DataFrame({
+        "gene_symbol": ["HBB"],
+        "esummary_json": [_json.dumps({
+            "name": "HBB", "description": "hemoglobin subunit beta",
+            "maplocation": "11p15.4", "summary": "This gene encodes beta-globin.",
+        })],
+    })
+    partition = _seed_bronze_parquet(tmp_path, "ncbi_gene", "sickle", df)
+
+    result = _build_ncbi_gene(partition)
+    row = result.row(0, named=True)
+
+    assert row["gene_symbol"] == "HBB"
+    assert row["name"] == "HBB"
+    assert row["description"] == "hemoglobin subunit beta"
+    assert row["maplocation"] == "11p15.4"
+
+
+def test_build_ncbi_gene_keeps_a_row_for_an_unresolved_gene(tmp_path):
+    df = pl.DataFrame({"gene_symbol": ["HBS1L"], "esummary_json": ["{}"]})
+    partition = _seed_bronze_parquet(tmp_path, "ncbi_gene", "sickle", df)
+
+    result = _build_ncbi_gene(partition)
+
+    assert result["gene_symbol"].to_list() == ["HBS1L"]
+    assert result["name"].to_list() == [None]
+
+
+def test_build_refseq_transcript_explodes_one_row_per_transcript(tmp_path):
+    df = pl.DataFrame({
+        "gene_symbol": ["BRCA2"],
+        "transcripts_json": [_json.dumps([
+            {"accessionversion": "NM_001432077.1", "slen": 11863},
+            {"accessionversion": "NM_000059.4", "slen": 11986},
+        ])],
+    })
+    partition = _seed_bronze_parquet(tmp_path, "refseq", "brca", df)
+
+    result = _build_refseq_transcript(partition).sort("accession")
+
+    assert result["accession"].to_list() == ["NM_000059", "NM_001432077"]
+    assert result["version"].to_list() == [4, 1]
+    assert result["gene_symbol"].to_list() == ["BRCA2", "BRCA2"]
+
+
+def test_build_refseq_transcript_keeps_a_gene_with_no_transcript(tmp_path):
+    df = pl.DataFrame({"gene_symbol": ["HBS1L"], "transcripts_json": ["[]"]})
+    partition = _seed_bronze_parquet(tmp_path, "refseq", "sickle", df)
+
+    result = _build_refseq_transcript(partition)
+
+    assert len(result) == 0
