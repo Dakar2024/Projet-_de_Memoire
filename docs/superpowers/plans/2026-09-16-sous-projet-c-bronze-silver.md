@@ -98,6 +98,21 @@ def test_read_bronze_table_reads_back_the_parquet_file(tmp_path):
     assert result["gene_symbol"].to_list() == ["BRCA1"]
 
 
+def test_read_bronze_table_drops_bronze_technical_columns(tmp_path):
+    """Ces colonnes ne doivent jamais atteindre une table Silver (contrainte globale
+    de ce plan) — retirées ici, au point de lecture unique de toutes les sources."""
+    df = pl.DataFrame({
+        "gene_symbol": ["BRCA1"], "esummary_json": ["{}"],
+        "_source_version": ["2026-09-01"], "_logical_date": ["2026-09-01"],
+        "_ingested_at": ["2026-09-01T00:00:00+00:00"],
+    })
+    partition = _seed_bronze_parquet(tmp_path, "ncbi_gene", "brca", df)
+
+    result = _read_bronze_table(partition)
+
+    assert result.columns == ["gene_symbol", "esummary_json"]
+
+
 def test_write_silver_snapshot_only_replaces_the_given_panel(tmp_path):
     uri = f"file://{tmp_path}/lake/silver/ncbi_gene"
 
@@ -142,9 +157,18 @@ import polars as pl
 from ingestion.storage import get_bytes
 
 
+# Jamais propagées dans une table Silver (contrainte globale de ce plan) : aucun
+# bâtisseur n'en a besoin, retirées une bonne fois ici plutôt que dans chacun.
+# `strict=False` : les fixtures de test, minimales, ne les incluent pas toujours —
+# ce n'est pas une erreur de les retirer quand elles sont déjà absentes.
+_BRONZE_TECHNICAL_COLUMNS = ["_source_version", "_logical_date", "_ingested_at"]
+
+
 def _read_bronze_table(bronze_partition: str) -> pl.DataFrame:
-    """Relit le Parquet d'une partition bronze (fichier unique `data.parquet`)."""
-    return pl.read_parquet(io.BytesIO(get_bytes(f"{bronze_partition}/data.parquet")))
+    """Relit le Parquet d'une partition bronze (fichier unique `data.parquet`),
+    sans ses colonnes techniques (`_source_version`/`_logical_date`/`_ingested_at`)."""
+    df = pl.read_parquet(io.BytesIO(get_bytes(f"{bronze_partition}/data.parquet")))
+    return df.drop(_BRONZE_TECHNICAL_COLUMNS, strict=False)
 
 
 def _write_silver_snapshot(df: pl.DataFrame, table_uri: str, panel: str) -> None:
@@ -163,7 +187,7 @@ def _write_silver_snapshot(df: pl.DataFrame, table_uri: str, panel: str) -> None
 - [ ] **Step 7: Vérifier que les tests passent**
 
 Run: `venv/bin/pytest tests/transformations/test_bronze_to_silver.py -q`
-Expected: PASS, 2 passed
+Expected: PASS, 3 passed
 
 - [ ] **Step 8: Commit**
 
@@ -254,7 +278,7 @@ def _build_clinvar_variant_gene(bronze_partition: str, genes: list[str]) -> pl.D
 - [ ] **Step 4: Vérifier que les tests passent**
 
 Run: `venv/bin/pytest tests/transformations/test_bronze_to_silver.py -q`
-Expected: PASS, 4 passed
+Expected: PASS, 5 passed
 
 - [ ] **Step 5: Commit**
 
@@ -462,7 +486,7 @@ def _build_clinvar_variant_rows(
 - [ ] **Step 4: Vérifier que les tests de construction passent**
 
 Run: `venv/bin/pytest tests/transformations/test_bronze_to_silver.py -q`
-Expected: PASS, 9 passed
+Expected: PASS, 10 passed
 
 - [ ] **Step 5: Écrire les tests de l'historique SCD2 (ils doivent échouer)**
 
@@ -660,7 +684,7 @@ portent des gènes disjoints, mais le filtre coûte rien et documente l'intentio
 - [ ] **Step 8: Vérifier que les tests SCD2 passent**
 
 Run: `venv/bin/pytest tests/transformations/test_bronze_to_silver.py -q`
-Expected: PASS, 14 passed
+Expected: PASS, 15 passed
 
 - [ ] **Step 9: Commit**
 
@@ -797,7 +821,7 @@ def _build_refseq_transcript(bronze_partition: str) -> pl.DataFrame:
 - [ ] **Step 4: Vérifier que les tests passent**
 
 Run: `venv/bin/pytest tests/transformations/test_bronze_to_silver.py -q`
-Expected: PASS, 18 passed
+Expected: PASS, 19 passed
 
 - [ ] **Step 5: Commit**
 
@@ -914,7 +938,7 @@ def _build_medgen_tables(bronze_partition: str) -> tuple[pl.DataFrame, pl.DataFr
 - [ ] **Step 4: Vérifier que les tests passent**
 
 Run: `venv/bin/pytest tests/transformations/test_bronze_to_silver.py -q`
-Expected: PASS, 20 passed
+Expected: PASS, 21 passed
 
 - [ ] **Step 5: Commit**
 
@@ -1027,7 +1051,7 @@ def _build_hpo_term(bronze_partition: str) -> pl.DataFrame:
 - [ ] **Step 4: Vérifier que les tests passent**
 
 Run: `venv/bin/pytest tests/transformations/test_bronze_to_silver.py -q`
-Expected: PASS, 23 passed
+Expected: PASS, 24 passed
 
 - [ ] **Step 5: Commit**
 
@@ -1200,7 +1224,7 @@ aucune divergence entre les tests déjà écrits et l'orchestration.
 - [ ] **Step 4: Vérifier que les tests passent**
 
 Run: `venv/bin/pytest tests/transformations/test_bronze_to_silver.py -q`
-Expected: PASS, 25 passed
+Expected: PASS, 26 passed
 
 - [ ] **Step 5: Vérifier la suite complète**
 
