@@ -7,6 +7,7 @@ from transformations.bronze_to_silver import (
     _build_clinvar_variant_gene,
     _build_clinvar_variant_rows,
     _read_bronze_table,
+    _write_clinvar_variant,
     _write_silver_snapshot,
 )
 
@@ -195,3 +196,78 @@ def test_build_clinvar_variant_rows_keeps_a_row_with_irregular_hgvs(tmp_path):
     assert row["name"] == "forme HGVS non reconnue"
     assert row["refseq_accession"] is None
     assert row["refseq_accession_known"] is False
+
+
+SCD2_COLS = [
+    "alleleid", "panel", "clinicalsignificance", "reviewstatus", "lastevaluated",
+]
+
+
+def _rows(alleleid, panel, significance, review="criteria provided", evaluated="2026-08-01"):
+    return pl.DataFrame({
+        "alleleid": [alleleid], "panel": [panel],
+        "clinicalsignificance": [significance], "reviewstatus": [review],
+        "lastevaluated": [evaluated],
+    })
+
+
+def test_write_clinvar_variant_creates_the_table_on_first_run(tmp_path):
+    uri = f"file://{tmp_path}/lake/silver/clinvar_variant"
+
+    _write_clinvar_variant(_rows("1", "brca", "Benign"), uri, "brca", "2026-08-01")
+
+    result = pl.read_delta(uri)
+    assert result["is_current"].to_list() == [True]
+    assert result["valid_from"].to_list() == ["2026-08-01"]
+    assert result["valid_to"].to_list() == [None]
+
+
+def test_write_clinvar_variant_closes_and_reopens_on_a_real_change(tmp_path):
+    uri = f"file://{tmp_path}/lake/silver/clinvar_variant"
+    _write_clinvar_variant(_rows("1", "brca", "Pathogenic"), uri, "brca", "2026-08-01")
+
+    _write_clinvar_variant(
+        _rows("1", "brca", "Pathogenic/Likely pathogenic"), uri, "brca", "2026-09-01"
+    )
+
+    result = pl.read_delta(uri).sort("valid_from")
+    assert result["is_current"].to_list() == [False, True]
+    assert result["valid_to"].to_list() == ["2026-09-01", None]
+    assert result["clinicalsignificance"].to_list() == [
+        "Pathogenic", "Pathogenic/Likely pathogenic",
+    ]
+
+
+def test_write_clinvar_variant_replay_is_idempotent(tmp_path):
+    """Rejouer le même mois avec les mêmes valeurs ne doit créer aucune ligne."""
+    uri = f"file://{tmp_path}/lake/silver/clinvar_variant"
+    _write_clinvar_variant(_rows("1", "brca", "Benign"), uri, "brca", "2026-08-01")
+    _write_clinvar_variant(_rows("1", "brca", "Pathogenic"), uri, "brca", "2026-09-01")
+
+    _write_clinvar_variant(_rows("1", "brca", "Pathogenic"), uri, "brca", "2026-09-01")
+
+    assert len(pl.read_delta(uri)) == 2
+
+
+def test_write_clinvar_variant_ignores_unwatched_field_changes(tmp_path):
+    """Un champ hors liste surveillée (ex. `name`) ne doit pas déclencher de nouvelle
+    version — seuls clinical_significance/review_status/last_evaluated comptent."""
+    uri = f"file://{tmp_path}/lake/silver/clinvar_variant"
+    first = _rows("1", "brca", "Benign").with_columns(pl.lit("Name v1").alias("name"))
+    _write_clinvar_variant(first, uri, "brca", "2026-08-01")
+
+    second = _rows("1", "brca", "Benign").with_columns(pl.lit("Name v2").alias("name"))
+    _write_clinvar_variant(second, uri, "brca", "2026-09-01")
+
+    assert len(pl.read_delta(uri)) == 1
+
+
+def test_write_clinvar_variant_does_not_touch_the_other_panel(tmp_path):
+    uri = f"file://{tmp_path}/lake/silver/clinvar_variant"
+    _write_clinvar_variant(_rows("1", "sickle", "Benign"), uri, "sickle", "2026-08-01")
+
+    _write_clinvar_variant(_rows("2", "brca", "Pathogenic"), uri, "brca", "2026-08-01")
+
+    result = pl.read_delta(uri).sort("panel")
+    assert result["panel"].to_list() == ["brca", "sickle"]
+    assert result.filter(pl.col("panel") == "sickle")["clinicalsignificance"].to_list() == ["Benign"]

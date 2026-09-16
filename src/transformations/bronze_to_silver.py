@@ -8,6 +8,7 @@ import io
 import re
 
 import polars as pl
+from deltalake import DeltaTable
 
 from ingestion.storage import get_bytes
 from transformations import SPEC
@@ -122,6 +123,100 @@ def _build_clinvar_variant_rows(
     )
 
     return filtered.join(hgvs_df, on="alleleid")
+
+
+# Seuls ces champs, mesurés comme ayant varié d'un mois à l'autre (spec du 15/09,
+# §2.2), déclenchent une nouvelle version SCD2. Un autre champ qui change (ex. `name`
+# retraité par NCBI) n'est pas une reclassification et ne doit pas en créer une.
+_CLINVAR_WATCHED_FIELDS = ["clinicalsignificance", "reviewstatus", "lastevaluated"]
+
+
+def _write_clinvar_variant(
+    rows: pl.DataFrame, table_uri: str, panel: str, logical_date: str
+) -> None:
+    """Écrit `clinvar_variant` avec historique SCD2 : MERGE si la table existe déjà
+    (pour n'importe quel panel), création directe sinon.
+
+    `rows` doit déjà porter une colonne `panel` — comme pour `_write_silver_snapshot`,
+    c'est à l'appelant de l'ajouter (cohérent avec l'orchestration de `bronze_to_silver`,
+    qui l'ajoute de la même façon aux huit autres tables avant d'écrire).
+
+    Le rejeu du même mois est idempotent : un variant dont les champs surveillés
+    n'ont pas changé ne génère aucune ligne — voir `_CLINVAR_WATCHED_FIELDS`.
+    """
+    if not DeltaTable.is_deltatable(table_uri):
+        initial = rows.with_columns([
+            pl.lit(logical_date).alias("valid_from"),
+            pl.lit(None, dtype=pl.Utf8).alias("valid_to"),
+            pl.lit(True).alias("is_current"),
+        ])
+        # Toutes les colonnes ClinVar d'origine sont conservées (Silver type, il ne
+        # retire jamais une colonne) — seules les trois colonnes SCD2 sont ajoutées.
+        initial.write_delta(
+            table_uri, mode="overwrite", delta_write_options={"partition_by": ["panel"]}
+        )
+        return
+
+    current = pl.read_delta(table_uri).filter(pl.col("is_current") & (pl.col("panel") == panel))
+    current_ids = current["alleleid"].to_list()
+
+    joined = rows.join(
+        current.select(["alleleid"] + _CLINVAR_WATCHED_FIELDS).rename(
+            {f: f"cur_{f}" for f in _CLINVAR_WATCHED_FIELDS}
+        ),
+        on="alleleid",
+        how="left",
+    )
+    changed = pl.any_horizontal(
+        [pl.col(f) != pl.col(f"cur_{f}") for f in _CLINVAR_WATCHED_FIELDS]
+    ) | pl.col(f"cur_{_CLINVAR_WATCHED_FIELDS[0]}").is_null()
+    to_process = joined.filter(changed).drop([f"cur_{f}" for f in _CLINVAR_WATCHED_FIELDS])
+
+    if len(to_process) == 0:
+        return
+
+    close_rows = to_process.filter(pl.col("alleleid").is_in(current_ids)).with_columns([
+        pl.col("alleleid").alias("merge_key"),
+        pl.lit("close").alias("action"),
+        pl.lit(None, dtype=pl.Utf8).alias("valid_from"),
+        pl.lit(None, dtype=pl.Utf8).alias("valid_to"),
+        pl.lit(False).alias("is_current"),
+    ])
+    insert_rows = to_process.with_columns([
+        pl.lit(None, dtype=pl.Utf8).alias("merge_key"),
+        pl.lit("insert_new").alias("action"),
+        pl.lit(logical_date).alias("valid_from"),
+        pl.lit(None, dtype=pl.Utf8).alias("valid_to"),
+        pl.lit(True).alias("is_current"),
+    ])
+    staged = pl.concat([close_rows, insert_rows], how="vertical")
+
+    merger = staged.write_delta(
+        table_uri,
+        mode="merge",
+        delta_merge_options={
+            "predicate": (
+                "target.alleleid = source.merge_key AND target.panel = source.panel "
+                "AND target.is_current = true"
+            ),
+            "source_alias": "source",
+            "target_alias": "target",
+        },
+    )
+    # Toutes les colonnes réelles, hors les deux colonnes techniques du merge lui-même
+    # (`merge_key`, `action`) qui n'ont pas leur place dans la table finale.
+    write_cols = [c for c in staged.columns if c not in ("merge_key", "action")]
+    (
+        merger.when_matched_update(
+            updates={"is_current": "false", "valid_to": f"'{logical_date}'"},
+            predicate="source.action = 'close'",
+        )
+        .when_not_matched_insert(
+            updates={c: f"source.{c}" for c in write_cols},
+            predicate="source.action = 'insert_new'",
+        )
+        .execute()
+    )
 
 
 def bronze_to_silver(
