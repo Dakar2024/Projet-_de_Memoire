@@ -11,9 +11,9 @@ import re
 import polars as pl
 from deltalake import DeltaTable
 
+from ingestion.config import BREAST_CANCER_GENES, BRONZE, SICKLE_CELL_GENES
 from ingestion.medgen import parse_medgen_conceptmeta
-from ingestion.storage import get_bytes
-from transformations import SPEC
+from ingestion.storage import get_bytes, layer_uri, partition_uri
 
 
 # Jamais propagées dans une table Silver (contrainte globale de ce plan) : aucun
@@ -142,7 +142,16 @@ def _build_ncbi_gene(bronze_partition: str) -> pl.DataFrame:
         }
         for row in df.to_dicts()
     ]
-    return pl.DataFrame(rows)
+    # Schéma explicite : sans lui, une colonne entièrement nulle dans ce lot (ex.
+    # `summary` absent pour tous les gènes du panel) s'infère en type `Null`, que
+    # Delta refuse à l'écriture — pas seulement un artefact des fixtures de test.
+    return pl.DataFrame(
+        rows,
+        schema={
+            "gene_symbol": pl.Utf8, "name": pl.Utf8, "description": pl.Utf8,
+            "maplocation": pl.Utf8, "summary": pl.Utf8,
+        },
+    )
 
 
 def _build_refseq_transcript(bronze_partition: str) -> pl.DataFrame:
@@ -190,8 +199,18 @@ def _build_medgen_tables(bronze_partition: str) -> tuple[pl.DataFrame, pl.DataFr
             {"cui": row["cui"], "mode_inheritance": mode} for mode in parsed["modes_inheritance"]
         )
 
+    # Schéma explicite sur `concept_rows` pour la même raison que `_build_ncbi_gene` :
+    # un CUI non résolu (cas fréquent, voir docstring) laisse `mim_number`/
+    # `mode_inheritance`/`clinical_summary`/`conceptmeta_xml` nuls sur toute la ligne,
+    # et un lot d'un seul CUI non résolu inférerait ces colonnes en type `Null`.
     return (
-        pl.DataFrame(concept_rows),
+        pl.DataFrame(
+            concept_rows,
+            schema={
+                "cui": pl.Utf8, "conceptmeta_xml": pl.Utf8, "mim_number": pl.Utf8,
+                "mode_inheritance": pl.Utf8, "clinical_summary": pl.Utf8,
+            },
+        ),
         pl.DataFrame(mim_rows, schema={"cui": pl.Utf8, "mim_number": pl.Utf8}),
         pl.DataFrame(inheritance_rows, schema={"cui": pl.Utf8, "mode_inheritance": pl.Utf8}),
     )
@@ -219,7 +238,16 @@ def _build_hpo_term(bronze_partition: str) -> pl.DataFrame:
             "synonyms": details.get("synonyms") or [],
             "xrefs": details.get("xrefs") or [],
         })
-    return pl.DataFrame(rows)
+    # Schéma explicite : `synonyms`/`xrefs` sont des listes vides quand `details_json`
+    # n'en fournit pas — sur un lot où c'est le cas pour toutes les lignes, Polars
+    # infère `List(Null)`, que Delta refuse à l'écriture, comme pour `_build_ncbi_gene`.
+    return pl.DataFrame(
+        rows,
+        schema={
+            "gene_symbol": pl.Utf8, "hpo_id": pl.Utf8, "hpo_name": pl.Utf8,
+            "definition": pl.Utf8, "synonyms": pl.List(pl.Utf8), "xrefs": pl.List(pl.Utf8),
+        },
+    )
 
 
 # Seuls ces champs, mesurés comme ayant varié d'un mois à l'autre (spec du 15/09,
@@ -316,21 +344,58 @@ def _write_clinvar_variant(
     )
 
 
-def bronze_to_silver(
-    logical_date: str, panel: str, lake_uri: str | None = None
-) -> None:
-    """Construit les tables Silver (Delta) du panel à partir du Bronze.
+_PANEL_GENES = {"brca": BREAST_CANCER_GENES, "sickle": SICKLE_CELL_GENES}
 
-    Tables : clinvar_variant, clinvar_variant_gene, ncbi_gene, refseq_transcript,
-    medgen_concept, medgen_mim, medgen_inheritance, hpo_gene_phenotype, hpo_term.
-    Partition : `panel`. Une ligne par entité, aucun agrégat.
 
-    Traitements : typage, filtre panel, filtre GRCh38, dédoublonnage sur `#AlleleID`,
-    éclatement des lignes multi-gènes, parsing du XML MedGen, normalisation HGVS via
-    le catalogue RefSeq, historisation SCD2 des reclassifications par `MERGE`.
+def _silver_table_uri(table: str, lake_uri: str | None) -> str:
+    """URI d'une table Silver : `layer_uri` donne la racine de la couche
+    (`file:///.../silver` ou `s3://silver`) ; une table Silver est un chemin direct
+    en dessous, sans date ni panel (contrairement à `partition_uri`, conçue pour
+    raw/bronze). Vérifié à la main : `layer_uri("silver", lake_uri=...)` fonctionne
+    aussi bien en local qu'avec `lake_uri="s3://"`."""
+    return f"{layer_uri('silver', lake_uri=lake_uri)}/{table}"
 
-    Interdits : filtrer sur la signification clinique (les variants bénins sont
-    conservés) ; modifier la casse des HGVS, accessions et symboles de gènes.
-    `RS# (dbSNP)` est un entier, `-1` quand absent.
+
+def bronze_to_silver(logical_date: str, panel: str, lake_uri: str | None = None) -> None:
+    """Construit les neuf tables Silver du panel à partir du Bronze.
+
+    Un seul appel par run de panel : lit les bronze partagés (`clinvar`, `hpo`,
+    filtrés au panel) et les bronze du panel (`ncbi_gene`, `refseq`, `medgen`,
+    `hpo_terms`). `clinvar_variant` seule porte un historique SCD2 ; les huit autres
+    tables sont remplacées entièrement pour ce panel à chaque run.
     """
-    raise NotImplementedError(f"bronze_to_silver : implémenté par le sous-projet C ({SPEC}, §7)")
+    genes = _PANEL_GENES[panel]
+
+    clinvar_partition = partition_uri(BRONZE, "clinvar", logical_date, lake_uri=lake_uri)
+    hpo_partition = partition_uri(BRONZE, "hpo", logical_date, lake_uri=lake_uri)
+    ncbi_gene_partition = partition_uri(BRONZE, "ncbi_gene", logical_date, panel=panel, lake_uri=lake_uri)
+    refseq_partition = partition_uri(BRONZE, "refseq", logical_date, panel=panel, lake_uri=lake_uri)
+    medgen_partition = partition_uri(BRONZE, "medgen", logical_date, panel=panel, lake_uri=lake_uri)
+    hpo_terms_partition = partition_uri(BRONZE, "hpo_terms", logical_date, panel=panel, lake_uri=lake_uri)
+
+    silver_uri = lambda table: _silver_table_uri(table, lake_uri)
+
+    variant_gene = _build_clinvar_variant_gene(clinvar_partition, genes)
+    refseq_transcript = _build_refseq_transcript(refseq_partition)
+    variant_rows = _build_clinvar_variant_rows(clinvar_partition, refseq_transcript, variant_gene)
+
+    concept, mim, inheritance = _build_medgen_tables(medgen_partition)
+    hpo_gene_phenotype = _build_hpo_gene_phenotype(hpo_partition, genes)
+    hpo_term = _build_hpo_term(hpo_terms_partition)
+    ncbi_gene = _build_ncbi_gene(ncbi_gene_partition)
+
+    _write_clinvar_variant(
+        variant_rows.with_columns(pl.lit(panel).alias("panel")),
+        silver_uri("clinvar_variant"), panel, logical_date,
+    )
+    for table, df in [
+        ("clinvar_variant_gene", variant_gene),
+        ("ncbi_gene", ncbi_gene),
+        ("refseq_transcript", refseq_transcript),
+        ("medgen_concept", concept),
+        ("medgen_mim", mim),
+        ("medgen_inheritance", inheritance),
+        ("hpo_gene_phenotype", hpo_gene_phenotype),
+        ("hpo_term", hpo_term),
+    ]:
+        _write_silver_snapshot(df.with_columns(pl.lit(panel).alias("panel")), silver_uri(table), panel)
