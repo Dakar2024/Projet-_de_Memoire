@@ -6,6 +6,7 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
+import polars as pl
 from botocore.exceptions import ClientError
 
 from ingestion.config import current_lake_uri
@@ -110,6 +111,30 @@ def open_stream(uri: str, client=None):
         bucket, key = _split_s3(uri)
         return (client or _s3_client()).get_object(Bucket=bucket, Key=key)["Body"]
     return open(_local_path(uri), "rb")
+
+
+def scan_parquet(uri: str) -> pl.LazyFrame:
+    """Lit un Parquet en lazy : le filtre et la projection de l'appelant sont poussés
+    par Polars au moment du `.collect()`, sans matérialiser toute la partition en
+    mémoire au préalable — indispensable pour le bronze ClinVar (bulk non filtré, non
+    dédoublonné à ce stade, cf. `raw_to_bronze`).
+
+    En s3://, les identifiants viennent de l'environnement (mêmes variables que
+    `_s3_client`) : Polars/delta-rs ne lisent pas la configuration boto3 du process.
+    Chemin s3:// non exercé par la suite de tests (comme le reste de l'écriture Delta
+    vers MinIO) — à vérifier lors d'un run réel contre la stack docker.
+    """
+    if uri.startswith(S3_SCHEME):
+        bucket, key = _split_s3(uri)
+        storage_options = {
+            "aws_endpoint_url": os.environ.get("AWS_ENDPOINT_URL", ""),
+            "aws_region": os.environ.get("AWS_REGION", "us-east-1"),
+            "aws_access_key_id": os.environ.get("AWS_ACCESS_KEY_ID", ""),
+            "aws_secret_access_key": os.environ.get("AWS_SECRET_ACCESS_KEY", ""),
+            "aws_allow_http": "true",
+        }
+        return pl.scan_parquet(f"s3://{bucket}/{key}", storage_options=storage_options)
+    return pl.scan_parquet(_local_path(uri))
 
 
 def exists(uri: str, client=None) -> bool:

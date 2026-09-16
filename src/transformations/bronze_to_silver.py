@@ -11,9 +11,9 @@ import re
 import polars as pl
 from deltalake import DeltaTable
 
-from ingestion.config import BREAST_CANCER_GENES, BRONZE, SICKLE_CELL_GENES
+from ingestion.config import BRONZE, PANEL_GENES
 from ingestion.medgen import parse_medgen_conceptmeta
-from ingestion.storage import get_bytes, layer_uri, partition_uri
+from ingestion.storage import get_bytes, layer_uri, partition_uri, scan_parquet
 
 
 # Jamais propagées dans une table Silver (contrainte globale de ce plan) : aucun
@@ -43,16 +43,32 @@ def _write_silver_snapshot(df: pl.DataFrame, table_uri: str, panel: str) -> None
     )
 
 
-def _build_clinvar_variant_gene(bronze_partition: str, genes: list[str]) -> pl.DataFrame:
+def _load_clinvar_variants(bronze_partition: str) -> pl.DataFrame:
+    """Lit la partition ClinVar bronze une seule fois, en lazy, filtrée GRCh38 et
+    dédoublonnée sur `alleleid` — `clinvar_variant_gene` et `clinvar_variant` en
+    dérivent toutes les deux, pour ne jamais diverger sur l'ensemble des `alleleid`
+    qu'elles couvrent (avant ce correctif, seule `clinvar_variant` appliquait ce
+    filtre, ce qui produisait des clés dupliquées dans `clinvar_variant_gene` et des
+    références pendantes entre les deux tables)."""
+    return (
+        scan_parquet(f"{bronze_partition}/data.parquet")
+        .drop(_BRONZE_TECHNICAL_COLUMNS, strict=False)
+        .filter(pl.col("assembly") == "GRCh38")
+        .unique(subset=["alleleid"], keep="first", maintain_order=True)
+        .collect()
+    )
+
+
+def _build_clinvar_variant_gene(clinvar_variants: pl.DataFrame, genes: list[str]) -> pl.DataFrame:
     """Éclate `genesymbol` (jointure `;` pour les variants multi-gènes) et filtre au panel.
 
     C'est cette table, et non `clinvar_variant`, qui décide quels `alleleid`
     appartiennent au panel : `clinvar_variant` la consulte plutôt que de refiltrer
-    `genesymbol` elle-même.
+    `genesymbol` elle-même. Reçoit `clinvar_variants` déjà filtré GRCh38 et
+    dédoublonné par `_load_clinvar_variants` : pas de filtre ni de dédoublonnage ici.
     """
-    df = _read_bronze_table(bronze_partition)
     exploded = (
-        df.select(["alleleid", "genesymbol"])
+        clinvar_variants.select(["alleleid", "genesymbol"])
         .with_columns(pl.col("genesymbol").str.split(";").alias("gene_symbol"))
         .explode("gene_symbol")
         .drop("genesymbol")
@@ -82,23 +98,22 @@ def _parse_hgvs(name: str) -> dict:
 
 
 def _build_clinvar_variant_rows(
-    bronze_partition: str, refseq_df: pl.DataFrame, variant_gene: pl.DataFrame
+    clinvar_variants: pl.DataFrame, refseq_df: pl.DataFrame, variant_gene: pl.DataFrame
 ) -> pl.DataFrame:
     """Une ligne par variant du panel, sans l'historique SCD2 (ajouté à l'écriture).
 
-    Filtre GRCh38, dédoublonnage sur `alleleid`, `rs_dbsnp` en entier, HGVS parsé et
-    validé contre le catalogue RefSeq du panel. Ne filtre jamais sur la signification
-    clinique.
+    `rs_dbsnp` en entier, HGVS parsé et validé contre le catalogue RefSeq du panel.
+    Ne filtre jamais sur la signification clinique. Reçoit `clinvar_variants` déjà
+    filtré GRCh38 et dédoublonné sur `alleleid` par `_load_clinvar_variants` — le même
+    ensemble de lignes que `_build_clinvar_variant_gene`, pour que les deux tables ne
+    divergent jamais sur les `alleleid` qu'elles couvrent.
     """
-    df = _read_bronze_table(bronze_partition)
     # `.to_list()` : `is_in` avec une Series du même dtype est ambigu et dépréciée
     # côté Polars (avertissement, comportement inchangé) — une liste lève l'ambiguïté.
     panel_ids = variant_gene["alleleid"].unique().to_list()
 
     filtered = (
-        df.filter(pl.col("alleleid").is_in(panel_ids))
-        .filter(pl.col("assembly") == "GRCh38")
-        .unique(subset=["alleleid"], keep="first", maintain_order=True)
+        clinvar_variants.filter(pl.col("alleleid").is_in(panel_ids))
         .with_columns(pl.col("rs_dbsnp").cast(pl.Int64))
     )
 
@@ -285,17 +300,27 @@ def _write_clinvar_variant(
     current = pl.read_delta(table_uri).filter(pl.col("is_current") & (pl.col("panel") == panel))
     current_ids = current["alleleid"].to_list()
 
-    joined = rows.join(
-        current.select(["alleleid"] + _CLINVAR_WATCHED_FIELDS).rename(
-            {f: f"cur_{f}" for f in _CLINVAR_WATCHED_FIELDS}
-        ),
-        on="alleleid",
-        how="left",
+    # `_matched_current` : littéral posé avant le left join, il survit à celui-ci
+    # (`null` côté non-matché). Sert d'indicateur de correspondance fiable — contrairement
+    # à `cur_<champ>.is_null()`, qui confondrait à tort un champ surveillé réellement
+    # `null` côté `current` avec une absence de correspondance, cassant l'idempotence
+    # du rejeu.
+    current_watched = (
+        current.select(["alleleid"] + _CLINVAR_WATCHED_FIELDS)
+        .rename({f: f"cur_{f}" for f in _CLINVAR_WATCHED_FIELDS})
+        .with_columns(pl.lit(True).alias("_matched_current"))
     )
+    joined = rows.join(current_watched, on="alleleid", how="left")
+    # `ne_missing` (et non `!=`) : `!=` renvoie `null` dès qu'un des deux côtés est
+    # `null`, ce qui masque une vraie transition `null -> valeur` (ignorée par
+    # `any_horizontal`). `ne_missing` traite `null != null` comme `False` et
+    # `null != valeur` comme `True`, la sémantique voulue ici.
     changed = pl.any_horizontal(
-        [pl.col(f) != pl.col(f"cur_{f}") for f in _CLINVAR_WATCHED_FIELDS]
-    ) | pl.col(f"cur_{_CLINVAR_WATCHED_FIELDS[0]}").is_null()
-    to_process = joined.filter(changed).drop([f"cur_{f}" for f in _CLINVAR_WATCHED_FIELDS])
+        [pl.col(f).ne_missing(pl.col(f"cur_{f}")) for f in _CLINVAR_WATCHED_FIELDS]
+    ) | pl.col("_matched_current").is_null()
+    to_process = joined.filter(changed).drop(
+        [f"cur_{f}" for f in _CLINVAR_WATCHED_FIELDS] + ["_matched_current"]
+    )
 
     if len(to_process) == 0:
         return
@@ -344,9 +369,6 @@ def _write_clinvar_variant(
     )
 
 
-_PANEL_GENES = {"brca": BREAST_CANCER_GENES, "sickle": SICKLE_CELL_GENES}
-
-
 def _silver_table_uri(table: str, lake_uri: str | None) -> str:
     """URI d'une table Silver : `layer_uri` donne la racine de la couche
     (`file:///.../silver` ou `s3://silver`) ; une table Silver est un chemin direct
@@ -364,7 +386,7 @@ def bronze_to_silver(logical_date: str, panel: str, lake_uri: str | None = None)
     `hpo_terms`). `clinvar_variant` seule porte un historique SCD2 ; les huit autres
     tables sont remplacées entièrement pour ce panel à chaque run.
     """
-    genes = _PANEL_GENES[panel]
+    genes = PANEL_GENES[panel]
 
     clinvar_partition = partition_uri(BRONZE, "clinvar", logical_date, lake_uri=lake_uri)
     hpo_partition = partition_uri(BRONZE, "hpo", logical_date, lake_uri=lake_uri)
@@ -375,9 +397,10 @@ def bronze_to_silver(logical_date: str, panel: str, lake_uri: str | None = None)
 
     silver_uri = lambda table: _silver_table_uri(table, lake_uri)
 
-    variant_gene = _build_clinvar_variant_gene(clinvar_partition, genes)
+    clinvar_variants = _load_clinvar_variants(clinvar_partition)
+    variant_gene = _build_clinvar_variant_gene(clinvar_variants, genes)
     refseq_transcript = _build_refseq_transcript(refseq_partition)
-    variant_rows = _build_clinvar_variant_rows(clinvar_partition, refseq_transcript, variant_gene)
+    variant_rows = _build_clinvar_variant_rows(clinvar_variants, refseq_transcript, variant_gene)
 
     concept, mim, inheritance = _build_medgen_tables(medgen_partition)
     hpo_gene_phenotype = _build_hpo_gene_phenotype(hpo_partition, genes)
