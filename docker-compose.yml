@@ -31,6 +31,8 @@ x-airflow-common: &airflow-common
   volumes:
     - .:/opt/projet
   working_dir: /opt/projet
+  networks:
+    - genomique-network
   depends_on:
     postgres:
       condition: service_healthy
@@ -53,6 +55,7 @@ x-airflow-after-init: &airflow-after-init
 services:
   postgres:
     image: postgres:16-alpine
+    container_name: genomique-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: airflow
@@ -60,6 +63,8 @@ services:
       POSTGRES_DB: airflow
     volumes:
       - postgres-data:/var/lib/postgresql/data
+    networks:
+      - genomique-network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U airflow"]
       interval: 10s
@@ -69,8 +74,13 @@ services:
         limits:
           memory: 1g
 
+  # Accès : API S3 sur http://localhost:${MINIO_API_PORT:-9000}, console web sur
+  # http://localhost:${MINIO_CONSOLE_PORT:-9001} (identifiants : MINIO_ROOT_USER /
+  # MINIO_ROOT_PASSWORD dans .env). Depuis les autres conteneurs du réseau
+  # genomique-network, l'API reste jointe par le nom de service : http://minio:9000.
   minio:
     image: quay.io/minio/minio
+    container_name: genomique-minio
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
@@ -84,6 +94,8 @@ services:
       - "${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - minio-data:/data
+    networks:
+      - genomique-network
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 10s
@@ -95,6 +107,7 @@ services:
 
   minio-init:
     image: quay.io/minio/mc
+    container_name: genomique-minio-init
     depends_on:
       minio:
         condition: service_healthy
@@ -104,9 +117,12 @@ services:
     entrypoint: ["/bin/sh", "/scripts/create-buckets.sh"]
     volumes:
       - ./docker/minio/create-buckets.sh:/scripts/create-buckets.sh:ro
+    networks:
+      - genomique-network
 
   airflow-init:
     <<: *airflow-common
+    container_name: genomique-airflow-init
     # Migration puis création du pool `ncbi` (NCBI_POOL des DAGs) : un slot, parce que le
     # limiteur de débit NCBI est par processus. `pools set` écrase le pool existant, donc
     # la commande est idempotente. `bash` passe par l'entrypoint de l'image, qui prépare
@@ -121,6 +137,7 @@ services:
 
   airflow-apiserver:
     <<: *airflow-common
+    container_name: genomique-airflow-apiserver
     depends_on: *airflow-after-init
     command: api-server
     ports:
@@ -138,13 +155,17 @@ services:
 
   airflow-scheduler:
     <<: *airflow-common
+    container_name: genomique-airflow-scheduler
     depends_on: *airflow-after-init
     command: scheduler
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", 'airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"']
       interval: 30s
-      timeout: 10s
+      # `airflow jobs check` recharge toute la config et interroge la base à chaque
+      # appel : 10s était trop juste (mesuré à ~10-11s), d'où de faux "unhealthy"
+      # malgré une commande qui réussit ("Found one alive job.").
+      timeout: 20s
       retries: 5
     deploy:
       resources:
@@ -154,13 +175,14 @@ services:
 
   airflow-dag-processor:
     <<: *airflow-common
+    container_name: genomique-airflow-dag-processor
     depends_on: *airflow-after-init
     command: dag-processor
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", 'airflow jobs check --job-type DagProcessorJob --hostname "$${HOSTNAME}"']
       interval: 30s
-      timeout: 10s
+      timeout: 20s
       retries: 5
     deploy:
       resources:
@@ -169,13 +191,14 @@ services:
 
   airflow-triggerer:
     <<: *airflow-common
+    container_name: genomique-airflow-triggerer
     depends_on: *airflow-after-init
     command: triggerer
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", 'airflow jobs check --job-type TriggererJob --hostname "$${HOSTNAME}"']
       interval: 30s
-      timeout: 10s
+      timeout: 20s
       retries: 5
     deploy:
       resources:
@@ -185,3 +208,7 @@ services:
 volumes:
   postgres-data:
   minio-data:
+
+networks:
+  genomique-network:
+    driver: bridge
