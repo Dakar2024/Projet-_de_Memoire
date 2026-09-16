@@ -11,6 +11,7 @@ import re
 import polars as pl
 from deltalake import DeltaTable
 
+from ingestion.medgen import parse_medgen_conceptmeta
 from ingestion.storage import get_bytes
 from transformations import SPEC
 
@@ -159,6 +160,41 @@ def _build_refseq_transcript(bronze_partition: str) -> pl.DataFrame:
                 "version": int(version) if version else None,
             })
     return pl.DataFrame(rows, schema={"gene_symbol": pl.Utf8, "accession": pl.Utf8, "version": pl.Int64})
+
+
+def _build_medgen_tables(bronze_partition: str) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+    """Parse `esummary_json.conceptmeta` (réutilise `parse_medgen_conceptmeta`, déjà
+    testée) pour produire `medgen_concept`, `medgen_mim` et `medgen_inheritance`.
+
+    Un CUI non résolu (`esummary_json` vide) garde sa ligne dans `medgen_concept`,
+    XML nul, et n'explose aucune ligne dans les deux autres tables."""
+    df = _read_bronze_table(bronze_partition)
+
+    concept_rows, mim_rows, inheritance_rows = [], [], []
+    for row in df.to_dicts():
+        esummary = json.loads(row["esummary_json"])
+        conceptmeta = esummary.get("conceptmeta")
+        parsed = parse_medgen_conceptmeta(conceptmeta) if conceptmeta else {
+            "mim_number": None, "mim_numbers": [], "mode_inheritance": None,
+            "modes_inheritance": [], "clinical_summary": None, "definitions": [],
+        }
+        concept_rows.append({
+            "cui": row["cui"],
+            "conceptmeta_xml": conceptmeta,
+            "mim_number": parsed["mim_number"] or None,
+            "mode_inheritance": parsed["mode_inheritance"] or None,
+            "clinical_summary": parsed["clinical_summary"] or None,
+        })
+        mim_rows.extend({"cui": row["cui"], "mim_number": mim} for mim in parsed["mim_numbers"])
+        inheritance_rows.extend(
+            {"cui": row["cui"], "mode_inheritance": mode} for mode in parsed["modes_inheritance"]
+        )
+
+    return (
+        pl.DataFrame(concept_rows),
+        pl.DataFrame(mim_rows, schema={"cui": pl.Utf8, "mim_number": pl.Utf8}),
+        pl.DataFrame(inheritance_rows, schema={"cui": pl.Utf8, "mode_inheritance": pl.Utf8}),
+    )
 
 
 # Seuls ces champs, mesurés comme ayant varié d'un mois à l'autre (spec du 15/09,
