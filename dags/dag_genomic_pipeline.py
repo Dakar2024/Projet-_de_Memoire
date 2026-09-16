@@ -26,7 +26,7 @@ from scripts.ingest_medgen import ingest_medgen
 from scripts.ingest_ncbi_gene import build_client, ingest_ncbi_gene
 from scripts.ingest_refseq import ingest_refseq
 from transformations.bronze_to_silver import bronze_to_silver
-from transformations import SPEC
+from transformations.quality_check_silver import quality_check_silver
 from transformations.raw_to_bronze import raw_to_bronze
 from transformations.silver_to_gold_analytique import silver_to_gold_analytique
 from transformations.silver_to_gold_rag import silver_to_gold_rag
@@ -124,10 +124,8 @@ def build_panel_dag(panel: str, genes: list[str]) -> DAG:
             bronze_to_silver(sources_date, panel)
 
         @task(task_id="quality_check_silver")
-        def task_quality_check_silver() -> None:
-            raise NotImplementedError(
-                f"quality_check_silver : implémenté par le sous-projet C ({SPEC}, §7)"
-            )
+        def task_quality_check_silver(sources_date: str) -> None:
+            quality_check_silver(sources_date, panel)
 
         @task(task_id="silver_to_gold_rag")
         def task_silver_to_gold_rag(sources_date: str) -> None:
@@ -148,7 +146,7 @@ def build_panel_dag(panel: str, genes: list[str]) -> DAG:
         checked_raw >> bronze
         checked_bronze = task_check_bronze(bronze)
         silver = task_bronze_to_silver(sources_date)
-        quality = task_quality_check_silver()
+        quality = task_quality_check_silver(sources_date)
         checked_bronze >> silver >> quality >> [
             task_silver_to_gold_rag(sources_date),
             task_silver_to_gold_analytique(sources_date),

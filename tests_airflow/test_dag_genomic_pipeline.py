@@ -44,7 +44,7 @@ def test_the_layers_are_strictly_sequential(dag):
     assert dag.get_task("raw_to_bronze").upstream_task_ids == {"check_raw", "resolve_sources_date"}
     assert dag.get_task("check_bronze").upstream_task_ids == {"raw_to_bronze"}
     assert dag.get_task("bronze_to_silver").upstream_task_ids == {"check_bronze", "resolve_sources_date"}
-    assert dag.get_task("quality_check_silver").upstream_task_ids == {"bronze_to_silver"}
+    assert dag.get_task("quality_check_silver").upstream_task_ids == {"bronze_to_silver", "resolve_sources_date"}
 
 
 def test_the_two_gold_outputs_read_silver_not_each_other(dag):
