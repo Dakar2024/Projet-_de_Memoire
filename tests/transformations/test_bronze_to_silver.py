@@ -7,6 +7,7 @@ from ingestion.storage import put_bytes
 from transformations.bronze_to_silver import (
     _build_clinvar_variant_gene,
     _build_clinvar_variant_rows,
+    _build_medgen_tables,
     _build_ncbi_gene,
     _build_refseq_transcript,
     _read_bronze_table,
@@ -324,3 +325,36 @@ def test_build_refseq_transcript_keeps_a_gene_with_no_transcript(tmp_path):
     result = _build_refseq_transcript(partition)
 
     assert len(result) == 0
+
+
+CONCEPTMETA_TWO_MIM = (
+    "<OMIM><MIM>603903</MIM></OMIM><OMIM><MIM>141900</MIM></OMIM>"
+    "<ModeOfInheritance><Name>Autosomal recessive inheritance</Name></ModeOfInheritance>"
+)
+
+
+def test_build_medgen_tables_reuses_parse_medgen_conceptmeta(tmp_path):
+    df = pl.DataFrame({
+        "cui": ["C0002895"],
+        "esummary_json": [_json.dumps({"conceptid": "C0002895", "conceptmeta": CONCEPTMETA_TWO_MIM})],
+    })
+    partition = _seed_bronze_parquet(tmp_path, "medgen", "sickle", df)
+
+    concept, mim, inheritance = _build_medgen_tables(partition)
+
+    assert concept["cui"].to_list() == ["C0002895"]
+    assert concept["conceptmeta_xml"].to_list() == [CONCEPTMETA_TWO_MIM]
+    assert sorted(mim["mim_number"].to_list()) == ["141900", "603903"]
+    assert inheritance["mode_inheritance"].to_list() == ["Autosomal recessive inheritance"]
+
+
+def test_build_medgen_tables_keeps_an_unresolved_cui_without_exploding_rows(tmp_path):
+    df = pl.DataFrame({"cui": ["C9999999"], "esummary_json": ["{}"]})
+    partition = _seed_bronze_parquet(tmp_path, "medgen", "sickle", df)
+
+    concept, mim, inheritance = _build_medgen_tables(partition)
+
+    assert concept["cui"].to_list() == ["C9999999"]
+    assert concept["conceptmeta_xml"].to_list() == [None]
+    assert len(mim) == 0
+    assert len(inheritance) == 0
