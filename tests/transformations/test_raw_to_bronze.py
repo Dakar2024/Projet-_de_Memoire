@@ -1,10 +1,22 @@
 import gzip
+import io
 import json
 
 import polars as pl
+import pytest
 
-from ingestion.storage import put_bytes
-from transformations.raw_to_bronze import _normalize_column_name, _convert_flat_source, _convert_jsonl_source
+from ingestion.config import BRONZE, RAW
+from ingestion.storage import (
+    begin_partition,
+    build_manifest,
+    finalize_partition,
+    get_bytes,
+    partition_is_complete,
+    partition_uri,
+    put_bytes,
+    read_manifest,
+)
+from transformations.raw_to_bronze import _normalize_column_name, _convert_flat_source, _convert_jsonl_source, raw_to_bronze
 
 
 def test_normalize_column_name_lowercases_a_plain_word():
@@ -199,3 +211,139 @@ def test_convert_jsonl_source_handles_multiple_scalar_and_nested_fields(tmp_path
         "_source_version", "_logical_date", "_ingested_at",
     ]
     assert json.loads(df["details_json"][0])["definition"] == "A reduction in erythrocytes."
+
+
+def _seed_raw_flat(lake, source, logical_date, object_name, content: bytes, source_version, panel=None):
+    partition = partition_uri(RAW, source, logical_date, panel=panel, lake_uri=lake)
+    begin_partition(partition)
+    put_bytes(f"{partition}/{object_name}", content)
+    finalize_partition(partition, build_manifest(
+        source=source, logical_date=logical_date, source_url="https://example.org/src",
+        source_version=source_version, files={object_name: len(content)}, record_count=2,
+        panel=panel,
+    ))
+    return partition
+
+
+def _seed_raw_jsonl(lake, source, logical_date, object_name, records, source_version, panel=None):
+    body = gzip.compress("".join(json.dumps(r) + "\n" for r in records).encode())
+    return _seed_raw_flat(lake, source, logical_date, object_name, body, source_version, panel=panel)
+
+
+def _read_bronze_parquet(partition: str) -> pl.DataFrame:
+    """Relit le Parquet écrit par raw_to_bronze via l'abstraction de stockage
+    (get_bytes), comme le reste des tests du projet — jamais un chemin filesystem
+    en dur, pour que ces tests restent valables si le lac passe un jour sur MinIO."""
+    return pl.read_parquet(io.BytesIO(get_bytes(f"{partition}/data.parquet")))
+
+
+def test_raw_to_bronze_converts_a_flat_shared_source(tmp_path):
+    lake = f"file://{tmp_path}/lake"
+    _seed_raw_flat(
+        lake, "hpo", "2026-09-01", "genes_to_phenotype.txt",
+        b"ncbi_gene_id\tgene_symbol\thpo_id\thpo_name\n3043\tHBB\tHP:0001903\tAnemia\n",
+        source_version="v2026.08.01",
+    )
+
+    partitions = raw_to_bronze("2026-09-01", ["hpo"], lake_uri=lake)
+
+    assert partitions == [f"{lake}/bronze/hpo/dt=2026-09-01"]
+    assert partition_is_complete(partitions[0])
+    df = _read_bronze_parquet(partitions[0])
+    assert df["gene_symbol"].to_list() == ["HBB"]
+
+
+def test_raw_to_bronze_converts_a_jsonl_panel_source(tmp_path):
+    lake = f"file://{tmp_path}/lake"
+    _seed_raw_jsonl(
+        lake, "ncbi_gene", "2026-09-01", "gene_summaries.jsonl.gz",
+        [{"gene_symbol": "BRCA1", "esummary": {"uid": "672"}}],
+        source_version="2026-09-01", panel="brca",
+    )
+
+    partitions = raw_to_bronze("2026-09-01", ["ncbi_gene"], panel="brca", lake_uri=lake)
+
+    assert partitions == [f"{lake}/bronze/ncbi_gene/dt=2026-09-01/panel=brca"]
+    assert partition_is_complete(partitions[0])
+
+
+def test_raw_to_bronze_manifest_traces_back_to_the_raw_partition(tmp_path):
+    lake = f"file://{tmp_path}/lake"
+    raw_partition = _seed_raw_jsonl(
+        lake, "medgen", "2026-09-01", "concepts.jsonl.gz",
+        [{"cui": "C0002895", "esummary": {"conceptmeta": "<OMIM/>"}}],
+        source_version="2026-09-01", panel="sickle",
+    )
+
+    [bronze_partition] = raw_to_bronze("2026-09-01", ["medgen"], panel="sickle", lake_uri=lake)
+
+    manifest = read_manifest(bronze_partition)
+    assert manifest["source_url"] == raw_partition
+    assert manifest["source_version"] == "2026-09-01"
+    assert manifest["record_count"] == 1
+    assert manifest["panel"] == "sickle"
+
+
+def test_raw_to_bronze_propagates_technical_columns_from_the_raw_manifest(tmp_path):
+    lake = f"file://{tmp_path}/lake"
+    _seed_raw_jsonl(
+        lake, "refseq", "2026-09-01", "transcripts.jsonl.gz",
+        [{"gene_symbol": "BRCA1", "transcripts": [{"accession": "NM_007294"}]}],
+        source_version="2026-09-01", panel="brca",
+    )
+
+    [bronze_partition] = raw_to_bronze("2026-09-01", ["refseq"], panel="brca", lake_uri=lake)
+    raw_manifest = read_manifest(partition_uri(RAW, "refseq", "2026-09-01", panel="brca", lake_uri=lake))
+
+    df = _read_bronze_parquet(bronze_partition)
+    assert df["_source_version"].to_list() == [raw_manifest["source_version"]]
+    assert df["_logical_date"].to_list() == ["2026-09-01"]
+    assert df["_ingested_at"].to_list() == [raw_manifest["written_at"]]
+
+
+def test_raw_to_bronze_rejects_an_unknown_source(tmp_path):
+    lake = f"file://{tmp_path}/lake"
+    with pytest.raises(ValueError, match="source inconnue"):
+        raw_to_bronze("2026-09-01", ["inconnue"], lake_uri=lake)
+
+
+def test_raw_to_bronze_converts_every_source_it_is_given(tmp_path):
+    """Boucle sur plusieurs sources partagées en un seul appel, comme le fait le DAG
+    d'acquisition avec SHARED_SOURCES = ["clinvar", "hpo"]."""
+    lake = f"file://{tmp_path}/lake"
+    _seed_raw_flat(
+        lake, "clinvar", "2026-09-01", "variant_summary.txt.gz",
+        gzip.compress(b"#AlleleID\tGeneSymbol\n1\tBRCA1\n"), source_version="2026-09",
+    )
+    _seed_raw_flat(
+        lake, "hpo", "2026-09-01", "genes_to_phenotype.txt",
+        b"ncbi_gene_id\tgene_symbol\thpo_id\thpo_name\n3043\tHBB\tHP:0001903\tAnemia\n",
+        source_version="v2026.08.01",
+    )
+
+    partitions = raw_to_bronze("2026-09-01", ["clinvar", "hpo"], lake_uri=lake)
+
+    assert partitions == [
+        f"{lake}/bronze/clinvar/dt=2026-09-01",
+        f"{lake}/bronze/hpo/dt=2026-09-01",
+    ]
+    assert all(partition_is_complete(p) for p in partitions)
+
+
+def test_raw_to_bronze_finalizes_earlier_sources_when_a_later_one_fails(tmp_path):
+    lake = f"file://{tmp_path}/lake"
+    _seed_raw_flat(
+        lake, "hpo", "2026-09-01", "genes_to_phenotype.txt",
+        b"ncbi_gene_id\tgene_symbol\thpo_id\thpo_name\n3043\tHBB\tHP:0001903\tAnemia\n",
+        source_version="v2026.08.01",
+    )
+    # "inconnue" n'a pas de partition raw : sa conversion échoue avec ValueError,
+    # après que "hpo" a déjà été converti et finalisé.
+
+    with pytest.raises(ValueError, match="source inconnue"):
+        raw_to_bronze("2026-09-01", ["hpo", "inconnue"], lake_uri=lake)
+
+    hpo_bronze = partition_uri(BRONZE, "hpo", "2026-09-01", lake_uri=lake)
+    assert partition_is_complete(hpo_bronze)
+    inconnue_bronze = partition_uri(BRONZE, "inconnue", "2026-09-01", lake_uri=lake)
+    assert not partition_is_complete(inconnue_bronze)
