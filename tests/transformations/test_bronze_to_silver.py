@@ -3,7 +3,11 @@ import io
 import polars as pl
 
 from ingestion.storage import put_bytes
-from transformations.bronze_to_silver import _read_bronze_table, _write_silver_snapshot
+from transformations.bronze_to_silver import (
+    _build_clinvar_variant_gene,
+    _read_bronze_table,
+    _write_silver_snapshot,
+)
 
 
 def _seed_bronze_parquet(tmp_path, source, panel, df: pl.DataFrame) -> str:
@@ -59,3 +63,31 @@ def test_write_silver_snapshot_only_replaces_the_given_panel(tmp_path):
     result = pl.read_delta(uri).sort(["panel", "gene_symbol"])
     assert result["gene_symbol"].to_list() == ["BRCA1", "BRCA2", "HBB"]
     assert result["panel"].to_list() == ["brca", "brca", "sickle"]
+
+
+CLINVAR_ROWS = pl.DataFrame({
+    "alleleid": ["1", "2", "3"],
+    "genesymbol": ["BRCA1", "ATM;PTEN", "HBB"],
+    "assembly": ["GRCh38", "GRCh38", "GRCh38"],
+})
+
+
+def _seed_clinvar_bronze(tmp_path, df: pl.DataFrame = CLINVAR_ROWS) -> str:
+    return _seed_bronze_parquet(tmp_path, "clinvar", None, df)
+
+
+def test_build_clinvar_variant_gene_explodes_multi_gene_rows(tmp_path):
+    partition = _seed_clinvar_bronze(tmp_path)
+
+    result = _build_clinvar_variant_gene(partition, ["BRCA1", "ATM", "PTEN"])
+
+    pairs = sorted(zip(result["alleleid"].to_list(), result["gene_symbol"].to_list()))
+    assert pairs == [("1", "BRCA1"), ("2", "ATM"), ("2", "PTEN")]
+
+
+def test_build_clinvar_variant_gene_excludes_genes_outside_the_panel(tmp_path):
+    partition = _seed_clinvar_bronze(tmp_path)
+
+    result = _build_clinvar_variant_gene(partition, ["BRCA1"])
+
+    assert result["gene_symbol"].to_list() == ["BRCA1"]
