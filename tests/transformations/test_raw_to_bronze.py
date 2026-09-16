@@ -1,6 +1,7 @@
 import gzip
 import io
 import json
+import re
 
 import polars as pl
 import pytest
@@ -213,6 +214,27 @@ def test_convert_jsonl_source_handles_multiple_scalar_and_nested_fields(tmp_path
     assert json.loads(df["details_json"][0])["definition"] == "A reduction in erythrocytes."
 
 
+def test_convert_jsonl_source_produces_zero_rows_for_an_empty_source(tmp_path):
+    """Une partition raw JSONL vide (zéro enregistrement) doit produire un Parquet à
+    zéro ligne, pas une ligne fabriquée par la diffusion des colonnes techniques sur
+    un DataFrame (0, 0) — cf. `pl.DataFrame(rows)` sans schéma explicite."""
+    partition = _seed_jsonl_object(tmp_path, [])
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+
+    output = _convert_jsonl_source(
+        partition, JSONL_OBJECT, ("gene_symbol",), ("esummary",),
+        {"_source_version": "v", "_logical_date": "d", "_ingested_at": "i"},
+        work_dir,
+    )
+
+    df = pl.read_parquet(output)
+    assert df.height == 0
+    assert df.columns == ["gene_symbol", "esummary_json", "_source_version", "_logical_date", "_ingested_at"]
+    assert df.schema["gene_symbol"] == pl.Utf8
+    assert df.schema["esummary_json"] == pl.Utf8
+
+
 def _seed_raw_flat(lake, source, logical_date, object_name, content: bytes, source_version, panel=None):
     partition = partition_uri(RAW, source, logical_date, panel=panel, lake_uri=lake)
     begin_partition(partition)
@@ -328,6 +350,17 @@ def test_raw_to_bronze_converts_every_source_it_is_given(tmp_path):
         f"{lake}/bronze/hpo/dt=2026-09-01",
     ]
     assert all(partition_is_complete(p) for p in partitions)
+
+
+def test_raw_to_bronze_rejects_a_raw_partition_with_no_manifest(tmp_path):
+    """Une partition raw jamais écrite (lac purgé, déclenchement manuel erroné) n'a
+    pas de manifest : read_manifest renvoie None, qui doit lever un ValueError clair
+    plutôt qu'un TypeError accidentel en indexant dedans."""
+    lake = f"file://{tmp_path}/lake"
+    raw_partition = partition_uri(RAW, "hpo", "2026-09-01", lake_uri=lake)
+
+    with pytest.raises(ValueError, match=re.escape(raw_partition)):
+        raw_to_bronze("2026-09-01", ["hpo"], lake_uri=lake)
 
 
 def test_raw_to_bronze_finalizes_earlier_sources_when_a_later_one_fails(tmp_path):

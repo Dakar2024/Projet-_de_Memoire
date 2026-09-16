@@ -106,7 +106,9 @@ def _convert_jsonl_source(
         )
         rows.append(row)
 
-    df = pl.DataFrame(rows)
+    schema = {field: pl.Utf8 for field in scalar_fields}
+    schema |= {f"{field}_json": pl.Utf8 for field in nested_fields}
+    df = pl.DataFrame(rows, schema=schema)
     df = df.with_columns(
         [pl.lit(value).alias(key) for key, value in technical_columns.items()]
     )
@@ -191,6 +193,8 @@ def raw_to_bronze(
         raw_partition = partition_uri(RAW, source, logical_date, panel=panel, lake_uri=lake_uri)
         bronze_partition = partition_uri(BRONZE, source, logical_date, panel=panel, lake_uri=lake_uri)
         raw_manifest = read_manifest(raw_partition)
+        if raw_manifest is None:
+            raise ValueError(f"partition raw sans manifest : {raw_partition}")
         technical_columns = {
             "_source_version": raw_manifest["source_version"],
             "_logical_date": logical_date,
