@@ -128,7 +128,7 @@ Un fichier, `src/transformations/raw_to_bronze.py` :
 | `ncbi_gene` | `gene_symbol` | `esummary` |
 | `refseq` | `gene_symbol` | `transcripts` |
 | `medgen` | `cui` | `esummary` |
-| `hpo_terms` | `ncbi_gene_id`, `gene_symbol`, `hpo_id`, `hpo_name` | `details` |
+| `hpo_terms` | `gene_symbol`, `hpo_id`, `hpo_name` | `details` |
 
 Ajouter une septième source ne touche que cette table (et, si le format diffère des deux déjà
 gérés, un nouveau convertisseur).
