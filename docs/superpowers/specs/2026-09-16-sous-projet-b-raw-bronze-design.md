@@ -78,13 +78,19 @@ Fonction mécanique, pas de table de correspondance à maintenir :
 4. `_` de bord retirés.
 
 ```
-#AlleleID           -> allele_id
+#AlleleID           -> alleleid
 Name                -> name
-GeneSymbol          -> gene_symbol
+GeneSymbol          -> genesymbol
 RS# (dbSNP)         -> rs_dbsnp
 nsv/esv (dbVar)     -> nsv_esv_dbvar
 HGVS_p              -> hgvs_p
 ```
+
+**Pas de coupure aux frontières minuscule→MAJUSCULE** (`AlleleID` reste `alleleid`, pas
+`allele_id`) : une colonne sans séparateur d'origine (`GeneSymbol`, `#AlleleID`) n'a aucun
+indice mécanique de découpage, et une règle de coupure camelCase serait incohérente avec un
+sigle comme `dbSNP` dans `RS# (dbSNP)` — qui, lui, ne doit pas devenir `db_snp`. Le découpage
+en mots reste une décision Silver, comme le reste du typage.
 
 S'applique aux colonnes de `clinvar` et `hpo` (sources flat). Les sources JSONL n'ont pas ce
 problème : leurs noms de champs (`gene_symbol`, `cui`, `hpo_id`...) sont déjà des identifiants
