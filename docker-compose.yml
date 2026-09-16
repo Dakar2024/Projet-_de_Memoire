@@ -174,8 +174,13 @@ services:
     deploy:
       resources:
         limits:
-          # Avec LocalExecutor, les tâches s'exécutent dans ce conteneur.
-          memory: 2g
+          # Avec LocalExecutor, les tâches s'exécutent dans ce conteneur. Mesuré en
+          # conditions réelles sur le vrai bulk ClinVar (~6M lignes, conversion
+          # raw_to_bronze) : le pic touchait exactement l'ancienne limite de 2g
+          # (memory.peak == memory.max, 1806 réclamations dans memory.events),
+          # sans OOM kill mais sans aucune marge — risqué avec PARALLELISM=4
+          # (plusieurs tâches simultanées dans ce même conteneur).
+          memory: 3g
 
   airflow-dag-processor:
     <<: *airflow-common
