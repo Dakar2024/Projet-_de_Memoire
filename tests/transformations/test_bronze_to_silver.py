@@ -1,5 +1,4 @@
-import gzip
-import json
+import io
 
 import polars as pl
 
@@ -11,11 +10,9 @@ def _seed_bronze_parquet(tmp_path, source, panel, df: pl.DataFrame) -> str:
     partition = f"file://{tmp_path}/lake/bronze/{source}/dt=2026-09-01"
     if panel:
         partition += f"/panel={panel}"
-    buf = df.write_parquet(file=None) if False else None
-    import io
-    b = io.BytesIO()
-    df.write_parquet(b)
-    put_bytes(f"{partition}/data.parquet", b.getvalue())
+    buf = io.BytesIO()
+    df.write_parquet(buf)
+    put_bytes(f"{partition}/data.parquet", buf.getvalue())
     return partition
 
 
