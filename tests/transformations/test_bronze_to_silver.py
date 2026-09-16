@@ -5,6 +5,7 @@ import polars as pl
 from ingestion.storage import put_bytes
 from transformations.bronze_to_silver import (
     _build_clinvar_variant_gene,
+    _build_clinvar_variant_rows,
     _read_bronze_table,
     _write_silver_snapshot,
 )
@@ -91,3 +92,106 @@ def test_build_clinvar_variant_gene_excludes_genes_outside_the_panel(tmp_path):
     result = _build_clinvar_variant_gene(partition, ["BRCA1"])
 
     assert result["gene_symbol"].to_list() == ["BRCA1"]
+
+
+REFSEQ_ROWS = pl.DataFrame({
+    "gene_symbol": ["AP5Z1"],
+    "accession": ["NM_014855"],
+    "version": [3],
+})
+
+
+def test_build_clinvar_variant_rows_keeps_only_grch38(tmp_path):
+    df = pl.DataFrame({
+        "alleleid": ["1", "1"],
+        "genesymbol": ["AP5Z1", "AP5Z1"],
+        "assembly": ["GRCh37", "GRCh38"],
+        "clinicalsignificance": ["Benign", "Benign"],
+        "reviewstatus": ["criteria provided", "criteria provided"],
+        "lastevaluated": ["2026-08-01", "2026-08-01"],
+        "rs_dbsnp": ["397704705", "397704705"],
+        "name": [
+            "NM_014855.3(AP5Z1):c.80_83delinsTGCTG",
+            "NM_014855.3(AP5Z1):c.80_83delinsTGCTG",
+        ],
+    })
+    partition = _seed_clinvar_bronze(tmp_path, df)
+    variant_gene = _build_clinvar_variant_gene(partition, ["AP5Z1"])
+
+    result = _build_clinvar_variant_rows(partition, REFSEQ_ROWS, variant_gene)
+
+    assert result["alleleid"].to_list() == ["1"]
+    assert result["assembly"].to_list() == ["GRCh38"]
+
+
+def test_build_clinvar_variant_rows_deduplicates_on_alleleid(tmp_path):
+    df = pl.DataFrame({
+        "alleleid": ["1", "1"],
+        "genesymbol": ["AP5Z1", "AP5Z1"],
+        "assembly": ["GRCh38", "GRCh38"],
+        "clinicalsignificance": ["Benign", "Benign"],
+        "reviewstatus": ["criteria provided", "criteria provided"],
+        "lastevaluated": ["2026-08-01", "2026-08-01"],
+        "rs_dbsnp": ["-1", "-1"],
+        "name": ["NM_014855.3(AP5Z1):c.1A>G", "NM_014855.3(AP5Z1):c.1A>G"],
+    })
+    partition = _seed_clinvar_bronze(tmp_path, df)
+    variant_gene = _build_clinvar_variant_gene(partition, ["AP5Z1"])
+
+    result = _build_clinvar_variant_rows(partition, REFSEQ_ROWS, variant_gene)
+
+    assert len(result) == 1
+
+
+def test_build_clinvar_variant_rows_casts_rs_dbsnp_to_integer_with_sentinel(tmp_path):
+    df = pl.DataFrame({
+        "alleleid": ["1"], "genesymbol": ["AP5Z1"], "assembly": ["GRCh38"],
+        "clinicalsignificance": ["Benign"], "reviewstatus": ["criteria provided"],
+        "lastevaluated": ["2026-08-01"], "rs_dbsnp": ["-1"],
+        "name": ["NM_014855.3(AP5Z1):c.1A>G"],
+    })
+    partition = _seed_clinvar_bronze(tmp_path, df)
+    variant_gene = _build_clinvar_variant_gene(partition, ["AP5Z1"])
+
+    result = _build_clinvar_variant_rows(partition, REFSEQ_ROWS, variant_gene)
+
+    assert result["rs_dbsnp"].to_list() == [-1]
+    assert result.schema["rs_dbsnp"] == pl.Int64
+
+
+def test_build_clinvar_variant_rows_parses_hgvs_and_validates_against_refseq(tmp_path):
+    df = pl.DataFrame({
+        "alleleid": ["1"], "genesymbol": ["AP5Z1"], "assembly": ["GRCh38"],
+        "clinicalsignificance": ["Benign"], "reviewstatus": ["criteria provided"],
+        "lastevaluated": ["2026-08-01"], "rs_dbsnp": ["-1"],
+        "name": ["NM_014855.3(AP5Z1):c.80_83delinsTGCTG"],
+    })
+    partition = _seed_clinvar_bronze(tmp_path, df)
+    variant_gene = _build_clinvar_variant_gene(partition, ["AP5Z1"])
+
+    result = _build_clinvar_variant_rows(partition, REFSEQ_ROWS, variant_gene)
+    row = result.row(0, named=True)
+
+    assert row["refseq_accession"] == "NM_014855"
+    assert row["refseq_version"] == 3
+    assert row["hgvs_c"] == "c.80_83delinsTGCTG"
+    assert row["hgvs_p"] is None
+    assert row["refseq_accession_known"] is True
+
+
+def test_build_clinvar_variant_rows_keeps_a_row_with_irregular_hgvs(tmp_path):
+    df = pl.DataFrame({
+        "alleleid": ["1"], "genesymbol": ["AP5Z1"], "assembly": ["GRCh38"],
+        "clinicalsignificance": ["Benign"], "reviewstatus": ["criteria provided"],
+        "lastevaluated": ["2026-08-01"], "rs_dbsnp": ["-1"],
+        "name": ["forme HGVS non reconnue"],
+    })
+    partition = _seed_clinvar_bronze(tmp_path, df)
+    variant_gene = _build_clinvar_variant_gene(partition, ["AP5Z1"])
+
+    result = _build_clinvar_variant_rows(partition, REFSEQ_ROWS, variant_gene)
+    row = result.row(0, named=True)
+
+    assert row["name"] == "forme HGVS non reconnue"
+    assert row["refseq_accession"] is None
+    assert row["refseq_accession_known"] is False

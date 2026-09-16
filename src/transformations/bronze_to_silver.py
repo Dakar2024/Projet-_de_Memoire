@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import io
+import re
 
 import polars as pl
 
@@ -54,6 +55,73 @@ def _build_clinvar_variant_gene(bronze_partition: str, genes: list[str]) -> pl.D
         .drop("genesymbol")
     )
     return exploded.filter(pl.col("gene_symbol").is_in(genes))
+
+
+# `NM_014855.3(AP5Z1):c.80_83delinsTGCTG` -> accession, version, gène, HGVS coding.
+# Le HGVS protéique, s'il existe, apparaît entre parenthèses après le HGVS coding
+# (ex. "...c.1A>G (p.Met1?)") : capturé séparément, absent la plupart du temps.
+_HGVS_PATTERN = re.compile(
+    r"^(?P<accession>[A-Z]+_\d+)\.(?P<version>\d+)\([^)]+\):(?P<hgvs_c>[^\s(]+)"
+    r"(?:\s*\((?P<hgvs_p>p\.[^)]+)\))?"
+)
+
+
+def _parse_hgvs(name: str) -> dict:
+    match = _HGVS_PATTERN.match(name)
+    if not match:
+        return {"refseq_accession": None, "refseq_version": None, "hgvs_c": None, "hgvs_p": None}
+    return {
+        "refseq_accession": match.group("accession"),
+        "refseq_version": int(match.group("version")),
+        "hgvs_c": match.group("hgvs_c"),
+        "hgvs_p": match.group("hgvs_p"),
+    }
+
+
+def _build_clinvar_variant_rows(
+    bronze_partition: str, refseq_df: pl.DataFrame, variant_gene: pl.DataFrame
+) -> pl.DataFrame:
+    """Une ligne par variant du panel, sans l'historique SCD2 (ajouté à l'écriture).
+
+    Filtre GRCh38, dédoublonnage sur `alleleid`, `rs_dbsnp` en entier, HGVS parsé et
+    validé contre le catalogue RefSeq du panel. Ne filtre jamais sur la signification
+    clinique.
+    """
+    df = _read_bronze_table(bronze_partition)
+    # `.to_list()` : `is_in` avec une Series du même dtype est ambigu et dépréciée
+    # côté Polars (avertissement, comportement inchangé) — une liste lève l'ambiguïté.
+    panel_ids = variant_gene["alleleid"].unique().to_list()
+
+    filtered = (
+        df.filter(pl.col("alleleid").is_in(panel_ids))
+        .filter(pl.col("assembly") == "GRCh38")
+        .unique(subset=["alleleid"], keep="first", maintain_order=True)
+        .with_columns(pl.col("rs_dbsnp").cast(pl.Int64))
+    )
+
+    parsed = [
+        {"alleleid": row["alleleid"], **_parse_hgvs(row["name"])}
+        for row in filtered.select(["alleleid", "name"]).to_dicts()
+    ]
+    hgvs_df = pl.DataFrame(
+        parsed,
+        schema={
+            "alleleid": pl.Utf8, "refseq_accession": pl.Utf8,
+            "refseq_version": pl.Int64, "hgvs_c": pl.Utf8, "hgvs_p": pl.Utf8,
+        },
+    )
+
+    known_accessions = set(refseq_df["accession"].to_list())
+    # `is_in` propage le null d'une accession non parsée au lieu de le traiter comme
+    # "absente" : `fill_null(False)` pour qu'un HGVS non reconnu reste `False`, pas `null`.
+    hgvs_df = hgvs_df.with_columns(
+        pl.col("refseq_accession")
+        .is_in(known_accessions)
+        .fill_null(False)
+        .alias("refseq_accession_known")
+    )
+
+    return filtered.join(hgvs_df, on="alleleid")
 
 
 def bronze_to_silver(
