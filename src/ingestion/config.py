@@ -51,3 +51,13 @@ BREAST_CANCER_GENES = [
 SICKLE_CELL_GENES = ["HBB", "BCL11A", "HBS1L", "MYB", "KLF1", "G6PD"]
 
 ALL_GENES = BREAST_CANCER_GENES + SICKLE_CELL_GENES
+
+PANEL_GENES: dict[str, list[str]] = {"brca": BREAST_CANCER_GENES, "sickle": SICKLE_CELL_GENES}
+
+# Les neuf tables Silver produites par bronze_to_silver et contrôlées par
+# quality_check_silver — une seule source pour que les deux ne divergent jamais si
+# une table est ajoutée ou renommée par un sous-projet ultérieur.
+SILVER_TABLES = [
+    "clinvar_variant", "clinvar_variant_gene", "ncbi_gene", "refseq_transcript",
+    "medgen_concept", "medgen_mim", "medgen_inheritance", "hpo_gene_phenotype", "hpo_term",
+]
