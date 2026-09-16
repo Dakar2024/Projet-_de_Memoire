@@ -1,6 +1,6 @@
 import pytest
 
-from dags.common.panels import NCBI_POOL, SOURCES_READY
+from dags.common.panels import NCBI_POOL, SILVER_WRITE_POOL, SOURCES_READY
 from dags.dag_genomic_pipeline import build_panel_dag
 
 INGESTIONS = {"ingest_ncbi_gene", "ingest_refseq", "ingest_hpo_terms", "ingest_medgen"}
@@ -66,6 +66,14 @@ def test_ncbi_ingestions_share_a_single_slot_pool(dag):
     for task_id in ("ingest_ncbi_gene", "ingest_refseq", "ingest_medgen"):
         assert dag.get_task(task_id).pool == NCBI_POOL
     assert dag.get_task("ingest_hpo_terms").pool != NCBI_POOL
+
+
+def test_bronze_to_silver_uses_a_single_slot_pool(dag):
+    """Les neuf tables Silver sont partagées entre les deux panels ; ce pool sérialise
+    bronze_to_silver pour empêcher une création de table Delta concurrente entre les
+    deux DAGs de panel, déclenchés sur le même Asset SOURCES_READY."""
+    assert SILVER_WRITE_POOL == "silver_write"
+    assert dag.get_task("bronze_to_silver").pool == SILVER_WRITE_POOL
 
 
 def test_transient_failures_are_retried(dag):
