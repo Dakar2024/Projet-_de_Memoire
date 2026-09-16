@@ -13,31 +13,36 @@ ALL_TABLES = [
 _GENE_BY_PANEL = {"brca": BREAST_CANCER_GENES[0], "sickle": SICKLE_CELL_GENES[0]}
 
 
-def _seed_complete_silver(lake, panel="brca"):
+def _seed_complete_silver(lake, panel="brca", skip_table=None):
     uri = lambda table: f"{lake}/silver/{table}"
     gene = _GENE_BY_PANEL[panel]
-    _write_clinvar_variant(
-        pl.DataFrame({
-            "alleleid": ["1"], "panel": [panel], "clinicalsignificance": ["Benign"],
-            "reviewstatus": ["criteria provided"], "lastevaluated": ["2026-08-01"],
-        }),
-        uri("clinvar_variant"), panel, "2026-08-01",
-    )
+    if skip_table != "clinvar_variant":
+        _write_clinvar_variant(
+            pl.DataFrame({
+                "alleleid": ["1"], "panel": [panel], "clinicalsignificance": ["Benign"],
+                "reviewstatus": ["criteria provided"], "lastevaluated": ["2026-08-01"],
+            }),
+            uri("clinvar_variant"), panel, "2026-08-01",
+        )
     for table in ALL_TABLES:
         if table in ("clinvar_variant", "hpo_gene_phenotype", "clinvar_variant_gene"):
+            continue
+        if table == skip_table:
             continue
         _write_silver_snapshot(
             pl.DataFrame({"panel": [panel], "gene_symbol": [gene]}), uri(table), panel
         )
     # hpo_gene_phenotype : vide légitime, mais présente (table créée).
-    _write_silver_snapshot(
-        pl.DataFrame({"panel": [], "gene_symbol": []}, schema={"panel": pl.Utf8, "gene_symbol": pl.Utf8}),
-        uri("hpo_gene_phenotype"), panel,
-    )
-    _write_silver_snapshot(
-        pl.DataFrame({"panel": [panel], "alleleid": ["1"], "gene_symbol": [gene]}),
-        uri("clinvar_variant_gene"), panel,
-    )
+    if skip_table != "hpo_gene_phenotype":
+        _write_silver_snapshot(
+            pl.DataFrame({"panel": [], "gene_symbol": []}, schema={"panel": pl.Utf8, "gene_symbol": pl.Utf8}),
+            uri("hpo_gene_phenotype"), panel,
+        )
+    if skip_table != "clinvar_variant_gene":
+        _write_silver_snapshot(
+            pl.DataFrame({"panel": [panel], "alleleid": ["1"], "gene_symbol": [gene]}),
+            uri("clinvar_variant_gene"), panel,
+        )
 
 
 def test_quality_check_silver_passes_on_a_complete_run(tmp_path):
@@ -61,6 +66,33 @@ def test_quality_check_silver_rejects_a_gene_outside_the_panel(tmp_path):
     # HBB est dans le panel sickle, pas brca
     _write_silver_snapshot(
         pl.DataFrame({"panel": ["brca"], "alleleid": ["2"], "gene_symbol": ["HBB"]}),
+        f"{lake}/silver/clinvar_variant_gene", "brca",
+    )
+
+    with pytest.raises(SilverQualityError, match="clinvar_variant_gene"):
+        quality_check_silver("2026-09-01", "brca", lake_uri=lake)
+
+
+def test_quality_check_silver_reports_a_missing_table_as_a_silver_quality_error(tmp_path):
+    """Une table Silver absente (ex. run bronze_to_silver interrompu) doit lever
+    SilverQualityError, avec le nom de la table et « absente » dans le message —
+    pas la TableNotFoundError opaque de delta-rs, et sans abandonner les contrôles
+    suivants."""
+    lake = f"file://{tmp_path}/lake"
+    _seed_complete_silver(lake, skip_table="medgen_mim")
+
+    with pytest.raises(SilverQualityError, match="medgen_mim.*absente"):
+        quality_check_silver("2026-09-01", "brca", lake_uri=lake)
+
+
+def test_quality_check_silver_rejects_a_dangling_alleleid_in_clinvar_variant_gene(tmp_path):
+    """Un alleleid présent dans clinvar_variant_gene sans ligne correspondante dans
+    clinvar_variant est une référence pendante (régression C4) : elle doit être
+    signalée, pas laissée passer silencieusement."""
+    lake = f"file://{tmp_path}/lake"
+    _seed_complete_silver(lake)
+    _write_silver_snapshot(
+        pl.DataFrame({"panel": ["brca"], "alleleid": ["999"], "gene_symbol": [_GENE_BY_PANEL["brca"]]}),
         f"{lake}/silver/clinvar_variant_gene", "brca",
     )
 
