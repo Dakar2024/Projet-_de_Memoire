@@ -135,6 +135,10 @@ services:
         airflow pools set ncbi 1 "E-utilities NCBI : une tâche à la fois, limite de débit globale"
     restart: "no"
 
+  # Accès : interface web (et API REST) sur http://localhost:8080, utilisateur admin,
+  # mot de passe généré dans /opt/airflow/simple_auth_manager_passwords.json.generated
+  # du conteneur (voir README, section « Lancer le pipeline médaillon »). Depuis les
+  # autres conteneurs du réseau genomique-network : http://airflow-apiserver:8080.
   airflow-apiserver:
     <<: *airflow-common
     container_name: genomique-airflow-apiserver
