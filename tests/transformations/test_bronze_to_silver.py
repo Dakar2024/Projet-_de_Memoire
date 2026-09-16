@@ -198,11 +198,6 @@ def test_build_clinvar_variant_rows_keeps_a_row_with_irregular_hgvs(tmp_path):
     assert row["refseq_accession_known"] is False
 
 
-SCD2_COLS = [
-    "alleleid", "panel", "clinicalsignificance", "reviewstatus", "lastevaluated",
-]
-
-
 def _rows(alleleid, panel, significance, review="criteria provided", evaluated="2026-08-01"):
     return pl.DataFrame({
         "alleleid": [alleleid], "panel": [panel],
