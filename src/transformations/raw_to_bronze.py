@@ -8,6 +8,11 @@ par source. Voir docs/superpowers/specs/2026-09-16-sous-projet-b-raw-bronze-desi
 from __future__ import annotations
 
 import re
+from pathlib import Path
+
+import polars as pl
+
+from ingestion.storage import open_stream
 
 
 def _normalize_column_name(name: str) -> str:
@@ -19,6 +24,45 @@ def _normalize_column_name(name: str) -> str:
     est une décision Silver, pas Bronze.
     """
     return re.sub(r"[^0-9a-zA-Z]+", "_", name).strip("_").lower()
+
+
+def _download_to_local(raw_partition: str, object_name: str, work_dir: Path) -> Path:
+    """Copie un objet raw vers un fichier local, en flux, sans le charger en mémoire.
+
+    Le nom de fichier local reprend `object_name` (donc son extension `.gz` le cas
+    échéant) : Polars détecte la compression gzip d'un CSV local sur l'extension,
+    déjà le comportement dont dépend `ingestion.clinvar.filter_clinvar`.
+    """
+    local_path = work_dir / object_name
+    with open_stream(f"{raw_partition}/{object_name}") as src, open(local_path, "wb") as dst:
+        while chunk := src.read(1024 * 1024):
+            dst.write(chunk)
+    return local_path
+
+
+def _convert_flat_source(
+    raw_partition: str,
+    object_name: str,
+    technical_columns: dict[str, str],
+    work_dir: Path,
+) -> Path:
+    """Convertit une source flat (TSV) en Parquet, en lazy, sans jamais tout charger.
+
+    Colonnes renommées (mécaniquement), lignes entièrement vides retirées, colonnes
+    techniques ajoutées après ce filtre (elles ne sont jamais vides, ce qui
+    fausserait la détection d'une ligne vide si elles étaient ajoutées avant).
+    """
+    local_input = _download_to_local(raw_partition, object_name, work_dir)
+    lf = pl.scan_csv(local_input, separator="\t", infer_schema_length=0)
+    original_names = lf.collect_schema().names()
+    lf = lf.rename({name: _normalize_column_name(name) for name in original_names})
+    lf = lf.filter(~pl.all_horizontal(pl.all().is_null()))
+    lf = lf.with_columns(
+        [pl.lit(value).alias(key) for key, value in technical_columns.items()]
+    )
+    output_path = work_dir / "output.parquet"
+    lf.sink_parquet(output_path)
+    return output_path
 
 
 def raw_to_bronze(
