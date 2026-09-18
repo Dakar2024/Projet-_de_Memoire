@@ -13,7 +13,7 @@ from deltalake import DeltaTable
 
 from ingestion.config import BRONZE, PANEL_GENES
 from ingestion.medgen import parse_medgen_conceptmeta
-from ingestion.storage import get_bytes, layer_uri, partition_uri, scan_parquet
+from ingestion.storage import get_bytes, layer_uri, partition_uri, scan_parquet, storage_options
 
 
 # Jamais propagées dans une table Silver (contrainte globale de ce plan) : aucun
@@ -39,21 +39,39 @@ def _write_silver_snapshot(df: pl.DataFrame, table_uri: str, panel: str) -> None
     df.write_delta(
         table_uri,
         mode="overwrite",
+        storage_options=storage_options(table_uri),
         delta_write_options={"partition_by": ["panel"], "predicate": f"panel = '{panel}'"},
     )
 
 
-def _load_clinvar_variants(bronze_partition: str) -> pl.DataFrame:
-    """Lit la partition ClinVar bronze une seule fois, en lazy, filtrée GRCh38 et
-    dédoublonnée sur `alleleid` — `clinvar_variant_gene` et `clinvar_variant` en
-    dérivent toutes les deux, pour ne jamais diverger sur l'ensemble des `alleleid`
-    qu'elles couvrent (avant ce correctif, seule `clinvar_variant` appliquait ce
-    filtre, ce qui produisait des clés dupliquées dans `clinvar_variant_gene` et des
-    références pendantes entre les deux tables)."""
-    return (
+def _load_clinvar_variants(bronze_partition: str, genes: list[str]) -> pl.DataFrame:
+    """Lit la partition ClinVar bronze en lazy, filtrée GRCh38, restreinte aux
+    `alleleid` du panel et dédoublonnée sur `alleleid` — `clinvar_variant_gene` et
+    `clinvar_variant` en dérivent toutes les deux, pour ne jamais diverger sur
+    l'ensemble des `alleleid` qu'elles couvrent.
+
+    Le filtre au panel précède le `.collect()` : matérialiser tout le ClinVar GRCh38
+    fait tuer le worker Airflow par OOM (vérifié en run réel). Il retient un
+    `alleleid` dès qu'une de ses lignes GRCh38 cite un gène du panel ; le
+    dédoublonnage (première ligne gardée, ordre préservé) donne donc les mêmes lignes
+    que s'il était appliqué au bulk entier, et `_build_clinvar_variant_gene` refiltre
+    au panel sur la ligne retenue."""
+    grch38 = (
         scan_parquet(f"{bronze_partition}/data.parquet")
         .drop(_BRONZE_TECHNICAL_COLUMNS, strict=False)
         .filter(pl.col("assembly") == "GRCh38")
+    )
+    panel_ids = (
+        grch38.select("alleleid", pl.col("genesymbol").str.split(";").alias("gene_symbol"))
+        .explode("gene_symbol", empty_as_null=True)
+        .filter(pl.col("gene_symbol").is_in(genes))
+        .select("alleleid")
+        .unique()
+        .collect()["alleleid"]
+        .to_list()
+    )
+    return (
+        grch38.filter(pl.col("alleleid").is_in(panel_ids))
         .unique(subset=["alleleid"], keep="first", maintain_order=True)
         .collect()
     )
@@ -284,7 +302,7 @@ def _write_clinvar_variant(
     Le rejeu du même mois est idempotent : un variant dont les champs surveillés
     n'ont pas changé ne génère aucune ligne — voir `_CLINVAR_WATCHED_FIELDS`.
     """
-    if not DeltaTable.is_deltatable(table_uri):
+    if not DeltaTable.is_deltatable(table_uri, storage_options=storage_options(table_uri)):
         initial = rows.with_columns([
             pl.lit(logical_date).alias("valid_from"),
             pl.lit(None, dtype=pl.Utf8).alias("valid_to"),
@@ -293,11 +311,16 @@ def _write_clinvar_variant(
         # Toutes les colonnes ClinVar d'origine sont conservées (Silver type, il ne
         # retire jamais une colonne) — seules les trois colonnes SCD2 sont ajoutées.
         initial.write_delta(
-            table_uri, mode="overwrite", delta_write_options={"partition_by": ["panel"]}
+            table_uri,
+            mode="overwrite",
+            storage_options=storage_options(table_uri),
+            delta_write_options={"partition_by": ["panel"]},
         )
         return
 
-    current = pl.read_delta(table_uri).filter(pl.col("is_current") & (pl.col("panel") == panel))
+    current = pl.read_delta(table_uri, storage_options=storage_options(table_uri)).filter(
+        pl.col("is_current") & (pl.col("panel") == panel)
+    )
     current_ids = current["alleleid"].to_list()
 
     # `_matched_current` : littéral posé avant le left join, il survit à celui-ci
@@ -344,6 +367,7 @@ def _write_clinvar_variant(
     merger = staged.write_delta(
         table_uri,
         mode="merge",
+        storage_options=storage_options(table_uri),
         delta_merge_options={
             "predicate": (
                 "target.alleleid = source.merge_key AND target.panel = source.panel "
@@ -397,7 +421,7 @@ def bronze_to_silver(logical_date: str, panel: str, lake_uri: str | None = None)
 
     silver_uri = lambda table: _silver_table_uri(table, lake_uri)
 
-    clinvar_variants = _load_clinvar_variants(clinvar_partition)
+    clinvar_variants = _load_clinvar_variants(clinvar_partition, genes)
     variant_gene = _build_clinvar_variant_gene(clinvar_variants, genes)
     refseq_transcript = _build_refseq_transcript(refseq_partition)
     variant_rows = _build_clinvar_variant_rows(clinvar_variants, refseq_transcript, variant_gene)

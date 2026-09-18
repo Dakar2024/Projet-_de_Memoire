@@ -88,7 +88,7 @@ def _seed_clinvar_bronze(tmp_path, df: pl.DataFrame = CLINVAR_ROWS) -> str:
 
 def test_build_clinvar_variant_gene_explodes_multi_gene_rows(tmp_path):
     partition = _seed_clinvar_bronze(tmp_path)
-    clinvar_variants = _load_clinvar_variants(partition)
+    clinvar_variants = _load_clinvar_variants(partition, ["BRCA1", "ATM", "PTEN"])
 
     result = _build_clinvar_variant_gene(clinvar_variants, ["BRCA1", "ATM", "PTEN"])
 
@@ -98,7 +98,7 @@ def test_build_clinvar_variant_gene_explodes_multi_gene_rows(tmp_path):
 
 def test_build_clinvar_variant_gene_excludes_genes_outside_the_panel(tmp_path):
     partition = _seed_clinvar_bronze(tmp_path)
-    clinvar_variants = _load_clinvar_variants(partition)
+    clinvar_variants = _load_clinvar_variants(partition, ["BRCA1"])
 
     result = _build_clinvar_variant_gene(clinvar_variants, ["BRCA1"])
 
@@ -110,6 +110,17 @@ REFSEQ_ROWS = pl.DataFrame({
     "accession": ["NM_014855"],
     "version": [3],
 })
+
+
+def test_load_clinvar_variants_keeps_only_panel_variants(tmp_path):
+    """Le bulk ClinVar GRCh38 complet (~3M lignes) ne tient pas dans la mémoire du
+    worker Airflow : le filtre au panel doit précéder le `.collect()`. Un variant
+    multi-gènes dont un seul gène est au panel reste inclus."""
+    partition = _seed_clinvar_bronze(tmp_path)
+
+    result = _load_clinvar_variants(partition, ["BRCA1", "PTEN"])
+
+    assert sorted(result["alleleid"].to_list()) == ["1", "2"]
 
 
 def test_load_clinvar_variants_keeps_only_grch38(tmp_path):
@@ -128,7 +139,7 @@ def test_load_clinvar_variants_keeps_only_grch38(tmp_path):
     })
     partition = _seed_clinvar_bronze(tmp_path, df)
 
-    result = _load_clinvar_variants(partition)
+    result = _load_clinvar_variants(partition, ["AP5Z1"])
 
     assert result["alleleid"].to_list() == ["1"]
     assert result["assembly"].to_list() == ["GRCh38"]
@@ -147,7 +158,7 @@ def test_load_clinvar_variants_deduplicates_on_alleleid(tmp_path):
     })
     partition = _seed_clinvar_bronze(tmp_path, df)
 
-    result = _load_clinvar_variants(partition)
+    result = _load_clinvar_variants(partition, ["AP5Z1"])
 
     assert len(result) == 1
 
@@ -174,7 +185,7 @@ def test_clinvar_variant_gene_and_variant_share_the_same_alleleid_set_despite_gr
         ],
     })
     partition = _seed_clinvar_bronze(tmp_path, df)
-    clinvar_variants = _load_clinvar_variants(partition)
+    clinvar_variants = _load_clinvar_variants(partition, ["AP5Z1"])
 
     variant_gene = _build_clinvar_variant_gene(clinvar_variants, ["AP5Z1"])
     variant_rows = _build_clinvar_variant_rows(clinvar_variants, REFSEQ_ROWS, variant_gene)
@@ -193,7 +204,7 @@ def test_build_clinvar_variant_rows_casts_rs_dbsnp_to_integer_with_sentinel(tmp_
         "name": ["NM_014855.3(AP5Z1):c.1A>G"],
     })
     partition = _seed_clinvar_bronze(tmp_path, df)
-    clinvar_variants = _load_clinvar_variants(partition)
+    clinvar_variants = _load_clinvar_variants(partition, ["AP5Z1"])
     variant_gene = _build_clinvar_variant_gene(clinvar_variants, ["AP5Z1"])
 
     result = _build_clinvar_variant_rows(clinvar_variants, REFSEQ_ROWS, variant_gene)
@@ -210,7 +221,7 @@ def test_build_clinvar_variant_rows_parses_hgvs_and_validates_against_refseq(tmp
         "name": ["NM_014855.3(AP5Z1):c.80_83delinsTGCTG"],
     })
     partition = _seed_clinvar_bronze(tmp_path, df)
-    clinvar_variants = _load_clinvar_variants(partition)
+    clinvar_variants = _load_clinvar_variants(partition, ["AP5Z1"])
     variant_gene = _build_clinvar_variant_gene(clinvar_variants, ["AP5Z1"])
 
     result = _build_clinvar_variant_rows(clinvar_variants, REFSEQ_ROWS, variant_gene)
@@ -231,7 +242,7 @@ def test_build_clinvar_variant_rows_keeps_a_row_with_irregular_hgvs(tmp_path):
         "name": ["forme HGVS non reconnue"],
     })
     partition = _seed_clinvar_bronze(tmp_path, df)
-    clinvar_variants = _load_clinvar_variants(partition)
+    clinvar_variants = _load_clinvar_variants(partition, ["AP5Z1"])
     variant_gene = _build_clinvar_variant_gene(clinvar_variants, ["AP5Z1"])
 
     result = _build_clinvar_variant_rows(clinvar_variants, REFSEQ_ROWS, variant_gene)
