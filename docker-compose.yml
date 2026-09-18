@@ -1,3 +1,7 @@
+# Nom de projet explicite : celui déduit du dossier (`projet-_de_memoire`) donne des
+# noms d'image invalides pour Docker (« invalid reference format », `-_` interdit).
+name: genomique
+
 x-airflow-common: &airflow-common
   build:
     context: .
@@ -74,10 +78,7 @@ services:
         limits:
           memory: 1g
 
-  # Accès : API S3 sur http://localhost:${MINIO_API_PORT:-9000}, console web sur
-  # http://localhost:${MINIO_CONSOLE_PORT:-9001} (identifiants : MINIO_ROOT_USER /
-  # MINIO_ROOT_PASSWORD dans .env). Depuis les autres conteneurs du réseau
-  # genomique-network, l'API reste jointe par le nom de service : http://minio:9000.
+ 
   minio:
     image: quay.io/minio/minio
     container_name: genomique-minio
@@ -136,10 +137,7 @@ services:
         airflow pools set silver_write 1 "Écriture Silver : tables partagées entre panels, un seul run bronze_to_silver à la fois"
     restart: "no"
 
-  # Accès : interface web (et API REST) sur http://localhost:8080, utilisateur admin,
-  # mot de passe généré dans /opt/airflow/simple_auth_manager_passwords.json.generated
-  # du conteneur (voir README, section « Lancer le pipeline médaillon »). Depuis les
-  # autres conteneurs du réseau genomique-network : http://airflow-apiserver:8080.
+  
   airflow-apiserver:
     <<: *airflow-common
     container_name: genomique-airflow-apiserver
