@@ -448,6 +448,6 @@ du serveur FTP du NCBI, ainsi que sur les redirections de la PURL du projet HPO.
 
 - `docs/superpowers/specs/2026-09-04-pipeline-medaillon-airflow-minio-design.md` — design de
   l'architecture médaillon Bronze/Silver/Gold sur MinIO, ordonnancée par Airflow.
-- `fichiers de base /guide_recuperation_donnees.md` — méthode vérifiée d'accès à chaque source.
-- `nifi/README.md` — implémentation NiFi conservée comme alternative évaluée.
+- `reference/guide_recuperation_donnees.md` — méthode vérifiée d'accès à chaque source.
+- `archive/nifi/README.md` — implémentation NiFi conservée comme alternative évaluée.
 - `src/ingestion/` — modules d'ingestion et leur couverture de tests.

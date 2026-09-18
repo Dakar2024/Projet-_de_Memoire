@@ -2,13 +2,12 @@
 
 > ⚠️ **Alternative écartée.** Ce dossier n'est plus le chemin d'orchestration du projet.
 > Il est conservé pour documenter un choix évalué puis écarté avec mesures — voir
-> `CLAUDE.md`. L'orchestration active vit dans `dags/`.
+> `reference/choix_contexte.md`. L'orchestration active vit dans `dags/`.
 
 Ce dossier fait tourner l'étape 1 (collecte RAW) via un flow Apache NiFi plutôt que via
 un lancement manuel/cron de `scripts/run_collection.py`. **Périmètre volontairement
 limité à la collecte** : NiFi n'orchestrait pas les couches du médaillon ni la RAG. Les
-raisons de son abandon sont résumées dans la section « Orchestration » du `CLAUDE.md` racine
-et chiffrées dans `docs/choix_contexte.md`.
+raisons de son abandon sont chiffrées dans `reference/choix_contexte.md`.
 
 ## Ce que ça change (et ce que ça ne change pas)
 
@@ -25,7 +24,7 @@ couvert par la suite de tests existante. NiFi n'apporte que :
 ## Démarrer
 
 ```bash
-cd nifi/
+cd archive/nifi/
 cp .env.example .env      # puis choisir un mot de passe réel (12 caractères min.)
 docker compose up -d --build
 ```
