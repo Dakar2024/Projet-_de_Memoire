@@ -1,6 +1,6 @@
 # Étend l'image officielle NiFi pour pouvoir exécuter scripts/run_collection.py
 # via ExecuteStreamCommand, sans réimplémenter la logique de collecte en NiFi natif
-# (voir nifi/README.md pour la justification de ce choix).
+# (voir archive/nifi/README.md pour la justification de ce choix).
 FROM apache/nifi:2.6.0
 
 USER root
