@@ -1,212 +1,255 @@
 # Système RAG génomique — pipeline de données
 
-Pipeline de data engineering pour un système RAG d'interrogation de variants ADN. Il collecte
-les données brutes de sources publiques et les organise en architecture médaillon à quatre
-couches : `raw` (format de la source), `bronze` (Parquet), `silver` et `gold` (Delta),
-orchestrées par Airflow sur MinIO. **Aujourd'hui**, la collecte et le dépôt en `raw` sont
-opérationnels ; les passages `raw → bronze → silver → gold` sont câblés mais pas encore
-implémentés (voir « Lancer le pipeline médaillon »). L'indexation et le RAG sont les étapes
-suivantes.
+## En bref
 
-Le script historique `scripts/run_collection.py` reste disponible : il assemble quatre sources
-en un document JSON par gène, décrit plus bas.
+Ce projet prépare les données d'un **assistant capable de répondre à des questions sur des
+variations de l'ADN** (par exemple : « cette mutation du gène BRCA1 est-elle associée à un
+risque de cancer ? »). Un tel assistant, de type RAG (*Retrieval-Augmented Generation*), ne
+peut répondre correctement que s'il s'appuie sur des données fiables, à jour et bien
+organisées. Ce dépôt construit exactement cela :
 
-## Sources collectées
+1. **Collecter** chaque mois les données publiques de référence en génétique médicale (NCBI,
+   ClinVar, MedGen, HPO, RefSeq) pour un panel de **18 gènes** : 12 liés au cancer du sein
+   héréditaire, 6 liés à la drépanocytose.
+2. **Nettoyer et structurer** ces données en plusieurs étapes successives (architecture
+   dite « médaillon »), de la donnée brute jusqu'à des tables prêtes à être interrogées.
+3. **Orchestrer** l'ensemble automatiquement avec Apache Airflow, et stocker chaque étape
+   dans MinIO (un stockage objet compatible Amazon S3).
 
-| Source | Contenu | Accès |
-|---|---|---|
-| **ClinVar** | Variants et leur signification clinique | Fichier bulk FTP (`variant_summary.txt.gz`, ~440 Mo) |
-| **NCBI Gene** | Métadonnées du gène (nom, description, localisation) | E-utilities (esearch + esummary) |
-| **MedGen** | Concepts maladie, MIM, mode d'hérédité, features HPO | E-utilities (esearch + esummary) |
-| **HPO** | Termes phénotypiques associés au gène, enrichis de leur definition/synonyms/xrefs | Fichier plat public (`genes_to_phenotype.txt`) + API `ontology.jax.org/api/hp/terms` (sans clé, par lots) |
-| **RefSeq** | Catalogue des transcrits de référence du gène (accession, version, longueur), pour la normalisation HGVS en Silver — pipeline médaillon uniquement | E-utilities (esearch + esummary sur `nuccore`) |
+```
+ Sources publiques ──► raw ──► bronze ──► silver ──► gold ──► RAG (assistant)
+  (NCBI, ClinVar,     brut    Parquet    Delta,     Delta,
+   MedGen, HPO)                          nettoyé    prêt à l'usage
+```
 
-Panel : **18 gènes** — cancer du sein héréditaire (12) + drépanocytose et modificateurs (6).
-Voir `src/ingestion/config.py`.
+| Couche | Rôle | Format | État |
+|---|---|---|---|
+| `raw` | Copie fidèle de la source, jamais modifiée | format d'origine (TSV, JSONL) | ✅ livré |
+| `bronze` | Même contenu, format et noms de colonnes uniformisés | Parquet | ✅ livré |
+| `silver` | Données nettoyées, dédoublonnées, reliées entre elles, historisées | Delta Lake | ✅ livré |
+| `gold` | Tables finales pour le RAG et pour l'analyse | Delta Lake | ⏳ à venir |
 
-## Prérequis
+## Services et ports
 
-- Python 3.12
-- Une adresse email (obligatoire, exigée par NCBI E-utilities)
-- Une clé API NCBI (recommandée : 10 req/s au lieu de 3 — https://account.ncbi.nlm.nih.gov/settings/)
+Une fois la stack Docker démarrée :
 
-## Installation
+| Service | Adresse | Identifiants | Rôle |
+|---|---|---|---|
+| **Airflow** (interface web) | http://localhost:8080 | `admin` / mot de passe généré (voir [Connexion à Airflow](#connexion-à-airflow)) | Lancer et suivre les pipelines |
+| **MinIO** (console web) | http://localhost:9011 | `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` du `.env` | Parcourir les fichiers de chaque couche |
+| **MinIO** (API S3) | http://localhost:9000 | idem | Accès programmatique au stockage |
+| PostgreSQL | non exposé (réseau Docker interne) | `POSTGRES_PASSWORD` du `.env` | Base de métadonnées d'Airflow |
+
+Les ports MinIO se changent dans `.env` (`MINIO_API_PORT`, `MINIO_CONSOLE_PORT`) si 9000/9001
+sont déjà occupés sur la machine (par Portainer, par exemple).
+
+MinIO contient un bucket par couche : `raw`, `bronze`, `silver`, `gold`.
+
+## Démarrage rapide
+
+### Prérequis
+
+- Python 3.12 et Docker (avec Docker Compose v2)
+- Une adresse email (exigée par l'API NCBI E-utilities)
+- Facultatif : une clé API NCBI, pour 10 requêtes/s au lieu de 3
+  (https://account.ncbi.nlm.nih.gov/settings/)
+
+### 1. Installer
 
 ```bash
 python3 -m venv venv
 source venv/bin/activate
-pip install -r requirements-dev.txt   # runtime + outils de test
-
-cp .env.example .env                  # puis renseigner NCBI_EMAIL (et NCBI_API_KEY)
+pip install -r requirements-dev.txt
 ```
 
-⚠️ Les vraies valeurs vont **uniquement** dans `.env` (gitignoré). Ne jamais les mettre dans
-`.env.example`, qui est suivi par git.
-
-## Lancer la collecte
+### 2. Configurer
 
 ```bash
-python scripts/run_collection.py            # réutilise le bulk ClinVar déjà téléchargé
-python scripts/run_collection.py --refresh  # force le retéléchargement des fichiers sources
+cp .env.example .env
 ```
 
-Premier run : ~4 minutes (télécharge 440 Mo de ClinVar + ~1 200 appels NCBI). Les runs
-suivants réutilisent les fichiers déjà présents dans `data/external/`. Le script écrit un
-fichier par gène dans `data/raw/` et **sort en code 1** si un gène ressort sans variants ni
-métadonnées (symbole invalide ou collecte partielle).
+Puis renseigner dans `.env` :
 
-## Tests
+| Variable | Valeur |
+|---|---|
+| `NCBI_EMAIL` | votre adresse email |
+| `NCBI_API_KEY` | votre clé NCBI, **ou vide** (une fausse clé provoque des erreurs) |
+| `AIRFLOW_UID` | résultat de `id -u` |
+| `AIRFLOW_JWT_SECRET` | résultat de `python3 -c "import secrets; print(secrets.token_urlsafe(32))"` |
+| `POSTGRES_PASSWORD`, `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD` | des valeurs de votre choix |
 
-```bash
-pytest -q
-```
+> ⚠️ Les vraies valeurs vont **uniquement** dans `.env` (ignoré par git), jamais dans
+> `.env.example`.
 
-Le script `run_collection.py` fait de vrais appels réseau et n'est pas testé automatiquement ;
-sa correction repose sur les fonctions unitaires des modules `src/ingestion/`.
-
-## Lancer le pipeline médaillon
-
-Deux passes de tests couvrent le pipeline complet (ingestion + orchestration Airflow) :
+### 3. Démarrer la stack
 
 ```bash
-venv/bin/pytest -q               # logique, sans infrastructure
-venv/bin/pytest tests_airflow -q # structure des DAGs, nécessite apache-airflow
-```
-
-Démarrer la stack (Airflow 3 + PostgreSQL + MinIO, quatre buckets du médaillon) : compléter
-le `.env` créé plus haut avec les variables Docker (voir `.env.example`), notamment :
-
-```bash
-python3 -c "import secrets; print(secrets.token_urlsafe(32))"   # -> AIRFLOW_JWT_SECRET
-echo "AIRFLOW_UID=$(id -u)" >> .env   # les conteneurs écrivent dans data/ du dépôt
-
 docker compose --env-file .env up -d --build
 ```
 
-- Airflow est sur `http://localhost:8080` (utilisateur `admin`, mot de passe dans
-  `/opt/airflow/simple_auth_manager_passwords.json.generated` du conteneur
-  `airflow-apiserver`).
-- La console MinIO est sur `http://localhost:<MINIO_CONSOLE_PORT>` (9001 par défaut).
-
-### État volontaire du pipeline
-
-Les passages `raw_to_bronze`, `bronze_to_silver`, `quality_check_silver`,
-`silver_to_gold_rag` et `silver_to_gold_analytique` échouent explicitement, en nommant le
-sous-projet qui les implémentera. Conséquence : tant que le sous-projet B n'est pas livré,
-`check_bronze_shared` ne réussit pas, l'Asset n'est pas publié, et les DAGs de panel ne se
-déclenchent pas automatiquement.
-
-Pour exercer l'ingestion par panel, les déclencher à la main en indiquant la date des
-sources partagées déjà déposées :
+Le premier démarrage construit l'image Airflow (quelques minutes). Vérifier que tout est sain :
 
 ```bash
-docker compose --env-file .env exec airflow-scheduler \
+docker compose ps        # les services doivent être « healthy »
+                         # (minio-init et airflow-init s'arrêtent normalement après l'initialisation)
+```
+
+### Connexion à Airflow
+
+Utilisateur `admin` ; le mot de passe est généré au démarrage :
+
+```bash
+docker exec genomique-airflow-apiserver \
+  cat /opt/airflow/simple_auth_manager_passwords.json.generated
+```
+
+## Commandes courantes
+
+### Stack Docker
+
+```bash
+docker compose --env-file .env up -d --build   # démarrer (ou reconstruire après modification)
+docker compose ps                              # état des services
+docker compose logs -f airflow-scheduler       # suivre les journaux d'un service
+docker compose down                            # arrêter (les données sont conservées)
+docker compose down -v                         # arrêter ET effacer les données (irréversible)
+```
+
+### Lancer le pipeline depuis Airflow
+
+Deux familles de DAGs (pipelines Airflow) :
+
+| DAG | Rôle | Déclenchement |
+|---|---|---|
+| `dag_acquisition_sources` | Télécharge ClinVar et HPO (communs aux deux panels), `raw` → `bronze` | Automatique le 10 de chaque mois à 06:00 UTC, ou manuel |
+| `dag_genomic_pipeline_brca` | Panel cancer du sein : sources NCBI, puis `raw` → `bronze` → `silver` → `gold` | Automatique à la fin de l'acquisition, ou manuel |
+| `dag_genomic_pipeline_sickle` | Panel drépanocytose : idem | idem |
+
+Dans l'interface, activer les DAGs (interrupteur « unpause »), puis ▶ **Trigger**. En ligne de
+commande :
+
+```bash
+# Acquisition : la date logique (AAAA-MM-JJ) est obligatoire pour un run manuel
+docker compose exec airflow-scheduler \
+  airflow dags trigger dag_acquisition_sources --logical-date 2026-09-01
+
+# Un panel, sur des sources déjà acquises à cette date
+docker compose exec airflow-scheduler \
   airflow dags trigger dag_genomic_pipeline_brca --conf '{"sources_date": "2026-09-01"}'
 ```
 
-La date est résolue, les quatre ingestions et `check_raw` s'exécutent, puis le run s'arrête
-à `raw_to_bronze`.
+> Les tâches `silver_to_gold_rag` et `silver_to_gold_analytique` échouent pour l'instant, en
+> indiquant qu'elles seront livrées par le sous-projet D : c'est l'état attendu.
 
-Un déclenchement manuel du DAG d'acquisition demande `--logical-date AAAA-MM-JJ` : dans
-Airflow 3, un run manuel n'a pas de date logique sans cette option.
+### Lancer un connecteur à la main (sans Docker)
+
+Chaque source a son script, qui écrit dans la couche `raw`. Sans variable `LAKE_URI`, le lac
+est local, dans `data/lake/`.
 
 ```bash
-docker compose --env-file .env exec airflow-scheduler \
-  airflow dags trigger dag_acquisition_sources --logical-date 2026-09-01
+source venv/bin/activate
+export PYTHONPATH=src:.
+D=2026-09-01
+G=BRCA1,BRCA2,TP53,PALB2,PTEN,CDH1,STK11,ATM,CHEK2,BARD1,RAD51C,RAD51D
+
+# Sources communes (à lancer en premier : MedGen lit la partition ClinVar)
+python -m scripts.ingest_clinvar   --logical-date $D
+python -m scripts.ingest_hpo_files --logical-date $D
+
+# Sources par panel (panel sickle : --panel sickle --genes HBB,BCL11A,HBS1L,MYB,KLF1,G6PD)
+python -m scripts.ingest_ncbi_gene --logical-date $D --panel brca --genes $G
+python -m scripts.ingest_refseq    --logical-date $D --panel brca --genes $G
+python -m scripts.ingest_hpo_terms --logical-date $D --panel brca --genes $G
+python -m scripts.ingest_medgen    --logical-date $D --panel brca --genes $G
 ```
 
-### Notes d'exploitation
+### Tests
 
-- Le DAG d'acquisition tourne le 10 du mois à 06:00 UTC (l'archive ClinVar du mois paraît
-  entre le 2 et le 6) ; sa date de travail est ramenée au 1er du mois (`dt=AAAA-MM-01`).
-- Quand plusieurs événements d'Asset se sont accumulés depuis le dernier run d'un DAG de
-  panel, celui-ci traite **le plus récent** : les mois intermédiaires ne sont pas traités.
-  Un mois sauté se rattrape à la main :
+```bash
+pytest -q                  # logique métier : rapide, sans réseau ni conteneur
+pytest tests_airflow -q    # structure des DAGs Airflow (passe séparée, plus lente)
+```
 
-  ```bash
-  docker compose --env-file .env exec airflow-scheduler \
-    airflow dags trigger dag_genomic_pipeline_<panel> --conf '{"sources_date": "AAAA-MM-01"}'
-  ```
+## Sources de données
 
-## NiFi : alternative évaluée et écartée
-
-`archive/nifi/` contient un flow Apache NiFi qui orchestrait `run_collection.py`. Il est
-conservé pour documenter un choix évalué puis écarté avec mesures (voir
-`reference/choix_contexte.md`) ; ce n'est plus un moyen de lancer le pipeline. L'orchestration
-active est assurée par Airflow (`dags/`).
-
-## Schéma d'un `data/raw/{GENE}.json`
-
-Sortie du script historique `run_collection.py` ; le pipeline médaillon ne la consomme pas. Chaque document a ces clés :
-
-| Clé | Type | Contenu |
+| Source | Contenu | Accès |
 |---|---|---|
-| `gene_symbol` | `str` | Symbole du gène (ex. `"HBB"`) |
-| `gene_info` | `dict` | esummary NCBI Gene brut (nom, description, `maplocation`, `summary`…) |
-| `variants` | `list[dict]` | Lignes ClinVar brutes, **43 colonnes d'origine** |
-| `medgen_concepts` | `list[dict]` | Concepts MedGen, bruts + champs dérivés du `conceptmeta` |
-| `hpo_terms` | `list[dict]` | `{gene_symbol, hpo_id, hpo_name, definition, synonyms, xrefs}` |
-| `_provenance` | `dict` | Date de collecte (UTC) et versions des sources |
+| **ClinVar** | Variants génétiques et leur signification clinique | Fichier mensuel FTP (`variant_summary.txt.gz`, ~440 Mo) |
+| **NCBI Gene** | Description et localisation de chaque gène | API E-utilities |
+| **MedGen** | Maladies associées, numéros OMIM, modes de transmission | API E-utilities |
+| **HPO** | Signes cliniques (phénotypes) associés à chaque gène | Fichier `genes_to_phenotype.txt` + API `ontology.jax.org` |
+| **RefSeq** | Transcrits de référence, pour normaliser la notation des variants (HGVS) | API E-utilities (`nuccore`) |
 
-### Points à connaître avant de consommer cette couche
+Panels de gènes (`src/ingestion/config.py`) :
 
-- **`variants` porte les noms de colonnes ClinVar d'origine**, `#AlleleID` (avec le `#`),
-  `RS# (dbSNP)` (avec espace et parenthèses)… Prévoir un renommage systématique en Bronze.
-- **`variants` est incomplet d'environ 0,3 %** : `filter_clinvar` fait une correspondance
-  exacte sur `GeneSymbol` et ignore donc les lignes ClinVar où plusieurs gènes sont joints par
-  `;` (~270 associations, surtout ATM, PTEN, HBB, BRCA1, MYB). Les récupérer (`split(";")` +
-  explode) est une décision de modélisation qui appartient au Silver.
-- **Champs MedGen singuliers non exhaustifs** : `mim_number`, `mode_inheritance`,
-  `clinical_summary` ne gardent que la **première** occurrence. Un concept peut en avoir
-  plusieurs (beta Thalassemia a 2 MIM et 2 modes d'hérédité). Consommer les pluriels
-  `mim_numbers`, `modes_inheritance`, `definitions`. Le XML `conceptmeta` brut est conservé
-  comme source de vérité.
-- **`medgen_concepts` peut contenir `{"conceptid": "..."}` seul** : CUI non résolvable par
-  MedGen (comportement correct et voulu), à traiter comme « concept inconnu ».
-- **`hpo_terms` vide est légitime pour `HBS1L` et `MYB`** (loci GWAS absents des annotations
-  HPO, pas des gènes mendéliens) — ce n'est pas une collecte ratée.
-- **`definition`/`synonyms`/`xrefs` peuvent être vides** sur une ligne `hpo_terms` : l'API
-  `ontology.jax.org` ne les fournit pas pour un terme qu'elle ne reconnaît plus (retiré/fusionné
-  côté HPO) — traiter comme un enrichissement manquant, pas une erreur.
+- **Cancer du sein héréditaire (`brca`)** : BRCA1, BRCA2, TP53, PALB2, PTEN, CDH1, STK11,
+  ATM, CHEK2, BARD1, RAD51C, RAD51D
+- **Drépanocytose et modificateurs (`sickle`)** : HBB, BCL11A, HBS1L, MYB, KLF1, G6PD
 
-## Structure
+## Tables de la couche Silver
+
+| Table | Contenu |
+|---|---|
+| `clinvar_variant` | Un variant par ligne, avec historique des reclassifications (SCD2 : `valid_from`, `valid_to`, `is_current`) |
+| `clinvar_variant_gene` | Lien variant ↔ gène (un variant peut toucher plusieurs gènes) |
+| `ncbi_gene` | Fiche de chaque gène |
+| `refseq_transcript` | Transcrits de référence par gène |
+| `medgen_concept`, `medgen_mim`, `medgen_inheritance` | Maladies, numéros OMIM, modes de transmission |
+| `hpo_gene_phenotype`, `hpo_term` | Phénotypes par gène et définition de chaque terme HPO |
+
+Chaque table est partitionnée par panel. `quality_check_silver` bloque la suite du pipeline
+si une table est absente ou vide, ou si les liens entre tables sont incohérents.
+
+## Principes d'architecture
+
+- **La logique vit dans `src/` et `scripts/`**, testée sans infrastructure. Airflow ne fait
+  qu'appeler ces fonctions ; MinIO ne fait que stocker.
+- **Une partition n'est lisible qu'une fois complète** : chaque écriture se termine par un
+  manifeste puis un marqueur `_SUCCESS`, vérifiés avant de passer à la couche suivante.
+- **La couche `raw` garde la donnée telle que la source l'a fournie** : tout retraitement
+  repart d'elle, sans rappeler les API.
+- **Moteur de calcul : Polars** ; tables Silver et Gold au format **Delta Lake**.
+- **NiFi a été évalué puis écarté** au profit d'Airflow (mesures dans
+  `reference/choix_contexte.md`) ; le flow est archivé dans `archive/nifi/`.
+
+## Structure du dépôt
 
 ```
-src/ingestion/
-  config.py        panel de gènes, chemins, couches du médaillon, constantes
-  download.py      téléchargement atomique avec cache (partagé ClinVar/HPO)
-  http_client.py   RateLimiter + NcbiClient (retry, rate limit)
-  clinvar.py       URL d'archive mensuelle, download + filtrage du bulk ClinVar
-  ncbi_gene.py     fetch_gene_info
-  refseq.py        fetch_transcripts (catalogue RefSeq par gène)
-  medgen.py        extraction CUI, fetch concept, parsing conceptmeta
-  hpo.py           release HPO, parsing genes_to_phenotype, enrichissement via l'API HPO
-  storage.py       E/S du lac (file:// ou s3://), partitions, manifest, _SUCCESS
-  jsonl.py         sérialisation JSONL gzippée des réponses d'API
-  errors.py        ConfigurationError (échec non retenté)
-  orchestrate.py   assemblage des 4 sources en un document par gène (CLI historique)
-src/transformations/
-  raw_to_bronze.py              livré (sous-projet B) : conversion Parquet, colonnes
-                                normalisées, colonnes techniques
-  bronze_to_silver.py, silver_to_gold_rag.py,
-  silver_to_gold_analytique.py  stubs documentés (sous-projets C, D)
-scripts/
-  run_collection.py   CLI historique (un document JSON par gène)
-  ingest_*.py         dépôt d'une source dans la couche raw (clinvar, hpo_files,
-                      ncbi_gene, refseq, medgen, hpo_terms)
-dags/
-  dag_acquisition_sources.py   sources partagées (mensuel) : raw puis bronze, publie l'Asset
-  dag_genomic_pipeline.py      un DAG par panel, déclenché par l'Asset
-  common/                      panels, pool NCBI, résolution des dates
-docker/            image Airflow, création des buckets MinIO
-docker-compose.yml Airflow 3 + PostgreSQL + MinIO
-tests/             passe rapide (logique, sans réseau ni conteneur)
-tests_airflow/     structure des DAGs
-reference/         contexte du mémoire : problématique, architecture, panels de gènes,
-                   guide de récupération des données, choix d'orchestration (NiFi vs Airflow)
-archive/nifi/      alternative d'orchestration évaluée puis écartée (voir plus haut)
-data/
-  external/        fichiers sources téléchargés (gitignoré)
-  raw/             documents produits par le CLI historique, un par gène (gitignoré)
-  lake/            lac local quand LAKE_URI n'est pas défini (gitignoré)
+src/ingestion/        connecteurs des sources, client HTTP (rate limit, retry), E/S du lac
+src/transformations/  passages entre couches : raw_to_bronze, bronze_to_silver,
+                      quality_check_silver, silver_to_gold_* (à venir)
+scripts/              ingest_*.py : un script par source, écrit dans raw
+                      run_collection.py : ancien script de collecte (voir plus bas)
+dags/                 DAGs Airflow : acquisition mensuelle + un DAG par panel
+docker/               image Airflow, création des buckets MinIO
+docker-compose.yml    stack Airflow 3 + PostgreSQL + MinIO
+tests/                tests de la logique (rapides)
+tests_airflow/        tests de structure des DAGs
+reference/            contexte du mémoire : problématique, architecture, panels, choix techniques
+archive/nifi/         orchestration NiFi, évaluée puis écartée
+data/                 fichiers téléchargés et lac local (ignorés par git)
 ```
+
+## Script historique `run_collection.py`
+
+Antérieur au pipeline médaillon et conservé pour référence : il collecte quatre sources et
+écrit **un fichier JSON par gène** dans `data/raw/`. Le pipeline médaillon ne l'utilise pas.
+
+```bash
+python scripts/run_collection.py            # réutilise le fichier ClinVar déjà téléchargé
+python scripts/run_collection.py --refresh  # force le retéléchargement
+```
+
+Premier run : environ 4 minutes (440 Mo de ClinVar + ~1 200 appels NCBI). Le script se
+termine en erreur (code 1) si un gène ressort sans variants ni métadonnées.
+
+Particularités connues de ces fichiers :
+
+- Les colonnes ClinVar gardent leurs noms d'origine (`#AlleleID`, `RS# (dbSNP)`…).
+- Environ 0,3 % des variants ClinVar, ceux qui touchent plusieurs gènes, sont ignorés (le
+  pipeline médaillon, lui, les conserve).
+- Les champs MedGen au singulier (`mim_number`, `mode_inheritance`) ne gardent que la première
+  valeur ; utiliser les pluriels (`mim_numbers`, `modes_inheritance`).
+- Un concept MedGen réduit à `{"conceptid": "..."}` est un identifiant inconnu de MedGen, pas
+  une erreur.
+- `hpo_terms` vide pour HBS1L et MYB est normal : ces gènes n'ont pas d'annotation HPO.
