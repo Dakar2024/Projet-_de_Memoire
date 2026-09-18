@@ -113,27 +113,31 @@ def open_stream(uri: str, client=None):
     return open(_local_path(uri), "rb")
 
 
+def storage_options(uri: str) -> dict[str, str] | None:
+    """Options de connexion à passer à Polars/delta-rs (`scan_parquet`, `read_delta`,
+    `write_delta`, `DeltaTable`) : ils ne lisent pas la configuration boto3 du process.
+    En s3://, identifiants et endpoint viennent des mêmes variables que `_s3_client` ;
+    `None` en local. Aucun verrou n'est configuré : delta-rs 1.6 écrit sur MinIO sans
+    (vérifié en run réel), et le pool Airflow `SILVER_WRITE_POOL` sérialise déjà les
+    écrivains Silver."""
+    if not uri.startswith(S3_SCHEME):
+        return None
+    return {
+        "aws_endpoint_url": os.environ.get("AWS_ENDPOINT_URL", ""),
+        "aws_region": os.environ.get("AWS_REGION", "us-east-1"),
+        "aws_access_key_id": os.environ.get("AWS_ACCESS_KEY_ID", ""),
+        "aws_secret_access_key": os.environ.get("AWS_SECRET_ACCESS_KEY", ""),
+        "aws_allow_http": "true",
+    }
+
+
 def scan_parquet(uri: str) -> pl.LazyFrame:
     """Lit un Parquet en lazy : le filtre et la projection de l'appelant sont poussés
     par Polars au moment du `.collect()`, sans matérialiser toute la partition en
     mémoire au préalable — indispensable pour le bronze ClinVar (bulk non filtré, non
-    dédoublonné à ce stade, cf. `raw_to_bronze`).
-
-    En s3://, les identifiants viennent de l'environnement (mêmes variables que
-    `_s3_client`) : Polars/delta-rs ne lisent pas la configuration boto3 du process.
-    Chemin s3:// non exercé par la suite de tests (comme le reste de l'écriture Delta
-    vers MinIO) — à vérifier lors d'un run réel contre la stack docker.
-    """
+    dédoublonné à ce stade, cf. `raw_to_bronze`)."""
     if uri.startswith(S3_SCHEME):
-        bucket, key = _split_s3(uri)
-        storage_options = {
-            "aws_endpoint_url": os.environ.get("AWS_ENDPOINT_URL", ""),
-            "aws_region": os.environ.get("AWS_REGION", "us-east-1"),
-            "aws_access_key_id": os.environ.get("AWS_ACCESS_KEY_ID", ""),
-            "aws_secret_access_key": os.environ.get("AWS_SECRET_ACCESS_KEY", ""),
-            "aws_allow_http": "true",
-        }
-        return pl.scan_parquet(f"s3://{bucket}/{key}", storage_options=storage_options)
+        return pl.scan_parquet(uri, storage_options=storage_options(uri))
     return pl.scan_parquet(_local_path(uri))
 
 

@@ -20,7 +20,27 @@ from ingestion.storage import (
     put_bytes,
     put_file,
     read_manifest,
+    storage_options,
 )
+
+
+def test_storage_options_is_none_for_a_local_uri():
+    assert storage_options("file:///tmp/lake/silver/ncbi_gene") is None
+
+
+def test_storage_options_points_polars_and_deltalake_at_the_s3_endpoint(monkeypatch):
+    """Polars et delta-rs ignorent la configuration boto3 : sans ces options, un
+    endpoint MinIO en http:// est refusé (« URL scheme is not allowed »)."""
+    monkeypatch.setenv("AWS_ENDPOINT_URL", "http://minio:9000")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "key")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "secret")
+
+    options = storage_options("s3://silver/ncbi_gene")
+
+    assert options["aws_endpoint_url"] == "http://minio:9000"
+    assert options["aws_access_key_id"] == "key"
+    assert options["aws_secret_access_key"] == "secret"
+    assert options["aws_allow_http"] == "true"
 
 
 def _client_error(status: int, code: str) -> ClientError:
