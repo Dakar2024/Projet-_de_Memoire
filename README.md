@@ -130,9 +130,9 @@ docker compose --env-file .env exec airflow-scheduler \
 
 ## NiFi : alternative évaluée et écartée
 
-`nifi/` contient un flow Apache NiFi qui orchestrait `run_collection.py`. Il est conservé pour
-documenter un choix évalué puis écarté avec mesures (voir `CLAUDE.md` et
-`docs/choix_contexte.md`) ; ce n'est plus un moyen de lancer le pipeline. L'orchestration
+`archive/nifi/` contient un flow Apache NiFi qui orchestrait `run_collection.py`. Il est
+conservé pour documenter un choix évalué puis écarté avec mesures (voir
+`reference/choix_contexte.md`) ; ce n'est plus un moyen de lancer le pipeline. L'orchestration
 active est assurée par Airflow (`dags/`).
 
 ## Schéma d'un `data/raw/{GENE}.json`
@@ -186,8 +186,10 @@ src/ingestion/
   errors.py        ConfigurationError (échec non retenté)
   orchestrate.py   assemblage des 4 sources en un document par gène (CLI historique)
 src/transformations/
-  raw_to_bronze.py, bronze_to_silver.py, silver_to_gold_rag.py,
-  silver_to_gold_analytique.py   stubs documentés (sous-projets B, C, D)
+  raw_to_bronze.py              livré (sous-projet B) : conversion Parquet, colonnes
+                                normalisées, colonnes techniques
+  bronze_to_silver.py, silver_to_gold_rag.py,
+  silver_to_gold_analytique.py  stubs documentés (sous-projets C, D)
 scripts/
   run_collection.py   CLI historique (un document JSON par gène)
   ingest_*.py         dépôt d'une source dans la couche raw (clinvar, hpo_files,
@@ -200,6 +202,9 @@ docker/            image Airflow, création des buckets MinIO
 docker-compose.yml Airflow 3 + PostgreSQL + MinIO
 tests/             passe rapide (logique, sans réseau ni conteneur)
 tests_airflow/     structure des DAGs
+reference/         contexte du mémoire : problématique, architecture, panels de gènes,
+                   guide de récupération des données, choix d'orchestration (NiFi vs Airflow)
+archive/nifi/      alternative d'orchestration évaluée puis écartée (voir plus haut)
 data/
   external/        fichiers sources téléchargés (gitignoré)
   raw/             documents produits par le CLI historique, un par gène (gitignoré)

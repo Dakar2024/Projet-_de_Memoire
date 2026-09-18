@@ -1,8 +1,8 @@
 services:
   nifi:
     build:
-      context: ..
-      dockerfile: nifi/Dockerfile
+      context: ../..
+      dockerfile: archive/nifi/Dockerfile
     container_name: nifi-collecte-genomique
     ports:
       - "8443:8443"
@@ -14,4 +14,4 @@ services:
       # Le repo est monté tel quel : config.py ancre ses chemins sur la position du
       # fichier source, donc scripts/run_collection.py fonctionne à l'identique que
       # ce soit lancé depuis le host ou depuis ce conteneur.
-      - ..:/opt/projet
+      - ../..:/opt/projet

@@ -8,6 +8,8 @@ __pycache__/
 .claude/
 .superpowers/
 SESSION_HANDOFF.md
+CLAUDE.md
+docs/
 data/external/*
 data/raw/*
 data/lake/
