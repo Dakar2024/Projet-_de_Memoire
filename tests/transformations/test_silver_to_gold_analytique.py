@@ -2,6 +2,7 @@ import polars as pl
 
 from tests.transformations.test_silver_to_gold_rag import _seed_silver
 from transformations.silver_to_gold_analytique import (
+    _write_gold_snapshot,
     build_aggregates,
     build_dimensions,
     build_fact_reclassification,
@@ -224,13 +225,23 @@ def test_silver_to_gold_analytique_writes_every_table(tmp_path):
     assert pl.read_delta(gold_table_uri("fact_variant", lake))["alleleid"].to_list() == ["1"]
 
 
-def test_silver_to_gold_analytique_replay_keeps_the_same_row_count(tmp_path):
+def test_silver_to_gold_analytique_replay_is_idempotent_and_panel_scoped(tmp_path):
+    """`height == 1` after two identical single-panel runs would hold even under a
+    naive full-table overwrite with no `predicate` at all, since only one panel's
+    data would ever exist. Proving scoped idempotence needs another panel present
+    *before* the replay, and a full-frame comparison after: the replay must not
+    duplicate `brca`'s own rows, and must not touch `sickle`'s row at all."""
     lake = _seed_silver(f"file://{tmp_path}/lake")
     silver_to_gold_analytique("2026-09-01", "brca", lake_uri=lake)
+    sickle_row = pl.read_delta(gold_table_uri("fact_variant", lake)).with_columns(
+        pl.lit("sickle").alias("panel"), pl.lit("99").alias("alleleid"))
+    sickle_row.write_delta(gold_table_uri("fact_variant", lake), mode="append")
+    before = pl.read_delta(gold_table_uri("fact_variant", lake)).sort("panel", "alleleid")
 
     silver_to_gold_analytique("2026-09-01", "brca", lake_uri=lake)
 
-    assert pl.read_delta(gold_table_uri("fact_variant", lake)).height == 1
+    after = pl.read_delta(gold_table_uri("fact_variant", lake)).sort("panel", "alleleid")
+    assert after.equals(before)
 
 
 def test_silver_to_gold_analytique_leaves_the_other_panel_untouched(tmp_path):
@@ -244,3 +255,26 @@ def test_silver_to_gold_analytique_leaves_the_other_panel_untouched(tmp_path):
 
     fact = pl.read_delta(gold_table_uri("fact_variant", lake))
     assert "99" in fact["alleleid"].to_list()
+
+
+def test_write_gold_snapshot_clears_a_panel_that_becomes_empty(tmp_path):
+    """A panel's reclassification history can go from non-empty to empty (e.g. no
+    transition happened this month). The per-panel overwrite must clear that
+    panel's old rows rather than leaving them stranded forever, while another
+    panel's rows must survive untouched. Exercises `_write_gold_snapshot`
+    directly, since it is the piece that carries this guarantee."""
+    lake = f"file://{tmp_path}/lake"
+    non_empty_brca = pl.DataFrame([
+        {"alleleid": "1", "gene_symbol": "BRCA1", "panel": "brca"},
+    ])
+    non_empty_sickle = pl.DataFrame([
+        {"alleleid": "99", "gene_symbol": "HBB", "panel": "sickle"},
+    ])
+    _write_gold_snapshot(non_empty_brca, "fact_reclassification", "brca", lake)
+    _write_gold_snapshot(non_empty_sickle, "fact_reclassification", "sickle", lake)
+
+    _write_gold_snapshot(non_empty_brca.clear(), "fact_reclassification", "brca", lake)
+
+    fact = pl.read_delta(gold_table_uri("fact_reclassification", lake))
+    assert fact.filter(pl.col("panel") == "brca").height == 0
+    assert fact.filter(pl.col("panel") == "sickle")["alleleid"].to_list() == ["99"]
