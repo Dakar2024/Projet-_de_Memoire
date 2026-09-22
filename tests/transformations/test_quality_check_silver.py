@@ -26,7 +26,10 @@ def _seed_complete_silver(lake, panel="brca", skip_table=None):
             uri("clinvar_variant"), panel, "2026-08-01",
         )
     for table in ALL_TABLES:
-        if table in ("clinvar_variant", "hpo_gene_phenotype", "clinvar_variant_gene"):
+        if table in (
+            "clinvar_variant", "hpo_gene_phenotype", "clinvar_variant_gene",
+            "clinvar_variant_disease",
+        ):
             continue
         if table == skip_table:
             continue
@@ -43,6 +46,11 @@ def _seed_complete_silver(lake, panel="brca", skip_table=None):
         _write_silver_snapshot(
             pl.DataFrame({"panel": [panel], "alleleid": ["1"], "gene_symbol": [gene]}),
             uri("clinvar_variant_gene"), panel,
+        )
+    if skip_table != "clinvar_variant_disease":
+        _write_silver_snapshot(
+            pl.DataFrame({"panel": [panel], "alleleid": ["1"], "disease_name": ["Some disease"]}),
+            uri("clinvar_variant_disease"), panel,
         )
 
 
@@ -116,4 +124,18 @@ def test_quality_check_silver_rejects_two_current_rows_for_the_same_variant(tmp_
     }).write_delta(f"{lake}/silver/clinvar_variant", mode="append")
 
     with pytest.raises(SilverQualityError, match="clinvar_variant"):
+        quality_check_silver("2026-09-01", "brca", lake_uri=lake)
+
+
+def test_quality_check_silver_rejects_a_dangling_variant_disease(tmp_path):
+    """Un alleleid de clinvar_variant_disease sans ligne dans clinvar_variant
+    produirait une maladie rattachée à un variant inexistant dans le Gold."""
+    lake = f"file://{tmp_path}/lake"
+    _seed_complete_silver(lake)
+    _write_silver_snapshot(
+        pl.DataFrame({"panel": ["brca"], "alleleid": ["999"], "disease_name": ["X"]}),
+        f"{lake}/silver/clinvar_variant_disease", "brca",
+    )
+
+    with pytest.raises(SilverQualityError, match="clinvar_variant_disease"):
         quality_check_silver("2026-09-01", "brca", lake_uri=lake)

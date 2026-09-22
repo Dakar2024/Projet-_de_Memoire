@@ -13,7 +13,8 @@ from deltalake import DeltaTable
 
 from ingestion.config import BRONZE, PANEL_GENES
 from ingestion.medgen import parse_medgen_conceptmeta
-from ingestion.storage import get_bytes, layer_uri, partition_uri, scan_parquet, storage_options
+from ingestion.storage import get_bytes, partition_uri, scan_parquet, storage_options
+from transformations.silver_io import silver_table_uri
 
 
 # Jamais propagées dans une table Silver (contrainte globale de ce plan) : aucun
@@ -460,15 +461,6 @@ def _write_clinvar_variant(
     )
 
 
-def _silver_table_uri(table: str, lake_uri: str | None) -> str:
-    """URI d'une table Silver : `layer_uri` donne la racine de la couche
-    (`file:///.../silver` ou `s3://silver`) ; une table Silver est un chemin direct
-    en dessous, sans date ni panel (contrairement à `partition_uri`, conçue pour
-    raw/bronze). Vérifié à la main : `layer_uri("silver", lake_uri=...)` fonctionne
-    aussi bien en local qu'avec `lake_uri="s3://"`."""
-    return f"{layer_uri('silver', lake_uri=lake_uri)}/{table}"
-
-
 def bronze_to_silver(logical_date: str, panel: str, lake_uri: str | None = None) -> None:
     """Construit les dix tables Silver du panel à partir du Bronze.
 
@@ -486,7 +478,7 @@ def bronze_to_silver(logical_date: str, panel: str, lake_uri: str | None = None)
     medgen_partition = partition_uri(BRONZE, "medgen", logical_date, panel=panel, lake_uri=lake_uri)
     hpo_terms_partition = partition_uri(BRONZE, "hpo_terms", logical_date, panel=panel, lake_uri=lake_uri)
 
-    silver_uri = lambda table: _silver_table_uri(table, lake_uri)
+    silver_uri = lambda table: silver_table_uri(table, lake_uri)
 
     clinvar_variants = _load_clinvar_variants(clinvar_partition, genes)
     variant_gene = _build_clinvar_variant_gene(clinvar_variants, genes)
