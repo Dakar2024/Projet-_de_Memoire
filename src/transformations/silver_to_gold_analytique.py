@@ -3,7 +3,6 @@ from __future__ import annotations
 import polars as pl
 
 from ingestion.storage import layer_uri, storage_options
-from transformations import SPEC
 from transformations.silver_io import read_silver
 
 # Rang de confiance publié par ClinVar pour chaque statut de revue (0 à 4 étoiles).
@@ -148,6 +147,37 @@ def build_dimensions(
     }
 
 
+def build_aggregates(
+    fact_variant: pl.DataFrame, fact_reclassification: pl.DataFrame
+) -> dict[str, pl.DataFrame]:
+    """Trois agrégats pré-calculés : le backend de l'application sert une ligne déjà
+    calculée plutôt que de parcourir ~97 000 variants à chaque requête."""
+    return {
+        "agg_variants_by_gene_significance": (
+            fact_variant.group_by("gene_symbol", "clinical_significance", "panel", "month")
+            .agg(pl.len().alias("variant_count"))
+        ),
+        "agg_review_status": (
+            fact_variant.group_by("gene_symbol", "review_status", "panel", "month")
+            .agg(pl.len().alias("variant_count"))
+        ),
+        "agg_reclassifications_by_month": (
+            fact_reclassification.group_by("gene_symbol", "changed_on", "panel")
+            .agg(pl.len().alias("reclassification_count"))
+        ),
+    }
+
+
+def _write_gold_snapshot(df: pl.DataFrame, table: str, panel: str, lake_uri: str | None) -> None:
+    """Remplace les seules lignes du panel : sans `predicate`, chaque run effacerait
+    l'autre panel — même protection que `_write_silver_snapshot`."""
+    uri = gold_table_uri(table, lake_uri)
+    df.write_delta(
+        uri, mode="overwrite", storage_options=storage_options(uri),
+        delta_write_options={"partition_by": ["panel"], "predicate": f"panel = '{panel}'"},
+    )
+
+
 def silver_to_gold_analytique(
     logical_date: str, panel: str, lake_uri: str | None = None
 ) -> None:
@@ -161,6 +191,34 @@ def silver_to_gold_analytique(
     Interdit : nettoyer. Le Silver est la seule couche qui nettoie ; une donnée qui
     arrive ici incorrecte se corrige dans `bronze_to_silver`, pas dans le Gold.
     """
-    raise NotImplementedError(
-        f"silver_to_gold_analytique : implémenté par le sous-projet D ({SPEC}, §7)"
+    month = logical_date[:7]
+    variants = read_silver("clinvar_variant", panel, lake_uri)
+    variant_gene = read_silver("clinvar_variant_gene", panel, lake_uri)
+    variant_disease = read_silver("clinvar_variant_disease", panel, lake_uri)
+
+    fact_variant = build_fact_variant(variants, variant_gene, month)
+    fact_variant_disease = build_fact_variant_disease(variant_disease, variant_gene, month)
+    fact_reclassification = build_fact_reclassification(variants)
+
+    dimensions = build_dimensions(
+        read_silver("ncbi_gene", panel, lake_uri),
+        variant_disease,
+        read_silver("medgen_inheritance", panel, lake_uri),
+        read_silver("medgen_concept", panel, lake_uri),
+        read_silver("hpo_term", panel, lake_uri),
+        read_silver("hpo_gene_phenotype", panel, lake_uri),
+        fact_variant,
+        month,
     )
+    aggregates = build_aggregates(fact_variant, fact_reclassification)
+
+    tables = {
+        "fact_variant": fact_variant,
+        "fact_variant_disease": fact_variant_disease,
+        "fact_reclassification": fact_reclassification,
+        **dimensions,
+        **aggregates,
+    }
+    for table, df in tables.items():
+        frame = df if "panel" in df.columns else df.with_columns(pl.lit(panel).alias("panel"))
+        _write_gold_snapshot(frame, table, panel, lake_uri)

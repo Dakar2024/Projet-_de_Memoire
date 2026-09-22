@@ -174,8 +174,10 @@ def _seed_silver(lake, panel="brca", significance="Pathogenic", extra_variant=Fa
     gene = BREAST_CANCER_GENES[0]
     variants = [{
         "alleleid": "1", "name": f"NM_007294.4({gene}):c.116G>A", "genesymbol": gene,
-        "cytogenetic": "17q21.31", "rs_dbsnp": 80357498, "variationid": "37392",
+        "cytogenetic": "17q21.31", "chromosome": "17", "rs_dbsnp": 80357498,
+        "variationid": "37392",
         "type": "single nucleotide variant", "clinicalsignificance": significance,
+        "clinsigsimple": "1",
         "reviewstatus": "criteria provided", "numbersubmitters": "21",
         "lastevaluated": "Jul 14, 2026", "hgvs_c": "c.116G>A", "hgvs_p": "p.Cys39Tyr",
         "panel": panel, "valid_from": "2026-09-01", "valid_to": None, "is_current": True,
