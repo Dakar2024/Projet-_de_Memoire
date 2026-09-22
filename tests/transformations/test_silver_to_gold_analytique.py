@@ -1,11 +1,14 @@
 import polars as pl
 
+from tests.transformations.test_silver_to_gold_rag import _seed_silver
 from transformations.silver_to_gold_analytique import (
+    build_aggregates,
     build_dimensions,
     build_fact_reclassification,
     build_fact_variant,
     build_fact_variant_disease,
     gold_table_uri,
+    silver_to_gold_analytique,
 )
 
 # Vocabulaire ClinVar documenté pour `reviewstatus`, avec le rang étoile attendu.
@@ -195,3 +198,49 @@ def test_build_dimensions_joins_inheritance_modes_and_computes_the_quarter():
     row = dim_month.row(0, named=True)
     assert row["month"] == "2026-11"
     assert row["quarter"] == 4
+
+
+def test_build_aggregates_counts_variants_by_gene_and_significance():
+    fact = build_fact_variant(VARIANTS, VARIANT_GENE, "2026-09")
+
+    aggregates = build_aggregates(fact, build_fact_reclassification(VARIANTS))
+
+    counts = aggregates["agg_variants_by_gene_significance"].sort("clinical_significance")
+    assert counts["variant_count"].to_list() == [1, 1]
+    assert aggregates["agg_reclassifications_by_month"]["reclassification_count"].to_list() == [1]
+
+
+def test_silver_to_gold_analytique_writes_every_table(tmp_path):
+    lake = _seed_silver(f"file://{tmp_path}/lake")
+
+    silver_to_gold_analytique("2026-09-01", "brca", lake_uri=lake)
+
+    for table in ["fact_variant", "fact_variant_disease", "fact_reclassification",
+                  "dim_gene", "dim_disease", "dim_phenotype", "bridge_gene_phenotype",
+                  "dim_clinical_significance", "dim_review_status", "dim_month",
+                  "agg_variants_by_gene_significance", "agg_review_status",
+                  "agg_reclassifications_by_month"]:
+        pl.read_delta(gold_table_uri(table, lake))   # ne lève pas
+    assert pl.read_delta(gold_table_uri("fact_variant", lake))["alleleid"].to_list() == ["1"]
+
+
+def test_silver_to_gold_analytique_replay_keeps_the_same_row_count(tmp_path):
+    lake = _seed_silver(f"file://{tmp_path}/lake")
+    silver_to_gold_analytique("2026-09-01", "brca", lake_uri=lake)
+
+    silver_to_gold_analytique("2026-09-01", "brca", lake_uri=lake)
+
+    assert pl.read_delta(gold_table_uri("fact_variant", lake)).height == 1
+
+
+def test_silver_to_gold_analytique_leaves_the_other_panel_untouched(tmp_path):
+    lake = _seed_silver(f"file://{tmp_path}/lake")
+    silver_to_gold_analytique("2026-09-01", "brca", lake_uri=lake)
+    other = pl.read_delta(gold_table_uri("fact_variant", lake)).with_columns(
+        pl.lit("sickle").alias("panel"), pl.lit("99").alias("alleleid"))
+    other.write_delta(gold_table_uri("fact_variant", lake), mode="append")
+
+    silver_to_gold_analytique("2026-09-01", "brca", lake_uri=lake)
+
+    fact = pl.read_delta(gold_table_uri("fact_variant", lake))
+    assert "99" in fact["alleleid"].to_list()
