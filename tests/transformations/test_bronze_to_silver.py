@@ -5,6 +5,7 @@ import polars as pl
 
 from ingestion.storage import put_bytes
 from transformations.bronze_to_silver import (
+    _build_clinvar_variant_disease,
     _build_clinvar_variant_gene,
     _build_clinvar_variant_rows,
     _build_hpo_gene_phenotype,
@@ -503,6 +504,7 @@ def _seed_all_bronze(tmp_path, lake, panel):
         "clinicalsignificance": ["Benign"], "reviewstatus": ["criteria provided"],
         "lastevaluated": ["2026-08-01"], "rs_dbsnp": ["-1"],
         "name": ["NM_000518.5(HBB):c.1A>G"],
+        "phenotypelist": ["Sickle cell anemia"], "phenotypeids": ["MedGen:C0002895"],
     }))
     _seed_bronze_parquet(tmp_path, "hpo", None, pl.DataFrame({
         "ncbi_gene_id": ["3043"], "gene_symbol": ["HBB"],
@@ -552,3 +554,84 @@ def test_bronze_to_silver_does_not_disturb_the_other_panel(tmp_path):
 
     result = pl.read_delta(f"{lake}/silver/ncbi_gene")
     assert set(result["panel"].to_list()) == {"brca", "sickle"}
+
+
+def test_bronze_to_silver_writes_clinvar_variant_disease(tmp_path):
+    # Panel "sickle", pas "brca" : le gène ClinVar de `_seed_all_bronze` est HBB, qui
+    # n'appartient qu'au panel sickle — un run "brca" produirait un `clinvar_variants`
+    # vide (aucun alleleid retenu) et la table serait vide, ce que ce test ne veut pas
+    # vérifier.
+    lake = f"file://{tmp_path}/lake"
+    _seed_all_bronze(tmp_path, lake, "sickle")
+
+    bronze_to_silver("2026-09-01", "sickle", lake_uri=lake)
+
+    table = pl.read_delta(f"{lake}/silver/clinvar_variant_disease")
+    assert table["panel"].unique().to_list() == ["sickle"]
+    assert set(table.columns) >= {
+        "alleleid", "disease_name", "medgen_cui", "omim_id", "orpha_id", "mondo_id", "panel",
+    }
+
+
+DISEASE_ROWS = pl.DataFrame({
+    "alleleid": ["1", "2", "3", "4"],
+    "phenotypelist": [
+        "Breast-ovarian cancer, familial, susceptibility to, 1|not provided",
+        "FETAL HEMOGLOBIN QTL 6;Congenital dyserythropoietic anemia type 4",
+        "not provided",
+        "Hereditary cancer-predisposing syndrome",
+    ],
+    "phenotypeids": [
+        "MONDO:MONDO:0011450,MedGen:C2676676,OMIM:604370,Orphanet:145|MedGen:C3661900",
+        "MedGen:C3150805,OMIM:613566,Orphanet:251380;MONDO:MONDO:0013355,MedGen:C3150926,OMIM:613673",
+        "MedGen:CN169374",
+        "MedGen:C0027672",
+    ],
+})
+
+
+def test_build_clinvar_variant_disease_splits_on_pipe_then_semicolon():
+    result = _build_clinvar_variant_disease(DISEASE_ROWS).sort("alleleid", "disease_name")
+
+    rows = result.filter(pl.col("alleleid") == "2").sort("disease_name")
+    assert rows["disease_name"].to_list() == [
+        "Congenital dyserythropoietic anemia type 4",
+        "FETAL HEMOGLOBIN QTL 6",
+    ]
+    assert rows["medgen_cui"].to_list() == ["C3150926", "C3150805"]
+    assert rows["omim_id"].to_list() == ["613673", "613566"]
+
+
+def test_build_clinvar_variant_disease_extracts_every_identifier():
+    result = _build_clinvar_variant_disease(DISEASE_ROWS)
+
+    row = result.filter(pl.col("alleleid") == "1").row(0, named=True)
+    assert row["medgen_cui"] == "C2676676"
+    assert row["omim_id"] == "604370"
+    assert row["orpha_id"] == "145"
+    assert row["mondo_id"] == "MONDO:0011450"
+
+
+def test_build_clinvar_variant_disease_drops_placeholder_names():
+    """« not provided » porte son propre CUI vide chez MedGen (C3661900, CN169374) :
+    le garder ferait apparaître « not provided » comme une maladie dans le RAG."""
+    result = _build_clinvar_variant_disease(DISEASE_ROWS)
+
+    assert "not provided" not in result["disease_name"].to_list()
+    assert "3" not in result["alleleid"].to_list()
+
+
+def test_build_clinvar_variant_disease_keeps_identifiers_when_a_group_is_misaligned():
+    """Un groupe où les noms et les identifiants n'ont pas le même nombre de
+    sous-entrées : associer un nom au hasard serait pire que ne pas en donner."""
+    df = pl.DataFrame({
+        "alleleid": ["9"],
+        "phenotypelist": ["Only one name"],
+        "phenotypeids": ["MedGen:C1;OMIM:222"],
+    })
+
+    result = _build_clinvar_variant_disease(df).sort("medgen_cui", nulls_last=True)
+
+    assert result["disease_name"].to_list() == [None, None]
+    assert result["medgen_cui"].to_list() == ["C1", None]
+    assert result["omim_id"].to_list() == [None, "222"]

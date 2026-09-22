@@ -1,4 +1,4 @@
-"""Passage bronze -> silver : neuf tables Delta typées, historique SCD2 sur
+"""Passage bronze -> silver : dix tables Delta typées, historique SCD2 sur
 `clinvar_variant`. Voir docs/superpowers/specs/2026-09-16-sous-projet-c-bronze-silver-design.md.
 """
 
@@ -92,6 +92,73 @@ def _build_clinvar_variant_gene(clinvar_variants: pl.DataFrame, genes: list[str]
         .drop("genesymbol")
     )
     return exploded.filter(pl.col("gene_symbol").is_in(genes))
+
+
+# Identifiants portés par `phenotypeids`. `MedGen:` accepte la forme `CN123`
+# (concepts sans code UMLS), comme `ingestion.medgen.MEDGEN_CUI_PATTERN`.
+_DISEASE_ID_PATTERNS = {
+    "medgen_cui": r"MedGen:(CN?\d+)",
+    "omim_id": r"OMIM:(\d+)",
+    "orpha_id": r"Orphanet:(\d+)",
+    "mondo_id": r"MONDO:(MONDO:\d+)",
+}
+
+# ClinVar emploie ces libellés quand le soumetteur n'a pas nommé de maladie. Ils
+# portent leur propre CUI vide côté MedGen (C3661900, CN169374, CN517202 — 31 875
+# occurrences sur le run de 2026-09), donc filtrer sur l'absence d'identifiant ne
+# suffirait pas.
+_PLACEHOLDER_DISEASE_NAMES = ["not provided", "not specified"]
+
+
+def _build_clinvar_variant_disease(clinvar_variants: pl.DataFrame) -> pl.DataFrame:
+    """Éclate `phenotypelist`/`phenotypeids` en une ligne par (variant, maladie).
+
+    Les deux colonnes sont alignées sur `|`, puis sur `;` à l'intérieur d'un groupe
+    (vérifié sur le run réel : 96 892/96 892 sur `|`, 201 097/201 098 sur `;`). Un
+    groupe désaligné garde ses identifiants et laisse le nom nul : associer un nom à
+    la mauvaise maladie serait pire que de n'en donner aucun.
+    """
+    groups = (
+        clinvar_variants.select(
+            "alleleid",
+            pl.col("phenotypelist").str.split("|").alias("group_names"),
+            pl.col("phenotypeids").str.split("|").alias("group_ids"),
+        )
+        .filter(pl.col("group_names").list.len() == pl.col("group_ids").list.len())
+        .explode("group_names", "group_ids")
+        .with_columns(
+            pl.col("group_names").str.split(";").alias("names"),
+            pl.col("group_ids").str.split(";").alias("ids"),
+        )
+    )
+    same_length = pl.col("names").list.len() == pl.col("ids").list.len()
+    aligned = groups.filter(same_length).explode("names", "ids")
+    misaligned = (
+        groups.filter(~same_length)
+        .explode("ids")
+        .with_columns(pl.lit(None, dtype=pl.Utf8).alias("names"))
+    )
+
+    rows = pl.concat([
+        aligned.select("alleleid", "names", "ids"),
+        misaligned.select("alleleid", "names", "ids"),
+    ]).with_columns(
+        pl.col("names").str.strip_chars().alias("disease_name"),
+        *[
+            pl.col("ids").str.extract(pattern, 1).alias(column)
+            for column, pattern in _DISEASE_ID_PATTERNS.items()
+        ],
+    )
+
+    without_id = pl.all_horizontal(
+        [pl.col(column).is_null() for column in _DISEASE_ID_PATTERNS]
+    )
+    placeholder = pl.col("disease_name").str.to_lowercase().is_in(_PLACEHOLDER_DISEASE_NAMES)
+    return (
+        rows.filter(~placeholder.fill_null(False) & ~(without_id & pl.col("disease_name").is_null()))
+        .select("alleleid", "disease_name", *_DISEASE_ID_PATTERNS)
+        .unique(subset=["alleleid", "disease_name", "medgen_cui"], keep="first")
+    )
 
 
 # `NM_014855.3(AP5Z1):c.80_83delinsTGCTG` -> accession, version, gène, HGVS coding.
@@ -403,11 +470,11 @@ def _silver_table_uri(table: str, lake_uri: str | None) -> str:
 
 
 def bronze_to_silver(logical_date: str, panel: str, lake_uri: str | None = None) -> None:
-    """Construit les neuf tables Silver du panel à partir du Bronze.
+    """Construit les dix tables Silver du panel à partir du Bronze.
 
     Un seul appel par run de panel : lit les bronze partagés (`clinvar`, `hpo`,
     filtrés au panel) et les bronze du panel (`ncbi_gene`, `refseq`, `medgen`,
-    `hpo_terms`). `clinvar_variant` seule porte un historique SCD2 ; les huit autres
+    `hpo_terms`). `clinvar_variant` seule porte un historique SCD2 ; les neuf autres
     tables sont remplacées entièrement pour ce panel à chaque run.
     """
     genes = PANEL_GENES[panel]
@@ -423,6 +490,9 @@ def bronze_to_silver(logical_date: str, panel: str, lake_uri: str | None = None)
 
     clinvar_variants = _load_clinvar_variants(clinvar_partition, genes)
     variant_gene = _build_clinvar_variant_gene(clinvar_variants, genes)
+    variant_disease = _build_clinvar_variant_disease(
+        clinvar_variants.filter(pl.col("alleleid").is_in(variant_gene["alleleid"].unique().to_list()))
+    )
     refseq_transcript = _build_refseq_transcript(refseq_partition)
     variant_rows = _build_clinvar_variant_rows(clinvar_variants, refseq_transcript, variant_gene)
 
@@ -436,6 +506,7 @@ def bronze_to_silver(logical_date: str, panel: str, lake_uri: str | None = None)
         silver_uri("clinvar_variant"), panel, logical_date,
     )
     for table, df in [
+        ("clinvar_variant_disease", variant_disease),
         ("clinvar_variant_gene", variant_gene),
         ("ncbi_gene", ncbi_gene),
         ("refseq_transcript", refseq_transcript),
