@@ -7,16 +7,21 @@ from transformations import SPEC
 from transformations.silver_io import read_silver
 
 # Rang de confiance publié par ClinVar pour chaque statut de revue (0 à 4 étoiles).
-# Correspondance externe, pas un regroupement inventé ici.
+# Correspondance externe, pas un regroupement inventé ici. Vocabulaire ClinVar complet ;
+# "-" est délibérément absent (donc `replace_strict(..., default=None)` le laisse nul) :
+# "-" signifie que ClinVar n'a donné aucun statut de revue, et 0 étoile affirmerait à
+# tort une revue à zéro étoile là où la source ne dit rien.
 _REVIEW_STATUS_STARS = {
     "practice guideline": 4,
     "reviewed by expert panel": 3,
     "criteria provided, multiple submitters, no conflicts": 2,
-    "criteria provided, conflicting classifications": 1,
     "criteria provided, single submitter": 1,
+    "criteria provided, conflicting classifications": 1,
     "no assertion criteria provided": 0,
+    "no assertion provided": 0,
     "no classification provided": 0,
     "no classification for the single variant": 0,
+    "no classifications from unflagged records": 0,
 }
 
 
@@ -27,9 +32,12 @@ def gold_table_uri(table: str, lake_uri: str | None = None) -> str:
 def build_fact_variant(
     variants: pl.DataFrame, variant_gene: pl.DataFrame, month: str
 ) -> pl.DataFrame:
-    """Un variant courant par ligne. La jointure sur `clinvar_variant_gene` donne le
-    gène du panel ; un variant rattaché à deux gènes du panel produit deux lignes —
-    d'où un contrôle qualité sur le nombre d'`alleleid` distincts, pas de lignes."""
+    """Une ligne par (variant courant, gène du panel) : la jointure sur
+    `clinvar_variant_gene` donne le gène du panel, et un variant rattaché à deux gènes
+    du panel produit deux lignes avec le même `alleleid` et des `gene_symbol`
+    différents — d'où un contrôle qualité sur le nombre d'`alleleid` distincts, pas de
+    lignes. En pratique cela équivaut à une ligne par variant : aucun variant des deux
+    panels ne se rattache aujourd'hui à deux gènes du panel."""
     return (
         variants.filter(pl.col("is_current"))
         .join(variant_gene.select("alleleid", "gene_symbol"), on="alleleid", how="left")
