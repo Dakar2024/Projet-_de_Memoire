@@ -87,10 +87,12 @@ def test_render_gene_document_mentions_the_gene_and_its_context():
 
 
 def test_render_gene_document_truncates_a_long_summary_on_a_word_boundary():
-    # Longest real NCBI summary in this panel is 1253 chars; this is comfortably above
-    # MAX_SUMMARY_CHARS (800) and repeats a fixed-width token so the word boundary is
-    # easy to reason about.
-    long_summary = "word " * 200  # 1000 chars
+    # "banana " has a 7-char period, which does not divide MAX_SUMMARY_CHARS (800)
+    # evenly (800 = 114*7 + 2): character 800 falls 2 letters into the 115th
+    # "banana", i.e. mid-token, so the backward search for a space is genuinely
+    # exercised (unlike a period that divides 800 evenly, where the cut would
+    # already land on a space).
+    long_summary = "banana " * 150  # 1050 chars
     gene = {
         "gene_symbol": "BRCA1", "description": "BRCA1 DNA repair associated",
         "maplocation": "17q21.31", "summary": long_summary.strip(),
@@ -102,6 +104,39 @@ def test_render_gene_document_truncates_a_long_summary_on_a_word_boundary():
     assert summary_line.endswith(" …")
     assert len(summary_line) <= MAX_SUMMARY_CHARS + len(" …")
     assert not summary_line[: -len(" …")].endswith(" ")
+    # Pin the exact cut point: 114 full "banana" words, trimmed of the trailing
+    # partial "ba" from the 115th occurrence.
+    assert summary_line == ("banana " * 114).rstrip() + " …"
+
+
+def test_render_gene_document_truncates_at_the_char_cap_when_no_space_exists():
+    # No space anywhere in the summary: there is no word boundary to honour within
+    # MAX_SUMMARY_CHARS, so the documented fallback is a hard cut at the character
+    # cap, still followed by the ellipsis.
+    long_summary = "x" * 850
+    gene = {
+        "gene_symbol": "BRCA1", "description": "BRCA1 DNA repair associated",
+        "maplocation": "17q21.31", "summary": long_summary,
+    }
+
+    text = render_gene_document(gene, [], [])
+    summary_line = text.split("\n")[1]
+
+    assert summary_line == ("x" * MAX_SUMMARY_CHARS) + " …"
+
+
+def test_render_gene_document_summary_at_exactly_the_cap_is_untouched():
+    exact_summary = "a" * MAX_SUMMARY_CHARS
+    gene = {
+        "gene_symbol": "BRCA1", "description": "BRCA1 DNA repair associated",
+        "maplocation": "17q21.31", "summary": exact_summary,
+    }
+
+    text = render_gene_document(gene, [], [])
+    summary_line = text.split("\n")[1]
+
+    assert summary_line == exact_summary
+    assert "…" not in summary_line
 
 
 def test_render_gene_document_leaves_a_short_summary_untouched():

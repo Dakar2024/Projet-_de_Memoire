@@ -58,13 +58,23 @@ def _format_disease(disease: dict) -> str:
 def _truncate_summary(summary: str) -> str:
     """Coupe `summary` à `MAX_SUMMARY_CHARS` caractères au plus, sur une frontière de
     mot, suivi de " …" quand une coupe a eu lieu. Déterministe : dépend uniquement de
-    `summary`, jamais d'un état externe (horloge, aléa, ordre d'itération)."""
+    `summary`, jamais d'un état externe (horloge, aléa, ordre d'itération).
+
+    Cas limite explicite : si les `MAX_SUMMARY_CHARS` premiers caractères ne
+    contiennent aucun espace (liste d'identifiants, texte sans espaces,
+    enregistrement malformé...), il n'existe aucune frontière de mot à respecter
+    dans la fenêtre autorisée ; on coupe alors au caractère `MAX_SUMMARY_CHARS`
+    tel quel plutôt que de chercher au-delà (ce qui romprait le plafond de
+    longueur). C'est un choix assumé, pas un repli silencieux : la coupe reste au
+    plus stricte à `MAX_SUMMARY_CHARS` caractères dans tous les cas."""
     if len(summary) <= MAX_SUMMARY_CHARS:
         return summary
     cut = summary[:MAX_SUMMARY_CHARS]
     last_space = cut.rfind(" ")
     if last_space != -1:
         cut = cut[:last_space]
+    # Sinon (`last_space == -1`) : pas d'espace trouvé, coupe brute assumée au
+    # caractère `MAX_SUMMARY_CHARS` — voir la docstring ci-dessus.
     return f"{cut} …"
 
 
