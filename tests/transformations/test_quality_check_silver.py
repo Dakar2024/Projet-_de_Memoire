@@ -6,8 +6,9 @@ from transformations.bronze_to_silver import _write_clinvar_variant, _write_silv
 from transformations.quality_check_silver import SilverQualityError, quality_check_silver
 
 ALL_TABLES = [
-    "clinvar_variant", "clinvar_variant_gene", "ncbi_gene", "refseq_transcript",
-    "medgen_concept", "medgen_mim", "medgen_inheritance", "hpo_gene_phenotype", "hpo_term",
+    "clinvar_variant", "clinvar_variant_gene", "clinvar_variant_disease", "ncbi_gene",
+    "refseq_transcript", "medgen_concept", "medgen_mim", "medgen_inheritance",
+    "hpo_gene_phenotype", "hpo_term",
 ]
 
 _GENE_BY_PANEL = {"brca": BREAST_CANCER_GENES[0], "sickle": SICKLE_CELL_GENES[0]}
