@@ -1,12 +1,17 @@
+import polars as pl
 import pytest
 
+from ingestion.config import BREAST_CANCER_GENES
+from transformations.bronze_to_silver import _write_silver_snapshot
 from transformations.silver_to_gold_rag import (
     MAX_PHENOTYPES,
     MAX_SUMMARY_CHARS,
     chunk_id,
+    documents_uri,
     format_list,
     render_gene_document,
     render_variant_document,
+    silver_to_gold_rag,
 )
 
 VARIANT = {
@@ -161,3 +166,127 @@ def test_render_gene_document_truncation_is_deterministic():
     second = render_gene_document(gene, [], [])
 
     assert first == second
+
+
+def _seed_silver(lake, panel="brca", significance="Pathogenic", extra_variant=False):
+    """Silver minimal mais complet pour un run Gold : un variant, sa maladie, son
+    gène, un phénotype."""
+    gene = BREAST_CANCER_GENES[0]
+    variants = [{
+        "alleleid": "1", "name": f"NM_007294.4({gene}):c.116G>A", "genesymbol": gene,
+        "cytogenetic": "17q21.31", "rs_dbsnp": 80357498, "variationid": "37392",
+        "type": "single nucleotide variant", "clinicalsignificance": significance,
+        "reviewstatus": "criteria provided", "numbersubmitters": "21",
+        "lastevaluated": "Jul 14, 2026", "hgvs_c": "c.116G>A", "hgvs_p": "p.Cys39Tyr",
+        "panel": panel, "valid_from": "2026-09-01", "valid_to": None, "is_current": True,
+    }]
+    if extra_variant:
+        variants.append({**variants[0], "alleleid": "2", "variationid": "37393"})
+    # `schema_overrides` : sur ce fixture d'un seul variant (par défaut), une colonne
+    # entièrement `None` (`valid_to`) s'infère en `Null`, type que `write_delta`
+    # refuse — même raison que documentée dans `bronze_to_silver.py` pour les
+    # colonnes Silver réelles ; non mentionné dans la maquette du brief, corrigé ici
+    # pour que le fixture écrive réellement.
+    _write_silver_snapshot(
+        pl.DataFrame(variants, schema_overrides={"valid_to": pl.Utf8}),
+        f"{lake}/silver/clinvar_variant", panel)
+    _write_silver_snapshot(
+        pl.DataFrame([{"alleleid": v["alleleid"], "gene_symbol": gene, "panel": panel} for v in variants]),
+        f"{lake}/silver/clinvar_variant_gene", panel)
+    _write_silver_snapshot(
+        pl.DataFrame(
+            [{"alleleid": "1", "disease_name": "Hereditary cancer", "medgen_cui": "C1",
+              "omim_id": "604370", "orpha_id": None, "mondo_id": None, "panel": panel}],
+            schema_overrides={"orpha_id": pl.Utf8, "mondo_id": pl.Utf8}),
+        f"{lake}/silver/clinvar_variant_disease", panel)
+    _write_silver_snapshot(
+        pl.DataFrame([{"cui": "C1", "mode_inheritance": "Autosomal dominant", "panel": panel}]),
+        f"{lake}/silver/medgen_inheritance", panel)
+    # Ruling coordinateur (tâche 4) : la tâche 6 (silver_to_gold_analytique) réutilise
+    # ce même fixture et lit medgen_concept pour la dimension maladie. Semé ici pour
+    # que ce fixture reste le point d'entrée unique des deux cibles Gold.
+    _write_silver_snapshot(
+        pl.DataFrame([{"cui": "C1", "clinical_summary": "A hereditary cancer predisposition syndrome.",
+                       "panel": panel}]),
+        f"{lake}/silver/medgen_concept", panel)
+    _write_silver_snapshot(
+        pl.DataFrame([{"gene_symbol": gene, "name": gene, "description": "BRCA1 DNA repair associated",
+                       "maplocation": "17q21.31", "summary": "Encodes a nuclear phosphoprotein.",
+                       "panel": panel}]),
+        f"{lake}/silver/ncbi_gene", panel)
+    _write_silver_snapshot(
+        pl.DataFrame(
+            [{"gene_symbol": gene, "hpo_id": "HP:0003002", "hpo_name": "Breast carcinoma",
+              "disease_id": "OMIM:604370", "frequency": None, "ncbi_gene_id": "672",
+              "panel": panel}],
+            schema_overrides={"frequency": pl.Utf8}),
+        f"{lake}/silver/hpo_gene_phenotype", panel)
+    _write_silver_snapshot(
+        pl.DataFrame(
+            [{"gene_symbol": gene, "hpo_id": "HP:0003002", "hpo_name": "Breast carcinoma",
+              "definition": "A tumor of the breast.", "synonyms": [], "xrefs": [],
+              "panel": panel}],
+            schema_overrides={"synonyms": pl.List(pl.Utf8), "xrefs": pl.List(pl.Utf8)}),
+        f"{lake}/silver/hpo_term", panel)
+    return lake
+
+
+def test_silver_to_gold_rag_writes_one_document_per_variant_and_gene(tmp_path):
+    lake = _seed_silver(f"file://{tmp_path}/lake")
+
+    silver_to_gold_rag("2026-09-01", "brca", lake_uri=lake)
+
+    docs = pl.read_delta(documents_uri(lake))
+    assert docs.filter(pl.col("doc_type") == "variant")["doc_id"].to_list() == ["clinvar:1"]
+    assert docs.filter(pl.col("doc_type") == "gene").height == len(BREAST_CANCER_GENES)
+    variant = docs.filter(pl.col("doc_id") == "clinvar:1").row(0, named=True)
+    assert variant["clinvar_url"] == "https://www.ncbi.nlm.nih.gov/clinvar/variation/37392/"
+    assert variant["source_version"] == "2026-09"
+    assert "Hereditary cancer (OMIM 604370, inheritance: Autosomal dominant)" in variant["text"]
+    assert "Breast carcinoma" in variant["text"]
+
+
+def test_silver_to_gold_rag_replay_changes_nothing(tmp_path):
+    lake = _seed_silver(f"file://{tmp_path}/lake")
+    silver_to_gold_rag("2026-09-01", "brca", lake_uri=lake)
+    before = pl.read_delta(documents_uri(lake)).sort("doc_id")
+
+    silver_to_gold_rag("2026-09-01", "brca", lake_uri=lake)
+
+    assert pl.read_delta(documents_uri(lake)).sort("doc_id").equals(before)
+
+
+def test_silver_to_gold_rag_updates_a_reclassified_variant_in_place(tmp_path):
+    lake = _seed_silver(f"file://{tmp_path}/lake")
+    silver_to_gold_rag("2026-09-01", "brca", lake_uri=lake)
+    _seed_silver(lake, significance="Benign")
+
+    silver_to_gold_rag("2026-10-01", "brca", lake_uri=lake)
+
+    docs = pl.read_delta(documents_uri(lake)).filter(pl.col("doc_id") == "clinvar:1")
+    assert docs.height == 1
+    assert "Benign" in docs.row(0, named=True)["text"]
+
+
+def test_silver_to_gold_rag_deletes_documents_whose_variant_disappeared(tmp_path):
+    lake = _seed_silver(f"file://{tmp_path}/lake", extra_variant=True)
+    silver_to_gold_rag("2026-09-01", "brca", lake_uri=lake)
+    _seed_silver(lake, extra_variant=False)
+
+    silver_to_gold_rag("2026-10-01", "brca", lake_uri=lake)
+
+    docs = pl.read_delta(documents_uri(lake))
+    assert "clinvar:2" not in docs["doc_id"].to_list()
+
+
+def test_silver_to_gold_rag_leaves_the_other_panel_untouched(tmp_path):
+    lake = _seed_silver(f"file://{tmp_path}/lake")
+    silver_to_gold_rag("2026-09-01", "brca", lake_uri=lake)
+    documents = pl.read_delta(documents_uri(lake))
+    sickle = documents.head(1).with_columns(
+        pl.lit("sickle").alias("panel"), pl.lit("clinvar:999").alias("doc_id"))
+    sickle.write_delta(documents_uri(lake), mode="append")
+
+    silver_to_gold_rag("2026-10-01", "brca", lake_uri=lake)
+
+    assert "clinvar:999" in pl.read_delta(documents_uri(lake))["doc_id"].to_list()

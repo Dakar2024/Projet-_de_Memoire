@@ -12,7 +12,12 @@ from __future__ import annotations
 
 import hashlib
 
-from transformations import SPEC
+import polars as pl
+from deltalake import DeltaTable
+
+from ingestion.config import PANEL_GENES
+from ingestion.storage import layer_uri, storage_options
+from transformations.silver_io import read_silver
 
 # BioBERT tronque au-delà de 512 tokens : un document plus long serait vectorisé
 # amputé, sans erreur visible. Ces plafonds sont à revoir si le modèle change.
@@ -120,17 +125,153 @@ def render_gene_document(gene: dict, diseases: list[str], phenotypes: list[str])
     return "\n".join(lines)
 
 
-def silver_to_gold_rag(
-    logical_date: str, panel: str, lake_uri: str | None = None
-) -> None:
-    """Construit `gold/rag/` (Delta) : un document par variant pour le RAG.
+def documents_uri(lake_uri: str | None = None) -> str:
+    return f"{layer_uri('gold', lake_uri=lake_uri)}/rag/documents"
 
-    Chaque document porte le contexte du gène, des maladies et des phénotypes, et ses
-    références de citation (accession ClinVar, version, date de collecte).
-    `chunk_id` est un hash déterministe du contenu, pour ne ré-embedder par `MERGE`
-    que les documents modifiés. Lit le Silver, jamais `gold/analytique/`.
 
-    Interdit : nettoyer. Le Silver est la seule couche qui nettoie ; une donnée qui
-    arrive ici incorrecte se corrige dans `bronze_to_silver`, pas dans le Gold.
-    """
-    raise NotImplementedError(f"silver_to_gold_rag : implémenté par le sous-projet D ({SPEC}, §7)")
+def _previous_significance(variants: pl.DataFrame) -> dict[str, tuple[str, str]]:
+    """Dernière signification clôturée de chaque alleleid, d'après l'historique SCD2.
+    Un variant jamais reclassé est absent du dictionnaire."""
+    closed = variants.filter(pl.col("valid_to").is_not_null())
+    if closed.is_empty():
+        return {}
+    latest = closed.sort("valid_to").group_by("alleleid").last()
+    return {
+        row["alleleid"]: (row["clinicalsignificance"], row["valid_to"])
+        for row in latest.iter_rows(named=True)
+    }
+
+
+def _phenotypes_by_disease(hpo_gene_phenotype: pl.DataFrame) -> dict[tuple[str, str], list[str]]:
+    """(gène, identifiant de maladie) -> noms de phénotypes, triés. `disease_id` est
+    préfixé `OMIM:` ou `ORPHA:` — les deux formes existent dans HPO."""
+    mapping: dict[tuple[str, str], list[str]] = {}
+    for row in hpo_gene_phenotype.sort("hpo_id").iter_rows(named=True):
+        key = (row["gene_symbol"], row["disease_id"])
+        mapping.setdefault(key, []).append(row["hpo_name"])
+    return mapping
+
+
+def build_documents(logical_date: str, panel: str, lake_uri: str | None = None) -> pl.DataFrame:
+    """Un document par variant courant, plus un par gène du panel."""
+    variants = read_silver("clinvar_variant", panel, lake_uri)
+    variant_gene = read_silver("clinvar_variant_gene", panel, lake_uri)
+    variant_disease = read_silver("clinvar_variant_disease", panel, lake_uri)
+    inheritance = read_silver("medgen_inheritance", panel, lake_uri)
+    genes_table = read_silver("ncbi_gene", panel, lake_uri)
+    gene_phenotype = read_silver("hpo_gene_phenotype", panel, lake_uri)
+
+    history = _previous_significance(variants)
+    current = variants.filter(pl.col("is_current"))
+    gene_of = dict(variant_gene.select("alleleid", "gene_symbol").iter_rows())
+    inheritance_of = dict(inheritance.select("cui", "mode_inheritance").iter_rows())
+    phenotypes_of = _phenotypes_by_disease(gene_phenotype)
+
+    diseases_of: dict[str, list[dict]] = {}
+    for row in variant_disease.sort("disease_name", "medgen_cui").iter_rows(named=True):
+        diseases_of.setdefault(row["alleleid"], []).append({
+            "disease_name": row["disease_name"],
+            "omim_id": row["omim_id"],
+            "orpha_id": row["orpha_id"],
+            "mode_inheritance": inheritance_of.get(row["medgen_cui"]),
+        })
+
+    source_version = logical_date[:7]
+    rows = []
+    for variant in current.iter_rows(named=True):
+        allele = variant["alleleid"]
+        gene_symbol = gene_of.get(allele, variant["genesymbol"])
+        diseases = diseases_of.get(allele, [])
+        phenotypes: list[str] = []
+        for disease in diseases:
+            for prefix, key in (("OMIM:", "omim_id"), ("ORPHA:", "orpha_id")):
+                if disease[key]:
+                    phenotypes += phenotypes_of.get((gene_symbol, f"{prefix}{disease[key]}"), [])
+        phenotypes = sorted(dict.fromkeys(phenotypes))
+        text = render_variant_document(
+            {**variant, "gene_symbol": gene_symbol}, diseases, phenotypes, history.get(allele)
+        )
+        rows.append({
+            "doc_id": f"clinvar:{allele}", "chunk_id": chunk_id(text), "doc_type": "variant",
+            "text": text, "gene_symbol": gene_symbol,
+            "clinical_significance": variant["clinicalsignificance"],
+            "review_status": variant["reviewstatus"],
+            "rs_dbsnp": variant["rs_dbsnp"], "hgvs_c": variant["hgvs_c"],
+            "hgvs_p": variant["hgvs_p"], "clinvar_variation_id": variant["variationid"],
+            "clinvar_url": CLINVAR_VARIATION_URL.format(variation_id=variant["variationid"]),
+            "source_version": source_version, "collected_at": logical_date, "panel": panel,
+        })
+
+    gene_rows = {row["gene_symbol"]: row for row in genes_table.iter_rows(named=True)}
+    for gene_symbol in PANEL_GENES[panel]:
+        gene = gene_rows.get(gene_symbol, {"gene_symbol": gene_symbol})
+        gene_diseases = sorted({
+            disease["disease_name"]
+            for allele, diseases in diseases_of.items()
+            for disease in diseases
+            if gene_of.get(allele) == gene_symbol and disease["disease_name"]
+        })
+        gene_phenotypes = sorted({
+            name
+            for (symbol, _), names in phenotypes_of.items() if symbol == gene_symbol
+            for name in names
+        })
+        text = render_gene_document({**gene, "gene_symbol": gene_symbol}, gene_diseases, gene_phenotypes)
+        rows.append({
+            "doc_id": f"gene:{gene_symbol}", "chunk_id": chunk_id(text), "doc_type": "gene",
+            "text": text, "gene_symbol": gene_symbol, "clinical_significance": None,
+            "review_status": None, "rs_dbsnp": None, "hgvs_c": None, "hgvs_p": None,
+            "clinvar_variation_id": None, "clinvar_url": None,
+            "source_version": source_version, "collected_at": logical_date, "panel": panel,
+        })
+
+    return pl.DataFrame(rows, schema=_DOCUMENT_SCHEMA)
+
+
+# Schéma explicite : sans lui, une colonne entièrement nulle (rs_dbsnp sur un run
+# sans variant, par exemple) serait typée Null et ferait échouer le MERGE.
+_DOCUMENT_SCHEMA = {
+    "doc_id": pl.Utf8, "chunk_id": pl.Utf8, "doc_type": pl.Utf8, "text": pl.Utf8,
+    "gene_symbol": pl.Utf8, "clinical_significance": pl.Utf8, "review_status": pl.Utf8,
+    "rs_dbsnp": pl.Int64, "hgvs_c": pl.Utf8, "hgvs_p": pl.Utf8,
+    "clinvar_variation_id": pl.Utf8, "clinvar_url": pl.Utf8, "source_version": pl.Utf8,
+    "collected_at": pl.Utf8, "panel": pl.Utf8,
+}
+
+
+def write_documents(documents: pl.DataFrame, panel: str, lake_uri: str | None = None) -> None:
+    """`MERGE` sur `doc_id`, restreint au panel : un document inchangé n'est pas
+    réécrit, un document disparu du Silver est supprimé. Vérifié à la main sur
+    delta-rs 1.6.3, y compris l'absence de nouvelle version Delta sur un rejeu."""
+    uri = documents_uri(lake_uri)
+    options = storage_options(uri)
+    if not DeltaTable.is_deltatable(uri, storage_options=options):
+        documents.write_delta(
+            uri, mode="overwrite", storage_options=options,
+            delta_write_options={"partition_by": ["panel"]},
+        )
+        return
+
+    merger = documents.write_delta(
+        uri, mode="merge", storage_options=options,
+        delta_merge_options={
+            "predicate": "target.doc_id = source.doc_id AND target.panel = source.panel",
+            "source_alias": "source", "target_alias": "target",
+        },
+    )
+    (
+        merger.when_matched_update(
+            updates={column: f"source.{column}" for column in _DOCUMENT_SCHEMA},
+            predicate="target.chunk_id <> source.chunk_id",
+        )
+        .when_not_matched_insert_all()
+        .when_not_matched_by_source_delete(predicate=f"target.panel = '{panel}'")
+        .execute()
+    )
+
+
+def silver_to_gold_rag(logical_date: str, panel: str, lake_uri: str | None = None) -> None:
+    """Construit `gold/rag/documents` pour ce panel. Lit le Silver, jamais
+    `gold/analytique`. Ne nettoie rien : une donnée incorrecte se corrige dans
+    `bronze_to_silver`."""
+    write_documents(build_documents(logical_date, panel, lake_uri), panel, lake_uri)
