@@ -6,6 +6,8 @@ from transformations.bronze_to_silver import _write_silver_snapshot
 from transformations.silver_to_gold_rag import (
     MAX_PHENOTYPES,
     MAX_SUMMARY_CHARS,
+    _previous_significance,
+    build_documents,
     chunk_id,
     documents_uri,
     format_list,
@@ -52,12 +54,81 @@ def test_render_variant_document_states_the_reclassification_history():
     assert "Classification history: previously Pathogenic until 2026-09-01." in text
 
 
+def test_previous_significance_omits_entries_whose_classification_did_not_really_change():
+    """Silver's SCD2 closes a row when `clinicalsignificance`, `reviewstatus` or
+    `lastevaluated` changes — not only on a real reclassification. Allele 1's
+    review status refreshed but its classification stayed "Pathogenic" in both
+    rows: it must not show up as reclassification history. Allele 2's
+    classification genuinely changed and must."""
+    variants = pl.DataFrame([
+        {"alleleid": "1", "clinicalsignificance": "Pathogenic",
+         "valid_from": "2026-08-01", "valid_to": "2026-09-01", "is_current": False},
+        {"alleleid": "1", "clinicalsignificance": "Pathogenic",
+         "valid_from": "2026-09-01", "valid_to": None, "is_current": True},
+        {"alleleid": "2", "clinicalsignificance": "Pathogenic",
+         "valid_from": "2026-08-01", "valid_to": "2026-09-01", "is_current": False},
+        {"alleleid": "2", "clinicalsignificance": "Benign",
+         "valid_from": "2026-09-01", "valid_to": None, "is_current": True},
+    ])
+
+    history = _previous_significance(variants)
+
+    assert "1" not in history
+    assert history["2"] == ("Pathogenic", "2026-09-01")
+
+
 def test_render_variant_document_omits_sections_that_have_no_content():
     text = render_variant_document(VARIANT, [], [], None)
 
     assert "Associated conditions" not in text
     assert "Related phenotypes" not in text
     assert "Classification history" not in text
+
+
+def test_render_variant_document_omits_the_dbsnp_clause_for_the_minus_one_sentinel():
+    """Silver deliberately keeps ClinVar's `-1` sentinel for "no dbSNP id". Printing
+    it literally would read "dbSNP rs-1.", which is wrong; the clause must be
+    omitted instead, while the rest of the line (ClinVar Variation ID, Type) stays."""
+    variant = {**VARIANT, "rs_dbsnp": -1}
+
+    text = render_variant_document(variant, [], [], None)
+
+    assert "dbSNP" not in text
+    assert "rs-1" not in text
+    assert "ClinVar Variation ID 37392" in text
+
+
+def test_render_variant_document_omits_last_evaluated_when_it_is_the_dash_sentinel():
+    variant = {**VARIANT, "lastevaluated": "-"}
+
+    text = render_variant_document(variant, [], [], None)
+
+    assert "Last evaluated" not in text
+
+
+def test_render_variant_document_omits_review_status_when_it_is_the_dash_sentinel():
+    variant = {**VARIANT, "reviewstatus": "-"}
+
+    text = render_variant_document(variant, [], [], None)
+
+    assert "Review status" not in text
+
+
+def test_render_variant_document_omits_clinical_significance_when_it_is_the_dash_sentinel():
+    variant = {**VARIANT, "clinicalsignificance": "-"}
+
+    text = render_variant_document(variant, [], [], None)
+
+    assert "Clinical significance" not in text
+
+
+def test_render_variant_document_omits_the_chromosome_clause_when_cytogenetic_is_null():
+    variant = {**VARIANT, "cytogenetic": None}
+
+    text = render_variant_document(variant, [], [], None)
+
+    assert "chromosome" not in text
+    assert "None" not in text
 
 
 def test_format_list_caps_and_counts_the_remainder():
@@ -168,6 +239,27 @@ def test_render_gene_document_truncation_is_deterministic():
     assert first == second
 
 
+def test_previous_significance_ties_are_broken_by_maintain_order_not_arbitrarily():
+    """Two closed rows for the same allele, tied on `valid_to`: `sort(...,
+    maintain_order=True).group_by(..., maintain_order=True).last()` guarantees the
+    row that appears last in `variants`' own row order wins, not whichever row an
+    unordered hash-based group_by happens to visit last. Pins the deterministic
+    contract so the chosen tie-break can never silently flip and churn the
+    document hash for ~97 000 documents on a replay."""
+    variants = pl.DataFrame([
+        {"alleleid": "1", "clinicalsignificance": "Pathogenic",
+         "valid_from": "2026-08-01", "valid_to": "2026-09-01", "is_current": False},
+        {"alleleid": "1", "clinicalsignificance": "Likely pathogenic",
+         "valid_from": "2026-08-15", "valid_to": "2026-09-01", "is_current": False},
+        {"alleleid": "1", "clinicalsignificance": "Benign",
+         "valid_from": "2026-09-01", "valid_to": None, "is_current": True},
+    ])
+
+    history = _previous_significance(variants)
+
+    assert history["1"] == ("Likely pathogenic", "2026-09-01")
+
+
 def _seed_silver(lake, panel="brca", significance="Pathogenic", extra_variant=False):
     """Silver minimal mais complet pour un run Gold : un variant, sa maladie, son
     gène, un phénotype."""
@@ -256,6 +348,35 @@ def test_silver_to_gold_rag_replay_changes_nothing(tmp_path):
     silver_to_gold_rag("2026-09-01", "brca", lake_uri=lake)
 
     assert pl.read_delta(documents_uri(lake)).sort("doc_id").equals(before)
+
+
+def test_build_documents_disease_order_is_stable_across_calls_with_tied_sort_keys(tmp_path):
+    """`diseases_of` sorts `clinvar_variant_disease` on (disease_name, medgen_cui)
+    before folding it into a per-allele list; that order feeds directly into the
+    rendered "Associated conditions" clause and therefore the document hash. Two
+    rows tied on both sort keys (same disease, same CUI, different OMIM id) must
+    keep a fixed relative order across repeated builds — an unstable tie-break
+    would churn the hash of every document carrying that disease on every replay,
+    for no content reason."""
+    lake = f"file://{tmp_path}/lake"
+    _seed_silver(lake)
+    tied_diseases = pl.DataFrame(
+        [
+            {"alleleid": "1", "disease_name": "Hereditary cancer", "medgen_cui": "C1",
+             "omim_id": "604370", "orpha_id": None, "mondo_id": None, "panel": "brca"},
+            {"alleleid": "1", "disease_name": "Hereditary cancer", "medgen_cui": "C1",
+             "omim_id": "999999", "orpha_id": None, "mondo_id": None, "panel": "brca"},
+        ],
+        schema_overrides={"orpha_id": pl.Utf8, "mondo_id": pl.Utf8},
+    )
+    _write_silver_snapshot(tied_diseases, f"{lake}/silver/clinvar_variant_disease", "brca")
+
+    first = build_documents("2026-09-01", "brca", lake_uri=lake)
+    second = build_documents("2026-09-01", "brca", lake_uri=lake)
+
+    first_text = first.filter(pl.col("doc_id") == "clinvar:1").row(0, named=True)["text"]
+    second_text = second.filter(pl.col("doc_id") == "clinvar:1").row(0, named=True)["text"]
+    assert first_text == second_text
 
 
 def test_silver_to_gold_rag_updates_a_reclassified_variant_in_place(tmp_path):

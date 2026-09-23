@@ -3,9 +3,8 @@ Voir docs/superpowers/specs/2026-09-22-sous-projet-d-silver-gold-design.md.
 
 Les fonctions de rendu ci-dessous sont pures (aucune E/S, aucune lecture du lac) :
 c'est le gabarit, la partie la plus sujette aux retouches, qui doit être testable
-sans lac. L'orchestration (lecture du Silver, écriture Delta par `MERGE`) est la
-tâche 4 du sous-projet D et vit dans `silver_to_gold_rag` ci-dessous, qui reste un
-stub tant que cette tâche n'est pas faite.
+sans lac. L'orchestration (lecture du Silver, écriture Delta par `MERGE`) vit dans
+`silver_to_gold_rag` ci-dessous.
 """
 
 from __future__ import annotations
@@ -50,6 +49,16 @@ def format_list(values: list[str], cap: int) -> str:
     return f"{kept}; and {remainder} more" if remainder > 0 else kept
 
 
+def _blank(value: object) -> bool:
+    """True when `value` carries no information worth rendering: null, empty
+    string, ClinVar's literal "-" placeholder (real in `reviewstatus` and
+    `lastevaluated`), or the `-1` sentinel Silver keeps for "no dbSNP id". Gold may
+    omit these — that is shaping for the reader, not altering the value, which
+    stays untouched in the columns themselves; only the rendered text drops the
+    clause."""
+    return value is None or value == "" or value == "-" or value == -1
+
+
 def _format_disease(disease: dict) -> str:
     details = []
     if disease.get("omim_id"):
@@ -90,16 +99,33 @@ def render_variant_document(
     previous_significance: tuple[str, str] | None,
 ) -> str:
     """Texte anglais d'un document `variant`. Fonction pure : aucune E/S, pour que le
-    gabarit — la partie la plus sujette aux retouches — soit testable sans lac."""
-    lines = [
-        f"Variant {variant['name']}, gene {variant['gene_symbol']}, "
-        f"chromosome {variant['cytogenetic']}.",
-        f"dbSNP rs{variant['rs_dbsnp']}. ClinVar Variation ID {variant['variationid']}. "
-        f"Type: {variant['type']}.",
-        f"Clinical significance: {variant['clinicalsignificance']}.",
-        f"Review status: {variant['reviewstatus']} ({variant['numbersubmitters']} submitters).",
-        f"Last evaluated: {variant['lastevaluated']}.",
-    ]
+    gabarit — la partie la plus sujette aux retouches — soit testable sans lac.
+
+    Chaque clause dont la valeur source est absente — nulle, vide, le "-" littéral
+    de ClinVar (2413 variants sur ce panel ont `reviewstatus == "-"` aujourd'hui),
+    ou le `-1` que Silver garde comme sentinelle "pas d'identifiant dbSNP" — est
+    omise plutôt que rendue littéralement ("rsNone", "dbSNP rs-1", "Review status:
+    -" n'apprennent rien au lecteur ni au modèle). Aucune valeur source n'est
+    modifiée ; seul le texte rendu s'adapte."""
+    header = f"Variant {variant['name']}, gene {variant['gene_symbol']}"
+    if not _blank(variant.get("cytogenetic")):
+        header += f", chromosome {variant['cytogenetic']}"
+    header += "."
+
+    id_line = ""
+    if not _blank(variant.get("rs_dbsnp")):
+        id_line += f"dbSNP rs{variant['rs_dbsnp']}. "
+    id_line += f"ClinVar Variation ID {variant['variationid']}. Type: {variant['type']}."
+
+    lines = [header, id_line]
+    if not _blank(variant.get("clinicalsignificance")):
+        lines.append(f"Clinical significance: {variant['clinicalsignificance']}.")
+    if not _blank(variant.get("reviewstatus")):
+        lines.append(
+            f"Review status: {variant['reviewstatus']} ({variant['numbersubmitters']} submitters)."
+        )
+    if not _blank(variant.get("lastevaluated")):
+        lines.append(f"Last evaluated: {variant['lastevaluated']}.")
     if previous_significance is not None:
         previous, closed_on = previous_significance
         lines.append(f"Classification history: previously {previous} until {closed_on}.")
@@ -130,15 +156,37 @@ def documents_uri(lake_uri: str | None = None) -> str:
 
 
 def _previous_significance(variants: pl.DataFrame) -> dict[str, tuple[str, str]]:
-    """Dernière signification clôturée de chaque alleleid, d'après l'historique SCD2.
-    Un variant jamais reclassé est absent du dictionnaire."""
+    """Dernière signification RÉELLEMENT différente de chaque alleleid, d'après
+    l'historique SCD2. Le SCD2 Silver clôture une ligne dès que `clinicalsignificance`,
+    `reviewstatus` OU `lastevaluated` change — donc la dernière ligne clôturée peut
+    très bien porter la même signification que la ligne courante (un simple
+    rafraîchissement du statut de revue ou de la date d'évaluation). Un variant
+    jamais reclassé, ou dont la seule clôture n'a pas changé la signification, est
+    absent du dictionnaire : sinon le document affirmerait à tort une
+    reclassification.
+
+    `maintain_order=True` sur le tri et le regroupement : sans lui, `.last()` sur
+    un groupe dont plusieurs lignes partagent le même `valid_to` (une clôture
+    multiple le même jour) n'a aucune garantie d'ordre documentée par Polars — un
+    choix instable ferait varier le texte, donc le hash du document, sans que rien
+    n'ait changé dans les données."""
     closed = variants.filter(pl.col("valid_to").is_not_null())
     if closed.is_empty():
         return {}
-    latest = closed.sort("valid_to").group_by("alleleid").last()
+    latest = (
+        closed.sort("valid_to", maintain_order=True)
+        .group_by("alleleid", maintain_order=True)
+        .last()
+    )
+    current = dict(
+        variants.filter(pl.col("is_current"))
+        .select("alleleid", "clinicalsignificance")
+        .iter_rows()
+    )
     return {
         row["alleleid"]: (row["clinicalsignificance"], row["valid_to"])
         for row in latest.iter_rows(named=True)
+        if row["clinicalsignificance"] != current.get(row["alleleid"])
     }
 
 
@@ -168,7 +216,14 @@ def build_documents(logical_date: str, panel: str, lake_uri: str | None = None) 
     phenotypes_of = _phenotypes_by_disease(gene_phenotype)
 
     diseases_of: dict[str, list[dict]] = {}
-    for row in variant_disease.sort("disease_name", "medgen_cui").iter_rows(named=True):
+    # `maintain_order=True` : deux lignes qui partagent (disease_name, medgen_cui)
+    # (même maladie citée deux fois pour le même variant, avec un OMIM différent
+    # par exemple) n'ont sinon aucun ordre relatif garanti par Polars — un ordre
+    # instable ferait varier le texte rendu, donc le hash du document, sans rien
+    # changer aux données.
+    for row in variant_disease.sort("disease_name", "medgen_cui", maintain_order=True).iter_rows(
+        named=True
+    ):
         diseases_of.setdefault(row["alleleid"], []).append({
             "disease_name": row["disease_name"],
             "omim_id": row["omim_id"],
