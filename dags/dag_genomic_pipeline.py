@@ -138,13 +138,8 @@ def build_panel_dag(panel: str, genes: list[str]) -> DAG:
         def task_silver_to_gold_analytique(sources_date: str) -> None:
             silver_to_gold_analytique(sources_date, panel)
 
-        # Ne prend pas `sources_date` comme argument TaskFlow : ça ajouterait
-        # `resolve_sources_date` à ses dépendances directes, alors que son rôle est de
-        # n'attendre que les deux tâches Gold (déjà dépendantes de `resolve_sources_date`,
-        # qui a donc bien déjà tourné). La date est relue depuis XCom via le contexte.
         @task(task_id="quality_check_gold")
-        def task_quality_check_gold(**context) -> None:
-            sources_date = context["ti"].xcom_pull(task_ids="resolve_sources_date")
+        def task_quality_check_gold(sources_date: str) -> None:
             quality_check_gold(sources_date, panel)
 
         sources_date = task_resolve_sources_date()
@@ -162,7 +157,7 @@ def build_panel_dag(panel: str, genes: list[str]) -> DAG:
         gold_rag = task_silver_to_gold_rag(sources_date)
         gold_analytique = task_silver_to_gold_analytique(sources_date)
         checked_bronze >> silver >> quality >> [gold_rag, gold_analytique]
-        [gold_rag, gold_analytique] >> task_quality_check_gold()
+        [gold_rag, gold_analytique] >> task_quality_check_gold(sources_date)
 
     return dag
 
