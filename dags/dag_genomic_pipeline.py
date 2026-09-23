@@ -12,6 +12,7 @@ from airflow.sdk.exceptions import AirflowFailException
 
 from dags.common.dates import resolve_sources_date
 from dags.common.panels import (
+    GOLD_WRITE_POOL,
     NCBI_POOL,
     PANEL_LABELS,
     PANEL_SOURCES,
@@ -27,6 +28,7 @@ from scripts.ingest_medgen import ingest_medgen
 from scripts.ingest_ncbi_gene import build_client, ingest_ncbi_gene
 from scripts.ingest_refseq import ingest_refseq
 from transformations.bronze_to_silver import bronze_to_silver
+from transformations.quality_check_gold import quality_check_gold
 from transformations.quality_check_silver import quality_check_silver
 from transformations.raw_to_bronze import raw_to_bronze
 from transformations.silver_to_gold_analytique import silver_to_gold_analytique
@@ -128,13 +130,22 @@ def build_panel_dag(panel: str, genes: list[str]) -> DAG:
         def task_quality_check_silver(sources_date: str) -> None:
             quality_check_silver(sources_date, panel)
 
-        @task(task_id="silver_to_gold_rag")
+        @task(task_id="silver_to_gold_rag", pool=GOLD_WRITE_POOL)
         def task_silver_to_gold_rag(sources_date: str) -> None:
             silver_to_gold_rag(sources_date, panel)
 
-        @task(task_id="silver_to_gold_analytique")
+        @task(task_id="silver_to_gold_analytique", pool=GOLD_WRITE_POOL)
         def task_silver_to_gold_analytique(sources_date: str) -> None:
             silver_to_gold_analytique(sources_date, panel)
+
+        # Ne prend pas `sources_date` comme argument TaskFlow : ça ajouterait
+        # `resolve_sources_date` à ses dépendances directes, alors que son rôle est de
+        # n'attendre que les deux tâches Gold (déjà dépendantes de `resolve_sources_date`,
+        # qui a donc bien déjà tourné). La date est relue depuis XCom via le contexte.
+        @task(task_id="quality_check_gold")
+        def task_quality_check_gold(**context) -> None:
+            sources_date = context["ti"].xcom_pull(task_ids="resolve_sources_date")
+            quality_check_gold(sources_date, panel)
 
         sources_date = task_resolve_sources_date()
         checked_raw = task_check_raw(
@@ -148,10 +159,10 @@ def build_panel_dag(panel: str, genes: list[str]) -> DAG:
         checked_bronze = task_check_bronze(bronze)
         silver = task_bronze_to_silver(sources_date)
         quality = task_quality_check_silver(sources_date)
-        checked_bronze >> silver >> quality >> [
-            task_silver_to_gold_rag(sources_date),
-            task_silver_to_gold_analytique(sources_date),
-        ]
+        gold_rag = task_silver_to_gold_rag(sources_date)
+        gold_analytique = task_silver_to_gold_analytique(sources_date)
+        checked_bronze >> silver >> quality >> [gold_rag, gold_analytique]
+        [gold_rag, gold_analytique] >> task_quality_check_gold()
 
     return dag
 

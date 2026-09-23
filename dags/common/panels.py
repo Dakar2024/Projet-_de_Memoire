@@ -39,3 +39,7 @@ NCBI_POOL = "ncbi"
 # premier commit) peut effacer silencieusement le panel de l'autre run. Le pool est
 # créé par le service `airflow-init`, comme `NCBI_POOL`.
 SILVER_WRITE_POOL = "silver_write"
+
+# Les tables Gold sont, comme les Silver, partagées entre les deux panels : le même
+# risque d'écriture concurrente s'applique. Pool créé par le service `airflow-init`.
+GOLD_WRITE_POOL = "gold_write"
