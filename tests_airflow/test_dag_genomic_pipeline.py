@@ -88,7 +88,11 @@ def test_gold_tasks_share_a_single_slot_pool(dag):
 def test_quality_check_gold_runs_after_both_gold_tasks(dag):
     upstream = dag.get_task("quality_check_gold").upstream_task_ids
 
-    assert upstream == {"silver_to_gold_rag", "silver_to_gold_analytique"}
+    assert upstream == {
+        "resolve_sources_date",
+        "silver_to_gold_rag",
+        "silver_to_gold_analytique",
+    }
 
 
 def test_transient_failures_are_retried(dag):
