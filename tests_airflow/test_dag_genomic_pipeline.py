@@ -1,6 +1,6 @@
 import pytest
 
-from dags.common.panels import NCBI_POOL, SILVER_WRITE_POOL, SOURCES_READY
+from dags.common.panels import GOLD_WRITE_POOL, NCBI_POOL, SILVER_WRITE_POOL, SOURCES_READY
 from dags.dag_genomic_pipeline import build_panel_dag
 
 INGESTIONS = {"ingest_ncbi_gene", "ingest_refseq", "ingest_hpo_terms", "ingest_medgen"}
@@ -26,6 +26,7 @@ def test_panel_dag_has_the_expected_tasks(dag):
         "quality_check_silver",
         "silver_to_gold_rag",
         "silver_to_gold_analytique",
+        "quality_check_gold",
     })
 
 
@@ -74,6 +75,20 @@ def test_bronze_to_silver_uses_a_single_slot_pool(dag):
     deux DAGs de panel, déclenchés sur le même Asset SOURCES_READY."""
     assert SILVER_WRITE_POOL == "silver_write"
     assert dag.get_task("bronze_to_silver").pool == SILVER_WRITE_POOL
+
+
+def test_gold_tasks_share_a_single_slot_pool(dag):
+    """Les tables Gold sont partagées entre les deux panels, dont les runs se
+    chevauchent : sans ce pool, deux écritures concurrentes sur la même table Delta
+    peuvent se perdre."""
+    for task_id in ("silver_to_gold_rag", "silver_to_gold_analytique"):
+        assert dag.get_task(task_id).pool == GOLD_WRITE_POOL
+
+
+def test_quality_check_gold_runs_after_both_gold_tasks(dag):
+    upstream = dag.get_task("quality_check_gold").upstream_task_ids
+
+    assert upstream == {"silver_to_gold_rag", "silver_to_gold_analytique"}
 
 
 def test_transient_failures_are_retried(dag):
