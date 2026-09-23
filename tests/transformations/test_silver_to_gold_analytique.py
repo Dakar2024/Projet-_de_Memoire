@@ -56,6 +56,12 @@ def _minimal_dimension_inputs():
     ])
     return genes, variant_disease, inheritance, concepts, hpo_term, gene_phenotype
 
+
+def _empty_fact_reclassification() -> pl.DataFrame:
+    """`build_dimensions` reads `changed_on` off `fact_reclassification` to widen
+    `dim_month`; tests that do not exercise that history pass this instead."""
+    return pl.DataFrame(schema={"changed_on": pl.Utf8})
+
 VARIANTS = pl.DataFrame([
     {"alleleid": "1", "clinicalsignificance": "Pathogenic", "clinsigsimple": "1",
      "reviewstatus": "criteria provided", "chromosome": "17", "type": "SNV",
@@ -104,19 +110,45 @@ def test_build_fact_variant_disease_does_not_inflate_the_variant_count():
 
 
 def test_build_fact_reclassification_pairs_a_closed_row_with_its_successor():
-    fact = build_fact_reclassification(VARIANTS)
+    fact = build_fact_reclassification(VARIANTS, VARIANT_GENE)
 
     assert fact.height == 1
     row = fact.row(0, named=True)
     assert row["significance_from"] == "Pathogenic"
     assert row["significance_to"] == "Pathogenic/Likely pathogenic"
     assert row["changed_on"] == "2026-09-01"
+    assert row["gene_symbol"] == "BRCA1"
 
 
 def test_build_fact_reclassification_is_empty_without_history():
     only_current = VARIANTS.filter(pl.col("is_current"))
 
-    assert build_fact_reclassification(only_current).height == 0
+    assert build_fact_reclassification(only_current, VARIANT_GENE).height == 0
+
+
+def test_build_fact_reclassification_sources_gene_symbol_from_clinvar_variant_gene():
+    """`genesymbol` on the Silver `clinvar_variant` row is ClinVar's raw, possibly
+    multi-gene string (e.g. "ATM;C11orf65") — exactly why `clinvar_variant_gene`
+    explodes it on ";". `fact_reclassification.gene_symbol` must come from that
+    exploded table, like `build_fact_variant` already does, or it joins to nothing
+    in `dim_gene`."""
+    variants = pl.DataFrame([
+        {"alleleid": "1", "clinicalsignificance": "Pathogenic", "clinsigsimple": "1",
+         "reviewstatus": "criteria provided", "chromosome": "11", "type": "SNV",
+         "genesymbol": "ATM;C11orf65", "panel": "brca", "valid_from": "2026-08-01",
+         "valid_to": "2026-09-01", "is_current": False},
+        {"alleleid": "1", "clinicalsignificance": "Benign", "clinsigsimple": "0",
+         "reviewstatus": "criteria provided", "chromosome": "11", "type": "SNV",
+         "genesymbol": "ATM;C11orf65", "panel": "brca", "valid_from": "2026-09-01",
+         "valid_to": None, "is_current": True},
+    ])
+    variant_gene = pl.DataFrame([
+        {"alleleid": "1", "gene_symbol": "ATM", "panel": "brca"},
+    ])
+
+    fact = build_fact_reclassification(variants, variant_gene)
+
+    assert fact["gene_symbol"].to_list() == ["ATM"]
 
 
 def test_build_fact_variant_fans_out_a_variant_mapped_to_two_panel_genes():
@@ -150,7 +182,7 @@ def test_dim_review_status_covers_the_documented_clinvar_vocabulary():
 
     dims = build_dimensions(
         genes, variant_disease, inheritance, concepts, hpo_term, gene_phenotype,
-        fact_variant, "2026-09",
+        fact_variant, _empty_fact_reclassification(), "2026-09",
     )
 
     stars_by_status = dict(
@@ -186,7 +218,7 @@ def test_build_dimensions_joins_inheritance_modes_and_computes_the_quarter():
 
     dims = build_dimensions(
         genes, variant_disease, inheritance, concepts, hpo_term, gene_phenotype,
-        fact_variant, "2026-11",
+        fact_variant, _empty_fact_reclassification(), "2026-11",
     )
 
     dim_disease = dims["dim_disease"]
@@ -201,14 +233,136 @@ def test_build_dimensions_joins_inheritance_modes_and_computes_the_quarter():
     assert row["quarter"] == 4
 
 
+def test_dim_month_covers_every_month_present_in_the_reclassification_history():
+    """`fact_reclassification` retains every past transition (Silver's full SCD2
+    history), but a naive `dim_month` build only ever wrote the current run's
+    month — past months a report might group by would have no dimension row at
+    all. `dim_month` must cover the current month plus every month appearing in
+    `fact_reclassification.changed_on`."""
+    genes, variant_disease, inheritance, concepts, hpo_term, gene_phenotype = (
+        _minimal_dimension_inputs()
+    )
+    fact_variant = pl.DataFrame([
+        {"alleleid": "1", "gene_symbol": "BRCA1", "clinical_significance": "Pathogenic",
+         "clinsig_simple": "1", "review_status": "criteria provided, single submitter",
+         "chromosome": "17", "variant_type": "SNV", "panel": "brca", "month": "2026-09"},
+    ])
+    fact_reclassification = pl.DataFrame([
+        {"alleleid": "1", "gene_symbol": "BRCA1", "significance_from": "Pathogenic",
+         "significance_to": "Benign", "review_status_to": "criteria provided",
+         "changed_on": "2026-07-15", "panel": "brca"},
+        {"alleleid": "2", "gene_symbol": "BRCA1", "significance_from": "Benign",
+         "significance_to": "Pathogenic", "review_status_to": "criteria provided",
+         "changed_on": "2026-08-03", "panel": "brca"},
+    ])
+
+    dims = build_dimensions(
+        genes, variant_disease, inheritance, concepts, hpo_term, gene_phenotype,
+        fact_variant, fact_reclassification, "2026-09",
+    )
+
+    months = sorted(dims["dim_month"]["month"].to_list())
+    assert months == ["2026-07", "2026-08", "2026-09"]
+    row_july = dims["dim_month"].filter(pl.col("month") == "2026-07").row(0, named=True)
+    assert row_july["year"] == 2026
+    assert row_july["month_number"] == 7
+    assert row_july["quarter"] == 3
+
+
+def test_dim_disease_is_unique_on_medgen_cui():
+    """The spec keys `dim_disease` on `medgen_cui` alone (§5.3). A CUI carrying two
+    ClinVar disease labels must not produce two dimension rows — that would let a
+    `fact_variant_disease -> dim_disease` join double-count variants for that
+    disease. Rows with a null CUI are dropped from the dimension (they carry no
+    key to join on); `fact_variant_disease` keeps them regardless."""
+    genes, _, inheritance, concepts, hpo_term, gene_phenotype = _minimal_dimension_inputs()
+    fact_variant = pl.DataFrame([
+        {"alleleid": "1", "gene_symbol": "BRCA1", "clinical_significance": "Pathogenic",
+         "clinsig_simple": "1", "review_status": "criteria provided", "chromosome": "17",
+         "variant_type": "SNV", "panel": "brca", "month": "2026-09"},
+    ])
+    variant_disease = pl.DataFrame([
+        {"medgen_cui": "C1", "disease_name": "Hereditary cancer", "omim_id": "1",
+         "orpha_id": None, "mondo_id": None, "panel": "brca"},
+        {"medgen_cui": "C1", "disease_name": "Breast neoplasm", "omim_id": "2",
+         "orpha_id": None, "mondo_id": None, "panel": "brca"},
+        {"medgen_cui": None, "disease_name": "Unresolved condition", "omim_id": None,
+         "orpha_id": None, "mondo_id": None, "panel": "brca"},
+    ])
+
+    dims = build_dimensions(
+        genes, variant_disease, inheritance, concepts, hpo_term, gene_phenotype,
+        fact_variant, _empty_fact_reclassification(), "2026-09",
+    )
+
+    dim_disease = dims["dim_disease"]
+    assert dim_disease.height == 1
+    assert dim_disease["medgen_cui"].to_list() == ["C1"]
+
+
+def test_dim_clinical_significance_is_unique_on_clinical_significance():
+    """Same defect as `dim_disease`, one column over: a `clinical_significance`
+    label that carries both `clinsigsimple` values in the data (e.g. "Conflicting
+    classifications of pathogenicity") must still yield one dimension row, not
+    one per `clinsig_simple` value."""
+    genes, variant_disease, inheritance, concepts, hpo_term, gene_phenotype = (
+        _minimal_dimension_inputs()
+    )
+    fact_variant = pl.DataFrame([
+        {"alleleid": "1", "gene_symbol": "BRCA1",
+         "clinical_significance": "Conflicting classifications of pathogenicity",
+         "clinsig_simple": "0", "review_status": "criteria provided", "chromosome": "17",
+         "variant_type": "SNV", "panel": "brca", "month": "2026-09"},
+        {"alleleid": "2", "gene_symbol": "BRCA1",
+         "clinical_significance": "Conflicting classifications of pathogenicity",
+         "clinsig_simple": "1", "review_status": "criteria provided", "chromosome": "17",
+         "variant_type": "SNV", "panel": "brca", "month": "2026-09"},
+    ])
+
+    dims = build_dimensions(
+        genes, variant_disease, inheritance, concepts, hpo_term, gene_phenotype,
+        fact_variant, _empty_fact_reclassification(), "2026-09",
+    )
+
+    dim_significance = dims["dim_clinical_significance"]
+    assert dim_significance.height == 1
+    assert dim_significance["clinical_significance"].to_list() == [
+        "Conflicting classifications of pathogenicity"
+    ]
+
+
 def test_build_aggregates_counts_variants_by_gene_and_significance():
     fact = build_fact_variant(VARIANTS, VARIANT_GENE, "2026-09")
 
-    aggregates = build_aggregates(fact, build_fact_reclassification(VARIANTS))
+    aggregates = build_aggregates(fact, build_fact_reclassification(VARIANTS, VARIANT_GENE))
 
     counts = aggregates["agg_variants_by_gene_significance"].sort("clinical_significance")
     assert counts["variant_count"].to_list() == [1, 1]
     assert aggregates["agg_reclassifications_by_month"]["reclassification_count"].to_list() == [1]
+
+
+def test_agg_reclassifications_by_month_buckets_by_month_not_exact_day():
+    """The aggregate must group on the `YYYY-MM` month, which is what
+    `dim_month.month` carries — grouping on the exact `changed_on` date (as
+    before) never joins `dim_month` at all, and splits one month's
+    reclassifications into as many rows as there were distinct days."""
+    fact_variant = build_fact_variant(VARIANTS, VARIANT_GENE, "2026-09")
+    fact_reclassification = pl.DataFrame([
+        {"alleleid": "1", "gene_symbol": "BRCA1", "significance_from": "Pathogenic",
+         "significance_to": "Pathogenic/Likely pathogenic", "review_status_to": "criteria provided",
+         "changed_on": "2026-09-01", "panel": "brca"},
+        {"alleleid": "2", "gene_symbol": "BRCA1", "significance_from": "Benign",
+         "significance_to": "Pathogenic", "review_status_to": "criteria provided",
+         "changed_on": "2026-09-28", "panel": "brca"},
+    ])
+
+    aggregates = build_aggregates(fact_variant, fact_reclassification)
+
+    agg = aggregates["agg_reclassifications_by_month"]
+    assert agg.height == 1
+    row = agg.row(0, named=True)
+    assert row["month"] == "2026-09"
+    assert row["reclassification_count"] == 2
 
 
 def test_silver_to_gold_analytique_writes_every_table(tmp_path):
