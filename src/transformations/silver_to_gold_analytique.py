@@ -68,9 +68,17 @@ def build_fact_variant_disease(
     )
 
 
-def build_fact_reclassification(variants: pl.DataFrame) -> pl.DataFrame:
+def build_fact_reclassification(
+    variants: pl.DataFrame, variant_gene: pl.DataFrame
+) -> pl.DataFrame:
     """Une ligne par transition SCD2 : la ligne clôturée est appariée à celle qui lui
-    succède (`valid_from` de la suivante == `valid_to` de la précédente)."""
+    succède (`valid_from` de la suivante == `valid_to` de la précédente).
+
+    `gene_symbol` vient de `clinvar_variant_gene`, pas de `genesymbol` sur
+    `clinvar_variant` : cette dernière colonne garde la chaîne brute ClinVar,
+    potentiellement multi-gène (`"ATM;C11orf65"`) — exactement ce que
+    `clinvar_variant_gene` explose sur `;` — et ne joindrait à rien dans
+    `dim_gene`. Même source que `build_fact_variant`."""
     closed = variants.filter(pl.col("valid_to").is_not_null())
     return (
         closed.join(
@@ -83,9 +91,10 @@ def build_fact_reclassification(variants: pl.DataFrame) -> pl.DataFrame:
             on=["alleleid", "panel", "valid_to"],
             how="inner",
         )
+        .join(variant_gene.select("alleleid", "gene_symbol"), on="alleleid", how="left")
         .select(
             "alleleid",
-            pl.col("genesymbol").alias("gene_symbol"),
+            "gene_symbol",
             pl.col("clinicalsignificance").alias("significance_from"),
             "significance_to",
             "review_status_to",
@@ -93,6 +102,14 @@ def build_fact_reclassification(variants: pl.DataFrame) -> pl.DataFrame:
             "panel",
         )
     )
+
+
+def _month_row(month: str) -> dict:
+    year, month_number = month.split("-")
+    return {
+        "month": month, "year": int(year), "month_number": int(month_number),
+        "quarter": (int(month_number) - 1) // 3 + 1,
+    }
 
 
 def build_dimensions(
@@ -103,6 +120,7 @@ def build_dimensions(
     hpo_term: pl.DataFrame,
     gene_phenotype: pl.DataFrame,
     fact_variant: pl.DataFrame,
+    fact_reclassification: pl.DataFrame,
     month: str,
 ) -> dict[str, pl.DataFrame]:
     inheritance_by_cui = (
@@ -114,20 +132,37 @@ def build_dimensions(
             .alias("modes_inheritance")
         )
     )
+    # Une ligne par `medgen_cui` (§5.3 de la spec), pas par (medgen_cui, disease_name) :
+    # un CUI porté par deux libellés ClinVar ne doit pas doubler la dimension, sinon
+    # une jointure `fact_variant_disease -> dim_disease` compte ce CUI deux fois. Les
+    # lignes sans CUI (nul) n'ont aucune clé à porter dans la dimension et sont
+    # écartées ici ; `fact_variant_disease`, lui, les garde — c'est le pont qui
+    # préserve toutes les lignes du Silver, pas la dimension. Tri déterministe avant
+    # le `unique(keep="first")` : quel libellé représente le CUI est un choix
+    # arbitraire assumé (le premier par ordre alphabétique), mais il doit être stable
+    # d'un run à l'autre.
     dim_disease = (
-        variant_disease.select("medgen_cui", "disease_name", "omim_id", "orpha_id",
-                               "mondo_id", "panel")
-        .unique(subset=["medgen_cui", "disease_name"], keep="first")
+        variant_disease.filter(pl.col("medgen_cui").is_not_null())
+        .select("medgen_cui", "disease_name", "omim_id", "orpha_id", "mondo_id", "panel")
+        .sort("disease_name", maintain_order=True)
+        .unique(subset=["medgen_cui", "panel"], keep="first", maintain_order=True)
         .join(inheritance_by_cui, left_on=["medgen_cui", "panel"], right_on=["cui", "panel"],
               how="left")
         .join(concepts.select("cui", "clinical_summary", "panel"),
               left_on=["medgen_cui", "panel"], right_on=["cui", "panel"], how="left")
     )
-    year, month_number = month.split("-")
-    dim_month = pl.DataFrame([{
-        "month": month, "year": int(year), "month_number": int(month_number),
-        "quarter": (int(month_number) - 1) // 3 + 1,
-    }])
+    # `dim_month` couvre le mois courant et tout mois déjà présent dans l'historique
+    # de reclassification : `fact_reclassification` conserve tout l'historique SCD2
+    # du Silver (pas seulement les transitions de ce run), donc un `dim_month` limité
+    # au mois courant laisserait les mois passés sans ligne de dimension alors que
+    # les faits qui les référencent existent toujours.
+    reclassification_months = (
+        fact_reclassification["changed_on"].str.slice(0, 7).unique().to_list()
+        if fact_reclassification.height > 0
+        else []
+    )
+    all_months = sorted({month, *reclassification_months})
+    dim_month = pl.DataFrame([_month_row(m) for m in all_months])
     return {
         "dim_gene": genes.select("gene_symbol", "name", "description", "maplocation",
                                  "summary", "panel"),
@@ -136,9 +171,16 @@ def build_dimensions(
                                          "panel").unique(subset=["hpo_id", "panel"]),
         "bridge_gene_phenotype": gene_phenotype.select("gene_symbol", "hpo_id", "frequency",
                                                        "disease_id", "panel"),
-        "dim_clinical_significance": fact_variant.select(
-            pl.col("clinical_significance"), pl.col("clinsig_simple"), "panel"
-        ).unique(),
+        # Une ligne par (clinical_significance, panel) : un libellé porté par les deux
+        # valeurs de `clinsig_simple` dans les données (ex. "Conflicting
+        # classifications of pathogenicity") ne doit pas non plus doubler cette
+        # dimension — même défaut, même correctif que `dim_disease` ci-dessus.
+        "dim_clinical_significance": (
+            fact_variant.select("clinical_significance", "clinsig_simple", "panel")
+            .sort("clinsig_simple", maintain_order=True)
+            .unique(subset=["clinical_significance", "panel"], keep="first",
+                    maintain_order=True)
+        ),
         "dim_review_status": fact_variant.select("review_status", "panel").unique().with_columns(
             pl.col("review_status").replace_strict(_REVIEW_STATUS_STARS, default=None)
             .alias("stars")
@@ -162,7 +204,13 @@ def build_aggregates(
             .agg(pl.len().alias("variant_count"))
         ),
         "agg_reclassifications_by_month": (
-            fact_reclassification.group_by("gene_symbol", "changed_on", "panel")
+            # `changed_on` est une date exacte (`YYYY-MM-DD`) ; `dim_month.month` est
+            # `YYYY-MM`. Grouper sur `changed_on` ne joignait jamais `dim_month` et
+            # éclatait un même mois en autant de lignes que de jours distincts.
+            fact_reclassification.with_columns(
+                pl.col("changed_on").str.slice(0, 7).alias("month")
+            )
+            .group_by("gene_symbol", "month", "panel")
             .agg(pl.len().alias("reclassification_count"))
         ),
     }
@@ -198,7 +246,7 @@ def silver_to_gold_analytique(
 
     fact_variant = build_fact_variant(variants, variant_gene, month)
     fact_variant_disease = build_fact_variant_disease(variant_disease, variant_gene, month)
-    fact_reclassification = build_fact_reclassification(variants)
+    fact_reclassification = build_fact_reclassification(variants, variant_gene)
 
     dimensions = build_dimensions(
         read_silver("ncbi_gene", panel, lake_uri),
@@ -208,6 +256,7 @@ def silver_to_gold_analytique(
         read_silver("hpo_term", panel, lake_uri),
         read_silver("hpo_gene_phenotype", panel, lake_uri),
         fact_variant,
+        fact_reclassification,
         month,
     )
     aggregates = build_aggregates(fact_variant, fact_reclassification)
