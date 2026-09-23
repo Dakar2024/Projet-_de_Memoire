@@ -4,7 +4,7 @@ __pycache__/
 .pytest_cache/
 .env
 
-# Fichiers de travail internes (outils Claude Code / workflow), non destinés au partage
+# Fichiers de travail internes (outillage et workflow), non destinés au partage
 .claude/
 .superpowers/
 SESSION_HANDOFF.md
