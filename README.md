@@ -43,6 +43,15 @@ Une fois la stack Docker démarrée :
 Les ports MinIO se changent dans `.env` (`MINIO_API_PORT`, `MINIO_CONSOLE_PORT`) si 9000/9001
 sont déjà occupés sur la machine (par Portainer, par exemple).
 
+**Ces trois interfaces ne sont accessibles que depuis la machine elle-même** : elles sont liées
+à `127.0.0.1` et non à toutes les interfaces réseau. Ni l'interface Airflow ni la console MinIO
+n'ont de TLS ; les exposer au réseau demanderait un reverse proxy devant. Voir
+`reference/audit_securite.md`.
+
+Les tâches du pipeline n'utilisent jamais les identifiants root de MinIO : elles passent par un
+compte de service (`MINIO_AIRFLOW_USER`), restreint aux quatre buckets par la politique
+`airflow-lake` créée au démarrage.
+
 MinIO contient un bucket par couche : `raw`, `bronze`, `silver`, `gold`.
 
 ## Démarrage rapide
@@ -77,9 +86,10 @@ Puis renseigner dans `.env` :
 | `AIRFLOW_UID` | résultat de `id -u` |
 | `AIRFLOW_JWT_SECRET` | résultat de `python3 -c "import secrets; print(secrets.token_urlsafe(32))"` |
 | `POSTGRES_PASSWORD`, `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD` | des valeurs de votre choix |
+| `MINIO_AIRFLOW_USER`, `MINIO_AIRFLOW_PASSWORD` | compte de service du pipeline ; mot de passe long, généré comme le secret JWT |
 
 > ⚠️ Les vraies valeurs vont **uniquement** dans `.env` (ignoré par git), jamais dans
-> `.env.example`.
+> `.env.example`. Restreindre les droits du fichier : `chmod 600 .env`.
 
 ### 3. Démarrer la stack
 
