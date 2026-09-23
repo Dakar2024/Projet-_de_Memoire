@@ -27,7 +27,7 @@ organisées. Ce dépôt construit exactement cela :
 | `raw` | Copie fidèle de la source, jamais modifiée | format d'origine (TSV, JSONL) | ✅ livré |
 | `bronze` | Même contenu, format et noms de colonnes uniformisés | Parquet | ✅ livré |
 | `silver` | Données nettoyées, dédoublonnées, reliées entre elles, historisées | Delta Lake | ✅ livré |
-| `gold` | Tables finales pour le RAG et pour l'analyse | Delta Lake | ⏳ à venir |
+| `gold` | Tables finales pour le RAG et pour l'analyse | Delta Lake | ✅ livré |
 
 ## Services et ports
 
@@ -138,8 +138,8 @@ docker compose exec airflow-scheduler \
   airflow dags trigger dag_genomic_pipeline_brca --conf '{"sources_date": "2026-09-01"}'
 ```
 
-> Les tâches `silver_to_gold_rag` et `silver_to_gold_analytique` échouent pour l'instant, en
-> indiquant qu'elles seront livrées par le sous-projet D : c'est l'état attendu.
+> Un run de panel va jusqu'au bout : `quality_check_gold` est la dernière tâche, et elle bloque
+> la suite si le Gold ne reflète pas fidèlement le Silver.
 
 ### Lancer un connecteur à la main (sans Docker)
 
@@ -200,6 +200,44 @@ Panels de gènes (`src/ingestion/config.py`) :
 Chaque table est partitionnée par panel. `quality_check_silver` bloque la suite du pipeline
 si une table est absente ou vide, ou si les liens entre tables sont incohérents.
 
+## Tables de la couche Gold
+
+**`gold/rag/documents`** — un document en anglais par variant courant, plus un par gène du
+panel, prêt à être vectorisé (mesuré sur l'archive de septembre 2026 : 96 910 documents) :
+
+| Colonne | Contenu |
+|---|---|
+| `doc_id` | `clinvar:<alleleid>` ou `gene:<SYMBOL>` — identifiant stable |
+| `chunk_id` | SHA-256 du texte : il ne change que si le contenu change |
+| `doc_type` | `variant` ou `gene` |
+| `text` | Le texte vectorisé, listes de maladies et de phénotypes plafonnées |
+| `gene_symbol`, `clinical_significance`, `review_status`, `rs_dbsnp`, `hgvs_c`, `hgvs_p` | Métadonnées filtrables |
+| `clinvar_variation_id`, `clinvar_url`, `source_version`, `collected_at` | Citation de la source |
+
+Écrit par `MERGE` sur `doc_id`, limité au panel : un document inchangé n'est pas réécrit, un
+document dont le variant a disparu est supprimé. L'étape RAG n'aura donc à ré-embedder que les
+`chunk_id` qui ont bougé.
+
+**`gold/analytique`** — modèle en étoile, interrogé par DuckDB directement sur les tables Delta :
+
+| Table | Contenu |
+|---|---|
+| `fact_variant` | Un variant courant par ligne |
+| `fact_variant_disease` | Lien variant ↔ maladie |
+| `fact_reclassification` | Une ligne par changement de signification clinique |
+| `dim_gene`, `dim_disease`, `dim_phenotype`, `bridge_gene_phenotype` | Gènes, maladies, phénotypes |
+| `dim_clinical_significance`, `dim_review_status`, `dim_month` | Signification, statut de revue (0 à 4 étoiles ClinVar), temps |
+| `agg_variants_by_gene_significance`, `agg_review_status`, `agg_reclassifications_by_month` | Agrégats pré-calculés |
+
+Chaque table est un instantané du panel : un run `brca` ne touche jamais les lignes `sickle`.
+`quality_check_gold` bloque la suite si un variant courant manque, si un document attendu est
+absent ou dupliqué, si un texte dépasse la fenêtre du modèle d'embedding, ou si une clé de
+gène ou de maladie ne correspond à rien.
+
+> Un changement de schéma d'une table Gold fait échouer l'écriture sur la table existante.
+> Comme tout le Gold est dérivé du Silver, la marche à suivre est de supprimer les tables
+> concernées et de relancer le run.
+
 ## Principes d'architecture
 
 - **La logique vit dans `src/` et `scripts/`**, testée sans infrastructure. Airflow ne fait
@@ -217,7 +255,8 @@ si une table est absente ou vide, ou si les liens entre tables sont incohérents
 ```
 src/ingestion/        connecteurs des sources, client HTTP (rate limit, retry), E/S du lac
 src/transformations/  passages entre couches : raw_to_bronze, bronze_to_silver,
-                      quality_check_silver, silver_to_gold_* (à venir)
+                      quality_check_silver, silver_to_gold_rag, silver_to_gold_analytique,
+                      quality_check_gold
 scripts/              ingest_*.py : un script par source, écrit dans raw
                       run_collection.py : ancien script de collecte (voir plus bas)
 dags/                 DAGs Airflow : acquisition mensuelle + un DAG par panel
