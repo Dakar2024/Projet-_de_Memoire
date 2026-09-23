@@ -1,7 +1,8 @@
 import pytest
+import requests
 import responses
 
-from ingestion.http_client import NcbiClient, RateLimiter
+from ingestion.http_client import NcbiClient, NcbiRequestError, RateLimiter
 
 
 def test_rate_limiter_does_not_sleep_on_first_call():
@@ -97,6 +98,47 @@ def test_esearch_retries_transient_errors_then_succeeds():
 
     assert client.esearch(db="gene", term="HBB[gene]") == ["3043"]
     assert len(responses.calls) == 2
+
+
+@responses.activate
+def test_a_failed_call_never_leaks_the_api_key():
+    """Le message d'une `HTTPError` contient l'URL complète, clé API comprise, et
+    Airflow journalise les exceptions des tâches : sans masquage, une erreur NCBI
+    écrit la clé en clair dans des logs conservés et consultables."""
+    responses.add(
+        responses.GET,
+        "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
+        status=400,
+    )
+    client = NcbiClient(
+        email="test@example.com", api_key="cle-tres-secrete", rate_limiter=_no_wait_limiter()
+    )
+
+    with pytest.raises(NcbiRequestError) as raised:
+        client.esearch(db="gene", term="HBB[gene]")
+
+    message = str(raised.value)
+    assert "cle-tres-secrete" not in message
+    assert "api_key=***" in message
+    # L'URL reste diagnostiquable : sans elle, une erreur est inexploitable.
+    assert "esearch.fcgi" in message
+
+
+@responses.activate
+def test_a_connection_failure_also_masks_the_api_key():
+    responses.add(
+        responses.GET,
+        "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi",
+        body=requests.ConnectionError("échec de connexion vers ...api_key=cle-tres-secrete"),
+    )
+    client = NcbiClient(
+        email="test@example.com", api_key="cle-tres-secrete", rate_limiter=_no_wait_limiter()
+    )
+
+    with pytest.raises(NcbiRequestError) as raised:
+        client.esummary(db="gene", uid="3043")
+
+    assert "cle-tres-secrete" not in str(raised.value)
 
 
 @responses.activate

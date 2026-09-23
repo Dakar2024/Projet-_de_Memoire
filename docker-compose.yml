@@ -6,9 +6,9 @@ x-airflow-common: &airflow-common
   build:
     context: .
     dockerfile: docker/airflow/Dockerfile
-  # Le dépôt est monté en écriture (`data/external/` reçoit le bulk ClinVar) : le
-  # conteneur doit tourner sous le uid propriétaire de ces dossiers sur l'hôte. Groupe 0
-  # et uid arbitraire, selon la convention de l'image officielle.
+  # `data/` est monté en écriture (il reçoit le bulk ClinVar) : le conteneur doit
+  # tourner sous le uid propriétaire de ce dossier sur l'hôte. Groupe 0 et uid
+  # arbitraire, selon la convention de l'image officielle.
   user: "${AIRFLOW_UID:?AIRFLOW_UID obligatoire, sortie de id -u sur l hôte}:0"
   environment:
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
@@ -27,13 +27,21 @@ x-airflow-common: &airflow-common
     PYTHONPATH: /opt/projet:/opt/projet/src
     LAKE_URI: "s3://"
     AWS_ENDPOINT_URL: "http://minio:9000"
-    AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
-    AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD obligatoire, à renseigner}
+    # Compte de service, jamais les identifiants root : la politique `airflow-lake`
+    # (docker/minio/create-buckets.sh) limite ces droits aux quatre buckets du
+    # médaillon. Une tâche compromise ne peut ni créer ni supprimer un bucket.
+    AWS_ACCESS_KEY_ID: ${MINIO_AIRFLOW_USER:?MINIO_AIRFLOW_USER obligatoire, à renseigner}
+    AWS_SECRET_ACCESS_KEY: ${MINIO_AIRFLOW_PASSWORD:?MINIO_AIRFLOW_PASSWORD obligatoire, à renseigner}
     AWS_REGION: us-east-1
     NCBI_EMAIL: ${NCBI_EMAIL}
     NCBI_API_KEY: ${NCBI_API_KEY:-}
   volumes:
-    - .:/opt/projet
+    # Code monté en lecture seule : une exécution arbitraire dans une tâche ne doit
+    # pas pouvoir réécrire le dépôt de l'hôte. Python n'a pas besoin d'y écrire — il
+    # se contente de ne pas produire de __pycache__.
+    - .:/opt/projet:ro
+    # Seul dossier en écriture : les téléchargements de sources (bulk ClinVar, HPO).
+    - ./data:/opt/projet/data
   working_dir: /opt/projet
   networks:
     - genomique-network
@@ -58,7 +66,8 @@ x-airflow-after-init: &airflow-after-init
 
 services:
   postgres:
-    image: postgres:16-alpine
+    # Épinglée par empreinte : un tag peut être repoussé, une empreinte non.
+    image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
     container_name: genomique-postgres
     restart: unless-stopped
     environment:
@@ -80,7 +89,9 @@ services:
 
  
   minio:
-    image: quay.io/minio/minio
+    # Sans tag, Docker prenait `latest` : build non reproductible et vecteur de
+    # chaîne d'approvisionnement. Empreinte de la version effectivement validée ici.
+    image: quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
     container_name: genomique-minio
     restart: unless-stopped
     command: server /data --console-address ":9001"
@@ -91,8 +102,8 @@ services:
       # Ports hôte configurables : sur une machine de développement, 9000 et 9001
       # sont souvent déjà pris (Portainer, un autre MinIO). Les services Airflow
       # joignent MinIO par le réseau Docker (minio:9000), pas par ces ports.
-      - "${MINIO_API_PORT:-9000}:9000"
-      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+      - "127.0.0.1:${MINIO_API_PORT:-9000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - minio-data:/data
     networks:
@@ -107,7 +118,7 @@ services:
           memory: 1g
 
   minio-init:
-    image: quay.io/minio/mc
+    image: quay.io/minio/mc@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
     container_name: genomique-minio-init
     depends_on:
       minio:
@@ -115,6 +126,10 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD obligatoire, à renseigner}
+      # Seul service à voir les identifiants root : il amorce les buckets, la
+      # politique et le compte de service, puis s'arrête.
+      MINIO_AIRFLOW_USER: ${MINIO_AIRFLOW_USER:?MINIO_AIRFLOW_USER obligatoire, à renseigner}
+      MINIO_AIRFLOW_PASSWORD: ${MINIO_AIRFLOW_PASSWORD:?MINIO_AIRFLOW_PASSWORD obligatoire, à renseigner}
     entrypoint: ["/bin/sh", "/scripts/create-buckets.sh"]
     volumes:
       - ./docker/minio/create-buckets.sh:/scripts/create-buckets.sh:ro
@@ -145,7 +160,10 @@ services:
     depends_on: *airflow-after-init
     command: api-server
     ports:
-      - "8080:8080"
+      # Lié à la boucle locale : l'interface Airflow n'est pas protégée par TLS et
+      # son gestionnaire d'authentification est prévu pour du développement. Exposer
+      # au réseau demanderait un reverse proxy avec TLS devant.
+      - "127.0.0.1:8080:8080"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
