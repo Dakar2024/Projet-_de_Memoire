@@ -2,6 +2,9 @@
 # noms d'image invalides pour Docker (« invalid reference format », `-_` interdit).
 name: genomique
 
+#----------------------------------
+# Ancre : configuration commune à tous les services Airflow
+#----------------------------------
 x-airflow-common: &airflow-common
   build:
     context: .
@@ -14,7 +17,8 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
     # Plafond de tâches simultanées : avec LocalExecutor chaque tâche est un processus du
-    # conteneur scheduler (limité à 2g sur le VPS). Le défaut de 32 risquerait l'OOM.
+    # conteneur scheduler, dont la limite mémoire est fixée plus bas. Le défaut de 32
+    # risquerait l'OOM.
     AIRFLOW__CORE__PARALLELISM: "4"
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD obligatoire, à renseigner}@postgres:5432/airflow
     AIRFLOW__CORE__DAGS_FOLDER: /opt/projet/dags
@@ -23,6 +27,8 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-apiserver:8080/execution/
     # Partagé entre composants : sinon chaque conteneur génère le sien.
     AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:?AIRFLOW_JWT_SECRET obligatoire, à renseigner}
+    # Identifiant par défaut, non paramétrable ici. Mitigé pour l'instant par le port
+    # apiserver lié à 127.0.0.1 (voir plus bas) : à changer avant tout reverse proxy.
     AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_USERS: admin:admin
     PYTHONPATH: /opt/projet:/opt/projet/src
     LAKE_URI: "s3://"
@@ -40,7 +46,7 @@ x-airflow-common: &airflow-common
     # pas pouvoir réécrire le dépôt de l'hôte. Python n'a pas besoin d'y écrire — il
     # se contente de ne pas produire de __pycache__.
     - .:/opt/projet:ro
-    # Seul dossier en écriture : les téléchargements de sources (bulk ClinVar, HPO).
+    # Seule exception au read-only : reçoit les téléchargements de sources.
     - ./data:/opt/projet/data
   working_dir: /opt/projet
   networks:
@@ -51,8 +57,10 @@ x-airflow-common: &airflow-common
     minio:
       condition: service_healthy
 
-# Les services longs attendent la fin de `airflow db migrate` : sans cela, ils démarrent
+#----------------------------------
+# Ancre : dépendances communes aux services Airflow longs — sans elle, ils démarrent
 # contre une base non migrée et bouclent en erreur jusqu'à ce que la migration aboutisse.
+#----------------------------------
 x-airflow-after-init: &airflow-after-init
   postgres:
     condition: service_healthy
@@ -65,6 +73,9 @@ x-airflow-after-init: &airflow-after-init
     condition: service_completed_successfully
 
 services:
+#----------------------------------
+# PostgreSQL — base de métadonnées Airflow
+#----------------------------------
   postgres:
     # Épinglée par empreinte : un tag peut être repoussé, une empreinte non.
     image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
@@ -87,10 +98,11 @@ services:
         limits:
           memory: 1g
 
- 
+#----------------------------------
+# MinIO — stockage S3 du lac médaillon (raw/bronze/silver/gold)
+#----------------------------------
   minio:
-    # Sans tag, Docker prenait `latest` : build non reproductible et vecteur de
-    # chaîne d'approvisionnement. Empreinte de la version effectivement validée ici.
+    # Même raison que postgres ci-dessus : empreinte plutôt que tag, pour un build reproductible.
     image: quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
     container_name: genomique-minio
     restart: unless-stopped
@@ -117,6 +129,9 @@ services:
         limits:
           memory: 1g
 
+#----------------------------------
+# Amorçage MinIO — création des buckets, politique et compte de service
+#----------------------------------
   minio-init:
     image: quay.io/minio/mc@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
     container_name: genomique-minio-init
@@ -136,6 +151,9 @@ services:
     networks:
       - genomique-network
 
+#----------------------------------
+# Airflow — migration de la base et création des pools (tourne une fois, puis s'arrête)
+#----------------------------------
   airflow-init:
     <<: *airflow-common
     container_name: genomique-airflow-init
@@ -153,7 +171,9 @@ services:
         airflow pools set gold_write 1 "Écriture Gold : tables partagées entre panels, un seul run silver_to_gold à la fois"
     restart: "no"
 
-  
+#----------------------------------
+# Airflow — API server (interface web + API d'exécution des tâches)
+#----------------------------------
   airflow-apiserver:
     <<: *airflow-common
     container_name: genomique-airflow-apiserver
@@ -175,6 +195,9 @@ services:
         limits:
           memory: 1536m
 
+#----------------------------------
+# Airflow — scheduler (avec LocalExecutor, exécute aussi les tâches lui-même)
+#----------------------------------
   airflow-scheduler:
     <<: *airflow-common
     container_name: genomique-airflow-scheduler
@@ -200,6 +223,9 @@ services:
           # (plusieurs tâches simultanées dans ce même conteneur).
           memory: 3g
 
+#----------------------------------
+# Airflow — dag-processor (parsing des DAGs, isolé du scheduler)
+#----------------------------------
   airflow-dag-processor:
     <<: *airflow-common
     container_name: genomique-airflow-dag-processor
@@ -216,6 +242,9 @@ services:
         limits:
           memory: 1g
 
+#----------------------------------
+# Airflow — triggerer (capteurs et tâches différées asynchrones)
+#----------------------------------
   airflow-triggerer:
     <<: *airflow-common
     container_name: genomique-airflow-triggerer
@@ -232,6 +261,9 @@ services:
         limits:
           memory: 768m
 
+#----------------------------------
+# Volumes et réseau
+#----------------------------------
 volumes:
   postgres-data:
   minio-data:
