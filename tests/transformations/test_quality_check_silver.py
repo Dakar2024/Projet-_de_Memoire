@@ -139,3 +139,69 @@ def test_quality_check_silver_rejects_a_dangling_variant_disease(tmp_path):
 
     with pytest.raises(SilverQualityError, match="clinvar_variant_disease"):
         quality_check_silver("2026-09-01", "brca", lake_uri=lake)
+
+
+def _seed_variants_and_snapshot(lake, courants, dans_instantane, panel="brca"):
+    """Sème `courants` variants encore is_current et un instantané du mois n'en
+    couvrant que `dans_instantane` : l'écart est exactement la population que le
+    contrôle de plausibilité surveille."""
+    gene = _GENE_BY_PANEL[panel]
+    _seed_complete_silver(lake, panel=panel)
+    _write_clinvar_variant(
+        pl.DataFrame({
+            "alleleid": [str(i) for i in range(courants)],
+            "panel": [panel] * courants,
+            "clinicalsignificance": ["Benign"] * courants,
+            "reviewstatus": ["criteria provided"] * courants,
+            "lastevaluated": ["2026-08-01"] * courants,
+        }),
+        f"{lake}/silver/clinvar_variant", panel, "2026-09-01",
+    )
+    _write_silver_snapshot(
+        pl.DataFrame({
+            "panel": [panel] * dans_instantane,
+            "alleleid": [str(i) for i in range(dans_instantane)],
+            "gene_symbol": [gene] * dans_instantane,
+        }),
+        f"{lake}/silver/clinvar_variant_gene", panel,
+    )
+    _write_silver_snapshot(
+        pl.DataFrame({
+            "panel": [panel] * dans_instantane,
+            "alleleid": [str(i) for i in range(dans_instantane)],
+            "disease_name": ["X"] * dans_instantane,
+        }),
+        f"{lake}/silver/clinvar_variant_disease", panel,
+    )
+
+
+def test_quality_check_silver_accepts_a_handful_of_retired_variants(tmp_path):
+    """Quelques variants retirés par ClinVar d'un mois sur l'autre sont normaux :
+    le contrôle ne doit pas bloquer un run légitime."""
+    lake = f"file://{tmp_path}/lake"
+    _seed_variants_and_snapshot(lake, courants=100, dans_instantane=98)
+
+    quality_check_silver("2026-09-01", "brca", lake_uri=lake)  # ne lève pas
+
+
+def test_quality_check_silver_rejects_a_truncated_clinvar_archive(tmp_path):
+    """Angle mort documenté : le MERGE SCD2 ne clôture jamais un variant absent du
+    nouveau lot, donc `clinvar_variant` ne rétrécit pas tandis que les instantanés
+    rétrécissent. Sans ce contrôle, une archive tronquée laisserait tous les autres
+    contrôles verts pendant que le Silver diverge de sa source."""
+    lake = f"file://{tmp_path}/lake"
+    _seed_variants_and_snapshot(lake, courants=100, dans_instantane=40)
+
+    with pytest.raises(SilverQualityError, match="clinvar_variant"):
+        quality_check_silver("2026-09-01", "brca", lake_uri=lake)
+
+
+def test_quality_check_silver_names_the_proportion_of_retired_variants(tmp_path):
+    lake = f"file://{tmp_path}/lake"
+    _seed_variants_and_snapshot(lake, courants=100, dans_instantane=40)
+
+    with pytest.raises(SilverQualityError) as raised:
+        quality_check_silver("2026-09-01", "brca", lake_uri=lake)
+
+    message = str(raised.value)
+    assert "60" in message and "%" in message

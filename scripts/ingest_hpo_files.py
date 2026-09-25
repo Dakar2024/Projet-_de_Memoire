@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from ingestion.config import DATA_EXTERNAL_DIR, RAW
 from ingestion.download import download_to_file
+from ingestion.maintenance import ensure_free_space, purge_old_downloads
 from ingestion.hpo import release_url_for, resolve_release_tag
 from ingestion.storage import (
     begin_partition,
@@ -43,6 +44,7 @@ def ingest_hpo_files(
         release_tag = manifest["source_version"] if manifest else resolve_release_tag()
     url = release_url_for(release_tag)
     cache_dir = cache_dir or DATA_EXTERNAL_DIR
+    ensure_free_space(cache_dir)
     local = download_to_file(url, cache_dir / f"genes_to_phenotype_{release_tag}.txt")
 
     begin_partition(partition)
@@ -59,6 +61,9 @@ def ingest_hpo_files(
             record_count=1,
         ),
     )
+    # Purge après coup seulement : tant que la partition n'est pas finalisée, le
+    # fichier local reste la seule copie exploitable.
+    purge_old_downloads(cache_dir)
     return partition
 
 

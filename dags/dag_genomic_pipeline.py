@@ -10,6 +10,7 @@ sys.path[:0] = [str(REPO_ROOT / "src"), str(REPO_ROOT)]
 from airflow.sdk import DAG, task
 from airflow.sdk.exceptions import AirflowFailException
 
+from dags.common.alerting import alert_args
 from dags.common.dates import resolve_sources_date
 from dags.common.panels import (
     GOLD_WRITE_POOL,
@@ -35,6 +36,7 @@ from transformations.silver_to_gold_analytique import silver_to_gold_analytique
 from transformations.silver_to_gold_rag import silver_to_gold_rag
 
 DEFAULT_ARGS = {
+    **alert_args(),
     "retries": 3,
     "retry_delay": dt.timedelta(minutes=5),
     "execution_timeout": dt.timedelta(hours=3),

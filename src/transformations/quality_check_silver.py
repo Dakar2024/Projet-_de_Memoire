@@ -13,6 +13,15 @@ from transformations.silver_io import read_silver
 # HPO) — déjà légitime en raw/bronze, ne pas le traiter comme un échec ici.
 _TABLES_ALLOWED_EMPTY = {"hpo_gene_phenotype"}
 
+# Proportion maximale de variants encore `is_current` mais absents de l'instantané
+# du mois. ClinVar en retire quelques-uns d'un mois sur l'autre : c'est normal. Une
+# proportion massive ne l'est pas — elle signale une archive tronquée ou une
+# conversion partielle. Le seuil vaut parce que le `MERGE` SCD2 ne clôture jamais un
+# variant absent du nouveau lot : sans ce contrôle, `clinvar_variant` conserverait
+# des variants périmés pendant que les tables instantanées rétréciraient, et tous
+# les autres contrôles resteraient verts.
+MAX_RETIRED_VARIANT_RATIO = 0.05
+
 
 class SilverQualityError(RuntimeError):
     """Un ou plusieurs contrôles qualité Silver ont échoué."""
@@ -76,6 +85,21 @@ def quality_check_silver(logical_date: str, panel: str, lake_uri: str | None = N
             f"clinvar_variant_disease : alleleid sans ligne correspondante dans "
             f"clinvar_variant : {sorted(dangling_disease)}"
         )
+
+    # Plausibilité d'un mois sur l'autre : les variants encore courants que
+    # l'instantané du mois ne mentionne plus. `variant` ne contient que les lignes
+    # courantes du panel, `variant_gene` est réécrit intégralement à chaque run.
+    courants = set(variant["alleleid"].to_list())
+    if courants:
+        retires = courants - set(variant_gene["alleleid"].to_list())
+        proportion = len(retires) / len(courants)
+        if proportion > MAX_RETIRED_VARIANT_RATIO:
+            errors.append(
+                f"clinvar_variant : {len(retires)} variant(s) courant(s) sur {len(courants)} "
+                f"absent(s) de l'instantané du mois, soit {proportion:.0%} — au-delà du seuil "
+                f"de {MAX_RETIRED_VARIANT_RATIO:.0%}, cela signale une archive ClinVar "
+                f"tronquée ou une conversion partielle, pas des retraits ordinaires"
+            )
 
     if errors:
         raise SilverQualityError("; ".join(errors))
