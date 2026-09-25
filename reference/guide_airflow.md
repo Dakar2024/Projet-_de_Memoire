@@ -19,20 +19,21 @@ Trois interfaces, **accessibles uniquement depuis cette machine** (elles sont li
 
 | Interface | Adresse | Identifiants |
 |---|---|---|
-| Airflow | http://localhost:8080 | `admin` + mot de passe généré, voir ci-dessous |
+| Airflow | http://localhost:8080 | `admin` + le mot de passe de `AIRFLOW_ADMIN_PASSWORD` dans ton `.env` |
 | Console MinIO | http://localhost:9011 | `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` du `.env` |
 | API S3 MinIO | http://localhost:9010 | idem |
 
-Le mot de passe d'Airflow est généré au premier démarrage et ne s'affiche nulle part :
+Le mot de passe est celui que tu as mis dans `.env` sous `AIRFLOW_ADMIN_PASSWORD` : le service
+d'initialisation le réapplique à chaque démarrage. Pour le relire tel que la stack l'utilise :
 
 ```bash
 docker exec genomique-airflow-apiserver \
-  cat /opt/airflow/simple_auth_manager_passwords.json.generated
+  cat /opt/airflow/logs/simple_auth_manager_passwords.json.generated
 ```
 
 > **Différence avec Airflow 2 :** il n'y a plus de commande `airflow users create`. La 3.x
-> utilise un gestionnaire d'authentification simple, qui génère ce mot de passe dans un
-> fichier. C'est la seule différence que tu rencontres à la connexion.
+> utilise un gestionnaire d'authentification simple, qui lit ses comptes dans un fichier — ici
+> alimenté depuis le `.env` pour que le mot de passe soit stable d'un démarrage à l'autre.
 
 Pour tout arrêter sans rien perdre : `docker compose down`. Les volumes — donc le lac et
 l'historique Airflow — survivent. N'ajoute **jamais** `-v` : cela effacerait les deux.
@@ -134,8 +135,8 @@ Depuis l'interface : clic sur la tâche → **Clear**. Les tâches en aval sont 
 >
 > ```bash
 > docker exec genomique-airflow-apiserver python - <<'EOF'
-> import json, glob, requests
-> mdp = json.load(open(glob.glob('/opt/airflow/*passwords.json.generated')[0]))['admin']
+> import os, requests
+> mdp = os.environ['AIRFLOW_ADMIN_PASSWORD']
 > base = 'http://localhost:8080'
 > jeton = requests.post(base + '/auth/token',
 >                       json={'username': 'admin', 'password': mdp}).json()['access_token']
@@ -216,7 +217,7 @@ Ce que tu connais reste vrai à 90 %. Les cinq différences que tu rencontreras 
 | Import | `from airflow.decorators import task` | `from airflow.sdk import DAG, task` |
 | Déclenchement par événement | *Dataset* | *Asset* — même principe |
 | Date d'un run déclenché par événement | il en a une | il n'en a pas : le projet transmet la date dans le signal, ou par `--conf` |
-| Utilisateur de l'interface | `airflow users create` | mot de passe généré dans un fichier du conteneur |
+| Utilisateur de l'interface | `airflow users create` | compte `admin`, mot de passe pris dans le `.env` |
 | Service web | `webserver` | `api-server` |
 
 Tout le reste — l'interface, les logs, les pools, les tentatives, le graphe, les commandes
