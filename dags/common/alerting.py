@@ -5,10 +5,10 @@ se voit qu'en ouvrant l'interface. Le cas le plus coûteux n'est même pas visib
 là : si l'acquisition échoue, l'Asset de fin n'est jamais émis et les DAGs de panel
 ne se déclenchent pas du tout — le mois est simplement absent.
 
-L'envoi passe par le relais SMTP configuré dans `docker-compose.yml` (variables
-`AIRFLOW__SMTP__*`). Aucune adresse n'est écrite dans le dépôt : le destinataire
-vient de l'environnement, et une valeur absente désactive simplement l'envoi sans
-rien casser.
+L'envoi passe par le serveur SMTP configuré dans `docker-compose.yml` (variables
+`AIRFLOW__SMTP__*`, toutes alimentées par le `.env`) : le fournisseur reste libre.
+Aucune adresse n'est écrite dans le dépôt — le destinataire vient de l'environnement,
+et une valeur absente désactive simplement l'envoi sans rien casser.
 """
 
 from __future__ import annotations
