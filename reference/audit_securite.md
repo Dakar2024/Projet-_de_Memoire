@@ -35,7 +35,9 @@ Les risques qui comptent ici sont donc, par ordre d'importance :
 ## 2. Synthèse
 
 L'audit a relevé **dix-huit points**, dont cinq traités immédiatement. Le tableau ci-dessous
-récapitule l'état après correction.
+récapitule l'état après correction. Deux corrections complémentaires ont été apportées le
+25 septembre (§6) : une garde manquante sur un secret obligatoire (nouveau constat D8), et un
+durcissement partiel de l'exécution des conteneurs (D4).
 
 | Domaine | Points forts constatés | Corrigé | Reste à traiter |
 |---|---|---|---|
@@ -97,10 +99,11 @@ indique comment elle évoluerait sur un serveur exposé.
 | D1 | Le dépôt entier était monté en écriture dans tous les conteneurs Airflow, `.env` compris : une tâche compromise lisait tous les secrets et pouvait modifier le code source de l'hôte de façon persistante. | **Élevé** | **Élevé** | **Corrigé** |
 | D2 | L'interface Airflow était publiée sur toutes les interfaces réseau, avec un gestionnaire d'authentification prévu pour le développement, sans TLS ni double facteur. | **Élevé** | **Critique** | **Corrigé** |
 | D3 | Deux images étaient déclarées sans aucun tag, donc implicitement `latest` : comportement non reproductible et vecteur de chaîne d'approvisionnement. | Moyen | Moyen | **Corrigé** |
-| D4 | Aucun durcissement d'exécution : ni interdiction d'élévation de privilèges, ni retrait des capacités Linux, ni système de fichiers en lecture seule au niveau du conteneur. | Moyen | Moyen | Ouvert |
+| D4 | Aucun durcissement d'exécution : ni interdiction d'élévation de privilèges, ni retrait des capacités Linux, ni système de fichiers en lecture seule au niveau du conteneur. | Moyen | Moyen | **Partiellement corrigé** (§6.2) |
 | D5 | Les secrets sont transmis par variables d'environnement, donc visibles via l'inspection du conteneur et dans `/proc`. | Moyen | Moyen | Ouvert |
 | D6 | Le fichier `.env` était lisible par tous les utilisateurs de la machine (permissions 664). | Faible | Moyen | **Corrigé** |
 | D7 | ✅ PostgreSQL n'expose aucun port ; chaque service a une sonde de santé ; les limites mémoire sont explicites et justifiées par des mesures ; les variables obligatoires font échouer le démarrage plutôt que de prendre une valeur par défaut silencieuse. | — | — | — |
+| D8 | `MINIO_ROOT_USER` n'avait aucune garde `:?`, contrairement à `MINIO_ROOT_PASSWORD` juste à côté et à toutes les autres variables obligatoires du fichier — seule exception à l'invariant décrit en D7. Absente du `.env`, MinIO démarrait avec un identifiant root vide plutôt que d'échouer. | Faible | Moyen | **Corrigé** (§6.1) |
 
 ### 3.6 Transverse
 
@@ -184,15 +187,52 @@ Par ordre de priorité, si le projet devait être déployé hors de la machine d
    de code pour une garantie d'intégrité qui ne dépend plus uniquement de TLS.
 5. **Valider les composants de chemin** (`source`, `panel`, date) avant construction des clés
    d'objet (I1).
-6. **Durcir l'exécution des conteneurs** : interdiction d'élévation de privilèges, retrait des
-   capacités Linux inutiles (D4).
+6. **Achever le durcissement de l'exécution des conteneurs** (D4, complément) : le retrait
+   général des capacités Linux (`cap_drop: [ALL]`) casse `postgres` et `mc` (§6.2) — il
+   faudrait le réintroduire service par service, en ne réattribuant que `CHOWN`/`FOWNER` via
+   `cap_add` là où c'est nécessaire, puis revérifier chaque service en conditions réelles.
 7. **Passer les secrets par fichiers montés** plutôt que par variables d'environnement (D5).
 8. **Ajouter une intégration continue** exécutant les tests, un scan de vulnérabilités des
    dépendances et un scan des images (G1).
 
 ---
 
-## 6. Conclusion
+## 6. Mise à jour du 25 septembre 2026
+
+Deux corrections complémentaires apportées à `docker-compose.yml`, à l'occasion d'une relecture
+ciblée sur ce fichier.
+
+### 6.1 Garde manquante sur `MINIO_ROOT_USER` (D8)
+
+`MINIO_ROOT_USER` était la seule variable obligatoire du fichier sans garde `:?` — un oubli
+plutôt qu'un choix, puisque `MINIO_ROOT_PASSWORD` juste à côté en a une. Corrigé aux deux
+endroits où elle apparaît (`minio`, `minio-init`) : `${MINIO_ROOT_USER:?MINIO_ROOT_USER
+obligatoire, à renseigner}`.
+
+### 6.2 Durcissement d'exécution partiel (D4)
+
+`security_opt: [no-new-privileges:true]` a été ajouté à tous les services : aucun conteneur ne
+peut plus obtenir plus de privilèges qu'au démarrage (par exemple via un binaire setuid dans
+l'image). Vérifié en conditions réelles : `postgres`, `minio` et `minio-init` démarrent sans
+changement de comportement.
+
+`cap_drop: [ALL]` a aussi été essayé, puis retiré après l'avoir vérifié en conditions réelles :
+
+| Service | Symptôme observé avec `cap_drop: [ALL]` |
+|---|---|
+| `postgres` | `chmod: /var/lib/postgresql/data: Operation not permitted` en boucle ; conteneur `unhealthy`, ne démarre jamais |
+| `minio-init` | `mc: <ERROR> Unable to save new mc config. mkdir /root/.mc: permission denied` ; l'amorçage des buckets n'a pas lieu |
+
+Les deux entrypoints ont besoin de `CHOWN`/`FOWNER` pour préparer leurs fichiers au démarrage
+(`chmod` sur le répertoire de données Postgres, création de `~/.mc` par le client MinIO). Sans
+`cap_drop`, les trois mêmes services redémarrés sont revérifiés `healthy` (`postgres`, `minio`)
+et `minio-init` amorce à nouveau ses quatre buckets et le compte de service `airflow-lake` avec
+succès. Le retrait complet des capacités reste donc à faire plus finement (recommandation 6,
+§5) plutôt qu'en un seul `cap_drop: [ALL]` global.
+
+---
+
+## 7. Conclusion
 
 L'architecture du pipeline présente plusieurs propriétés favorables à la sécurité, qui ne sont
 pas des ajouts tardifs mais des conséquences de sa conception : la logique métier est isolée de
