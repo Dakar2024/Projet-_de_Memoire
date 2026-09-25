@@ -41,15 +41,14 @@ x-airflow-common: &airflow-common
     AWS_REGION: us-east-1
     NCBI_EMAIL: ${NCBI_EMAIL}
     NCBI_API_KEY: ${NCBI_API_KEY:-}
-    # Alertes : relais SMTP de Resend, le même fournisseur que le backend de
-    # l'application utilisera. Le mot de passe est la clé API. Sans clé ni
-    # destinataire, les tâches échouent normalement, seul le mail ne part pas.
-    AIRFLOW__SMTP__SMTP_HOST: smtp.resend.com
-    AIRFLOW__SMTP__SMTP_PORT: "587"
-    AIRFLOW__SMTP__SMTP_STARTTLS: "True"
-    AIRFLOW__SMTP__SMTP_SSL: "False"
-    AIRFLOW__SMTP__SMTP_USER: resend
-    AIRFLOW__SMTP__SMTP_PASSWORD: ${RESEND_API_KEY:-}
+    # Alertes : serveur d'envoi laissé au choix, tout vient du .env. Sans serveur
+    # ni destinataire, les tâches échouent normalement, seul le mail ne part pas.
+    AIRFLOW__SMTP__SMTP_HOST: ${SMTP_HOST:-}
+    AIRFLOW__SMTP__SMTP_PORT: ${SMTP_PORT:-587}
+    AIRFLOW__SMTP__SMTP_STARTTLS: ${SMTP_STARTTLS:-True}
+    AIRFLOW__SMTP__SMTP_SSL: ${SMTP_SSL:-False}
+    AIRFLOW__SMTP__SMTP_USER: ${SMTP_USER:-}
+    AIRFLOW__SMTP__SMTP_PASSWORD: ${SMTP_PASSWORD:-}
     AIRFLOW__SMTP__SMTP_MAIL_FROM: ${ALERT_FROM:-}
     ALERT_EMAIL: ${ALERT_EMAIL:-}
   volumes:
@@ -64,6 +63,7 @@ x-airflow-common: &airflow-common
     - airflow-logs:/opt/airflow/logs
   working_dir: /opt/projet
   networks:
+
     - genomique-network
   depends_on:
     postgres:

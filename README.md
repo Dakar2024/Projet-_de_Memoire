@@ -200,10 +200,11 @@ Planification hebdomadaire, avec `crontab -e` :
 ### Recevoir les alertes
 
 Le pipeline tourne une fois par mois sans surveillance : sans alerte, un échec ne se voit qu'en
-ouvrant l'interface. Airflow envoie un e-mail à chaque échec de tâche, via le relais SMTP de
-Resend. Renseigner dans `.env` : `RESEND_API_KEY` (la clé sert de mot de passe SMTP),
-`ALERT_FROM` (une adresse d'un domaine vérifié dans Resend) et `ALERT_EMAIL` (destinataires,
-séparés par des virgules). Laisser ces clés vides ne casse rien : seul l'envoi est désactivé.
+ouvrant l'interface. Airflow envoie un e-mail à chaque échec de tâche, dès qu'un serveur d'envoi
+est renseigné dans `.env` : `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `ALERT_FROM`
+et `ALERT_EMAIL` (destinataires séparés par des virgules). N'importe quel fournisseur SMTP
+convient. Laisser ces clés vides ne casse rien : les tâches échouent normalement, seul l'envoi
+est désactivé.
 
 ## Sources de données
 

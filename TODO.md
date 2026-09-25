@@ -6,21 +6,21 @@ ce qui reste à faire.
 
 ---
 
-## 1. Resend — à finir quand le backend sera en place
+## 1. Alertes — brancher un serveur d'envoi
 
-La configuration côté pipeline est **déjà faite** : Airflow envoie un e-mail à chaque échec de
-tâche via le relais SMTP de Resend (`smtp.resend.com:587`, utilisateur `resend`, mot de passe =
-clé API). Il ne manque que le compte.
+Le câblage est **déjà fait** : Airflow envoie un e-mail à chaque échec de tâche dès qu'un
+serveur SMTP est renseigné. Il ne manque que le fournisseur, volontairement laissé de côté
+pour être choisi au moment du backend.
 
-- [ ] **Vérifier un domaine dans Resend.** Leur documentation l'exige pour l'envoi SMTP :
-      l'adresse de test `onboarding@resend.dev` ne fonctionne pas par ce canal.
-- [ ] **Créer une clé API** et la mettre dans `.env` sous `RESEND_API_KEY`.
-- [ ] **Renseigner `ALERT_FROM`** (une adresse du domaine vérifié) et **`ALERT_EMAIL`**
-      (le ou les destinataires, séparés par des virgules).
+- [ ] **Brancher Resend au moment du backend**, pour que les envois du pipeline et ceux de
+      l'application partent du même compte et soient visibles au même endroit.
+      Relais : `smtp.resend.com`, port 587 en STARTTLS, utilisateur `resend`, mot de passe =
+      clé API. Leur documentation exige un **domaine vérifié** : l'adresse de test
+      `onboarding@resend.dev` ne passe pas par SMTP.
+- [ ] **Renseigner dans `.env`** : `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`,
+      `ALERT_FROM`, `ALERT_EMAIL`.
 - [ ] **Tester pour de vrai** : faire échouer une tâche volontairement et vérifier que le mail
       arrive. Une alerte non testée ne compte pas.
-- [ ] **Réutiliser le même compte Resend dans le backend**, pour que les envois du pipeline et
-      ceux de l'application soient visibles au même endroit.
 
 Tant que ces clés sont vides, rien ne casse : les tâches échouent normalement, seul le mail ne
 part pas.
