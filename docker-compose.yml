@@ -13,6 +13,12 @@ x-airflow-common: &airflow-common
   # tourner sous le uid propriétaire de ce dossier sur l'hôte. Groupe 0 et uid
   # arbitraire, selon la convention de l'image officielle.
   user: "${AIRFLOW_UID:?AIRFLOW_UID obligatoire, sortie de id -u sur l hôte}:0"
+  # Durcissement d'exécution (D4 de l'audit sécurité) : interdit à ces conteneurs
+  # d'obtenir plus de privilèges qu'au démarrage (ex. via un binaire setuid).
+  # `cap_drop: [ALL]` a été essayé et retiré : l'entrypoint Airflow (comme celui de
+  # postgres et mc ci-dessous) a besoin de CHOWN/FOWNER pour préparer ses fichiers.
+  security_opt:
+    - no-new-privileges:true
   environment:
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
@@ -95,6 +101,9 @@ services:
     image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
     container_name: genomique-postgres
     restart: unless-stopped
+    # Même durcissement que x-airflow-common ci-dessus (D4 de l'audit sécurité).
+    security_opt:
+      - no-new-privileges:true
     environment:
       POSTGRES_USER: airflow
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD obligatoire, à renseigner}
@@ -121,8 +130,11 @@ services:
     container_name: genomique-minio
     restart: unless-stopped
     command: server /data --console-address ":9001"
+    # Même durcissement que x-airflow-common ci-dessus (D4 de l'audit sécurité).
+    security_opt:
+      - no-new-privileges:true
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER obligatoire, à renseigner}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD obligatoire, à renseigner}
     ports:
       # Ports hôte configurables : sur une machine de développement, 9000 et 9001
@@ -152,8 +164,11 @@ services:
     depends_on:
       minio:
         condition: service_healthy
+    # Même durcissement que x-airflow-common ci-dessus (D4 de l'audit sécurité).
+    security_opt:
+      - no-new-privileges:true
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER obligatoire, à renseigner}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD obligatoire, à renseigner}
       # Seul service à voir les identifiants root : il amorce les buckets, la
       # politique et le compte de service, puis s'arrête.
