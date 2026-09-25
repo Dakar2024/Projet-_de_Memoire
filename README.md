@@ -104,6 +104,9 @@ docker compose ps        # les services doivent être « healthy »
                          # (minio-init et airflow-init s'arrêtent normalement après l'initialisation)
 ```
 
+Guide de prise en main d'Airflow — lancer un run, lire un échec, relancer une tâche, ajouter
+une étape : `reference/guide_airflow.md`.
+
 ### Connexion à Airflow
 
 Utilisateur `admin` ; le mot de passe est généré au démarrage :
