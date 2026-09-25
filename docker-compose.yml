@@ -34,17 +34,16 @@ x-airflow-common: &airflow-common
     # Partagé entre composants : sinon chaque conteneur génère le sien.
     AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:?AIRFLOW_JWT_SECRET obligatoire, à renseigner}
     # Format `utilisateur:rôle`, pas `utilisateur:mot_de_passe` : "admin" ici désigne le
-    # rôle ADMIN. Le mot de passe réel est généré par Airflow à la première initialisation,
-    # imprimé dans les logs de l'apiserver, et rendu stable entre redémarrages par le
-    # chemin explicite ci-dessous (sous le volume `airflow-logs`, déjà monté).
+    # rôle ADMIN, pas un mot de passe. Le mot de passe réel vient de AIRFLOW_ADMIN_PASSWORD
+    # (.env) : `airflow-init` l'écrit dans le fichier ci-dessous à chaque démarrage, pour
+    # qu'aucun mot de passe ne soit généré par Airflow ni codé en dur ici.
     AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_USERS: admin:admin
-    # Chemin explicite plutôt que le défaut sous AIRFLOW_HOME : sans lui, ce fichier
-    # vivrait dans la couche éphémère du conteneur et un mot de passe différent serait
-    # généré à chaque recréation. Rangé directement sous /opt/airflow/logs, sans
-    # sous-dossier : Airflow ouvre ce fichier en "a+" sans créer son répertoire parent
-    # (vérifié : FileNotFoundError), et un nouveau volume dédié serait créé root:root par
-    # Docker, illisible pour l'UID arbitraire du conteneur (vérifié : PermissionError).
-    # /opt/airflow/logs a déjà les bonnes permissions et existe déjà.
+    AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:?AIRFLOW_ADMIN_PASSWORD obligatoire, à renseigner}
+    # Chemin explicite plutôt que le défaut sous AIRFLOW_HOME, et rangé directement sous
+    # /opt/airflow/logs sans sous-dossier : un nouveau volume dédié serait créé root:root
+    # par Docker (PermissionError vérifiée), et Airflow n'aurait pas créé le sous-dossier
+    # d'un chemin plus profond (FileNotFoundError vérifiée) — /opt/airflow/logs, déjà
+    # monté, a d'emblée les bonnes permissions.
     AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_PASSWORDS_FILE: /opt/airflow/logs/simple_auth_manager_passwords.json.generated
     PYTHONPATH: /opt/projet:/opt/projet/src
     LAKE_URI: "s3://"
@@ -196,15 +195,19 @@ services:
   airflow-init:
     <<: *airflow-common
     container_name: genomique-airflow-init
-    # Migration puis création du pool `ncbi` (NCBI_POOL des DAGs) : un slot, parce que le
-    # limiteur de débit NCBI est par processus. `pools set` écrase le pool existant, donc
-    # la commande est idempotente. `bash` passe par l'entrypoint de l'image, qui prépare
-    # l'utilisateur au uid arbitraire avant d'exécuter la commande.
+    # Migration, mot de passe admin, puis création du pool `ncbi` (NCBI_POOL des DAGs) :
+    # un slot, parce que le limiteur de débit NCBI est par processus. Le script Python
+    # (re)synchronise le mot de passe admin sur AIRFLOW_ADMIN_PASSWORD à chaque run — sans
+    # ça, Airflow le générerait lui-même à la première initialisation de l'apiserver,
+    # imprimé dans ses logs et introuvable ailleurs. `pools set` écrase le pool existant,
+    # donc toute la commande est idempotente. `bash` passe par l'entrypoint de l'image, qui
+    # prépare l'utilisateur au uid arbitraire avant d'exécuter la commande.
     command:
       - bash
       - -c
       - >-
         airflow db migrate &&
+        python3 -c "import json, os; p = os.environ['AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_PASSWORDS_FILE']; os.makedirs(os.path.dirname(p), exist_ok=True); d = json.load(open(p)) if os.path.exists(p) else {}; d['admin'] = os.environ['AIRFLOW_ADMIN_PASSWORD']; json.dump(d, open(p, 'w'))" &&
         airflow pools set ncbi 1 "E-utilities NCBI : une tâche à la fois, limite de débit globale" &&
         airflow pools set silver_write 1 "Écriture Silver : tables partagées entre panels, un seul run bronze_to_silver à la fois" &&
         airflow pools set gold_write 1 "Écriture Gold : tables partagées entre panels, un seul run silver_to_gold à la fois"
