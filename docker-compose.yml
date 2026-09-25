@@ -33,9 +33,19 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-apiserver:8080/execution/
     # Partagé entre composants : sinon chaque conteneur génère le sien.
     AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:?AIRFLOW_JWT_SECRET obligatoire, à renseigner}
-    # Identifiant par défaut, non paramétrable ici. Mitigé pour l'instant par le port
-    # apiserver lié à 127.0.0.1 (voir plus bas) : à changer avant tout reverse proxy.
+    # Format `utilisateur:rôle`, pas `utilisateur:mot_de_passe` : "admin" ici désigne le
+    # rôle ADMIN. Le mot de passe réel est généré par Airflow à la première initialisation,
+    # imprimé dans les logs de l'apiserver, et rendu stable entre redémarrages par le
+    # chemin explicite ci-dessous (sous le volume `airflow-logs`, déjà monté).
     AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_USERS: admin:admin
+    # Chemin explicite plutôt que le défaut sous AIRFLOW_HOME : sans lui, ce fichier
+    # vivrait dans la couche éphémère du conteneur et un mot de passe différent serait
+    # généré à chaque recréation. Rangé directement sous /opt/airflow/logs, sans
+    # sous-dossier : Airflow ouvre ce fichier en "a+" sans créer son répertoire parent
+    # (vérifié : FileNotFoundError), et un nouveau volume dédié serait créé root:root par
+    # Docker, illisible pour l'UID arbitraire du conteneur (vérifié : PermissionError).
+    # /opt/airflow/logs a déjà les bonnes permissions et existe déjà.
+    AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_PASSWORDS_FILE: /opt/airflow/logs/simple_auth_manager_passwords.json.generated
     PYTHONPATH: /opt/projet:/opt/projet/src
     LAKE_URI: "s3://"
     AWS_ENDPOINT_URL: "http://minio:9000"
