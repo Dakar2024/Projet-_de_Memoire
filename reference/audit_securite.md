@@ -35,9 +35,9 @@ Les risques qui comptent ici sont donc, par ordre d'importance :
 ## 2. Synthèse
 
 L'audit a relevé **dix-huit points**, dont cinq traités immédiatement. Le tableau ci-dessous
-récapitule l'état après correction. Deux corrections complémentaires ont été apportées le
-25 septembre (§6) : une garde manquante sur un secret obligatoire (nouveau constat D8), et un
-durcissement partiel de l'exécution des conteneurs (D4).
+récapitule l'état après correction. Trois corrections complémentaires ont été apportées le
+25 septembre (§6) : une garde manquante sur un secret obligatoire (D8), un durcissement partiel
+de l'exécution des conteneurs (D4), et un mot de passe Airflow qui échappait à `.env` (D9).
 
 | Domaine | Points forts constatés | Corrigé | Reste à traiter |
 |---|---|---|---|
@@ -104,6 +104,7 @@ indique comment elle évoluerait sur un serveur exposé.
 | D6 | Le fichier `.env` était lisible par tous les utilisateurs de la machine (permissions 664). | Faible | Moyen | **Corrigé** |
 | D7 | ✅ PostgreSQL n'expose aucun port ; chaque service a une sonde de santé ; les limites mémoire sont explicites et justifiées par des mesures ; les variables obligatoires font échouer le démarrage plutôt que de prendre une valeur par défaut silencieuse. | — | — | — |
 | D8 | `MINIO_ROOT_USER` n'avait aucune garde `:?`, contrairement à `MINIO_ROOT_PASSWORD` juste à côté et à toutes les autres variables obligatoires du fichier — seule exception à l'invariant décrit en D7. Absente du `.env`, MinIO démarrait avec un identifiant root vide plutôt que d'échouer. | Faible | Moyen | **Corrigé** (§6.1) |
+| D9 | Le mot de passe admin de l'interface Airflow n'était pas codé en dur, mais échappait quand même à la règle « tout secret vient de `.env` » : le `SimpleAuthManager` le générait lui-même à la première initialisation et ne l'exposait que dans les logs de l'apiserver, sans qu'aucune variable ne le contrôle. | Faible | Moyen | **Corrigé** (§6.3) |
 
 ### 3.6 Transverse
 
@@ -229,6 +230,31 @@ Les deux entrypoints ont besoin de `CHOWN`/`FOWNER` pour préparer leurs fichier
 et `minio-init` amorce à nouveau ses quatre buckets et le compte de service `airflow-lake` avec
 succès. Le retrait complet des capacités reste donc à faire plus finement (recommandation 6,
 §5) plutôt qu'en un seul `cap_drop: [ALL]` global.
+
+### 6.3 Mot de passe admin Airflow sorti de `.env` (D9)
+
+`AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_USERS: admin:admin` a le format `utilisateur:rôle`, pas
+`utilisateur:mot_de_passe` — le second `admin` désigne le rôle ADMIN. Le vrai mot de passe était
+généré par Airflow lui-même à la première initialisation de l'apiserver et seulement imprimé
+dans ses logs, sans persister nulle part de façon fiable : sans volume sur le fichier généré, il
+changeait même à chaque recréation du conteneur.
+
+Corrigé en trois temps, chacun vérifié en conditions réelles avant de passer au suivant :
+
+| Tentative | Résultat |
+|---|---|
+| Fichier de mots de passe sur un nouveau volume dédié | `PermissionError` : un volume neuf est créé `root:root` par Docker, illisible par l'UID arbitraire du conteneur |
+| Fichier sous un sous-dossier de `airflow-logs` (volume déjà monté) | `FileNotFoundError` : Airflow ouvre ce fichier en `a+` sans créer son répertoire parent |
+| Fichier directement sous `airflow-logs`, sans sous-dossier | Fonctionne : ce chemin existe déjà avec les bonnes permissions |
+
+Une nouvelle variable `AIRFLOW_ADMIN_PASSWORD` (`.env.example` et `.env`) porte maintenant ce
+mot de passe. `airflow-init` le (ré)écrit dans le fichier à chaque run, avant la création des
+pools — idempotent, dans le même fichier que celui qu'Airflow aurait rempli lui-même, donc plus
+aucune génération ni impression en logs.
+
+Vérifié en conditions réelles : le fichier persisté contient la valeur de `.env` après le run
+de `airflow-init` ; l'apiserver démarre `healthy` sans imprimer de ligne de génération ;
+`POST /auth/token` renvoie `201` avec ce mot de passe et `401` avec un mot de passe erroné.
 
 ---
 
