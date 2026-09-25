@@ -130,3 +130,14 @@ def test_a_manual_run_without_sources_date_fails_with_instructions(dag):
 
     with pytest.raises(AirflowFailException, match="--conf"):
         dag.get_task("resolve_sources_date").python_callable()
+
+
+def test_task_failures_are_emailed(dag):
+    """Un pipeline mensuel sans surveillance : sans alerte, un échec ne se voit que
+    si quelqu'un ouvre l'interface. Le destinataire vient de l'environnement pour
+    ne pas figer une adresse dans le dépôt."""
+    args = dag.default_args
+
+    assert args["email_on_failure"] is True
+    assert args["email_on_retry"] is False
+    assert args["email"] == ["alerte@example.test"]

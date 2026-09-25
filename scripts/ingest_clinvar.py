@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from ingestion.clinvar import archive_url_for, archive_version_for
 from ingestion.config import DATA_EXTERNAL_DIR, RAW
 from ingestion.download import download_to_file
+from ingestion.maintenance import ensure_free_space, purge_old_downloads
 from ingestion.storage import (
     begin_partition,
     build_manifest,
@@ -30,6 +31,9 @@ def ingest_clinvar(
     """
     url = archive_url_for(logical_date)
     cache_dir = cache_dir or DATA_EXTERNAL_DIR
+    # Avant le transfert, pas pendant : un disque saturé se manifesterait sinon par
+    # une écriture en échec à la fin d'un téléchargement de 440 Mo.
+    ensure_free_space(cache_dir)
     local = download_to_file(url, cache_dir / f"variant_summary_{archive_version_for(logical_date)}.txt.gz")
 
     partition = partition_uri(RAW, "clinvar", logical_date, lake_uri=lake_uri)
@@ -47,6 +51,9 @@ def ingest_clinvar(
             record_count=1,
         ),
     )
+    # Purge après coup seulement : tant que la partition n'est pas finalisée, le
+    # fichier local reste la seule copie exploitable.
+    purge_old_downloads(cache_dir)
     return partition
 
 

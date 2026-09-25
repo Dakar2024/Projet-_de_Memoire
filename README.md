@@ -180,6 +180,31 @@ pytest -q                  # logique métier : rapide, sans réseau ni conteneur
 pytest tests_airflow -q    # structure des DAGs Airflow (passe séparée, plus lente)
 ```
 
+### Sauvegarder le lac
+
+Les archives mensuelles ClinVar antérieures à 2023 ne sont plus téléchargeables : une perte du
+lac ne se rattrape donc pas par un simple rejeu. Le script sauvegarde les quatre buckets et la
+base de métadonnées d'Airflow, en conservant les quatre dernières copies :
+
+```bash
+./scripts/sauvegarde.sh                                  # vers ~/sauvegardes-genomique/
+DESTINATION_SAUVEGARDE=/mnt/disque-externe ./scripts/sauvegarde.sh
+```
+
+Planification hebdomadaire, avec `crontab -e` :
+
+```
+0 3 * * 0 cd /chemin/vers/Projet-_de_Memoire && ./scripts/sauvegarde.sh >> ~/sauvegarde.log 2>&1
+```
+
+### Recevoir les alertes
+
+Le pipeline tourne une fois par mois sans surveillance : sans alerte, un échec ne se voit qu'en
+ouvrant l'interface. Airflow envoie un e-mail à chaque échec de tâche, via le relais SMTP de
+Resend. Renseigner dans `.env` : `RESEND_API_KEY` (la clé sert de mot de passe SMTP),
+`ALERT_FROM` (une adresse d'un domaine vérifié dans Resend) et `ALERT_EMAIL` (destinataires,
+séparés par des virgules). Laisser ces clés vides ne casse rien : seul l'envoi est désactivé.
+
 ## Sources de données
 
 | Source | Contenu | Accès |

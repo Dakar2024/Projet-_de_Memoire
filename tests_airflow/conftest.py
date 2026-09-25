@@ -7,3 +7,7 @@ import tempfile
 # développeur. conftest.py est chargé avant les modules de test, donc avant tout
 # import d'Airflow.
 os.environ["AIRFLOW_HOME"] = tempfile.mkdtemp(prefix="airflow-tests-")
+
+# Destinataire d'alerte factice : les DAGs le lisent dans l'environnement au moment
+# de leur construction, et les tests vérifient qu'il arrive bien jusqu'à eux.
+os.environ["ALERT_EMAIL"] = "alerte@example.test"

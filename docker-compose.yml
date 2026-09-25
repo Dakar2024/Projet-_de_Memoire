@@ -41,6 +41,17 @@ x-airflow-common: &airflow-common
     AWS_REGION: us-east-1
     NCBI_EMAIL: ${NCBI_EMAIL}
     NCBI_API_KEY: ${NCBI_API_KEY:-}
+    # Alertes : relais SMTP de Resend, le même fournisseur que le backend de
+    # l'application utilisera. Le mot de passe est la clé API. Sans clé ni
+    # destinataire, les tâches échouent normalement, seul le mail ne part pas.
+    AIRFLOW__SMTP__SMTP_HOST: smtp.resend.com
+    AIRFLOW__SMTP__SMTP_PORT: "587"
+    AIRFLOW__SMTP__SMTP_STARTTLS: "True"
+    AIRFLOW__SMTP__SMTP_SSL: "False"
+    AIRFLOW__SMTP__SMTP_USER: resend
+    AIRFLOW__SMTP__SMTP_PASSWORD: ${RESEND_API_KEY:-}
+    AIRFLOW__SMTP__SMTP_MAIL_FROM: ${ALERT_FROM:-}
+    ALERT_EMAIL: ${ALERT_EMAIL:-}
   volumes:
     # Code monté en lecture seule : une exécution arbitraire dans une tâche ne doit
     # pas pouvoir réécrire le dépôt de l'hôte. Python n'a pas besoin d'y écrire — il
@@ -48,6 +59,9 @@ x-airflow-common: &airflow-common
     - .:/opt/projet:ro
     # Seule exception au read-only : reçoit les téléchargements de sources.
     - ./data:/opt/projet/data
+    # Les journaux de tâches vivaient dans le conteneur : un `--build` les effaçait
+    # tous, rendant impossible le diagnostic d'un incident passé.
+    - airflow-logs:/opt/airflow/logs
   working_dir: /opt/projet
   networks:
     - genomique-network
@@ -267,6 +281,7 @@ services:
 volumes:
   postgres-data:
   minio-data:
+  airflow-logs:
 
 networks:
   genomique-network:

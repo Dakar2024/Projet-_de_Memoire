@@ -10,6 +10,7 @@ sys.path[:0] = [str(REPO_ROOT / "src"), str(REPO_ROOT)]
 from airflow.sdk import DAG, task
 from airflow.sdk.exceptions import AirflowFailException
 
+from dags.common.alerting import alert_args
 from dags.common.dates import record_sources_date, require_logical_date
 from dags.common.panels import SHARED_SOURCES, SOURCES_READY
 from ingestion.errors import ConfigurationError
@@ -19,6 +20,7 @@ from scripts.ingest_hpo_files import ingest_hpo_files
 from transformations.raw_to_bronze import raw_to_bronze
 
 DEFAULT_ARGS = {
+    **alert_args(),
     "retries": 3,
     "retry_delay": dt.timedelta(minutes=5),
     "execution_timeout": dt.timedelta(hours=2),
