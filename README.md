@@ -29,6 +29,67 @@ organisées. Ce dépôt construit exactement cela :
 | `silver` | Données nettoyées, dédoublonnées, reliées entre elles, historisées | Delta Lake | ✅ livré |
 | `gold` | Tables finales pour le RAG et pour l'analyse | Delta Lake | ✅ livré |
 
+## Architecture globale du pipeline
+
+```mermaid
+flowchart TD
+    subgraph SRC["Sources publiques"]
+        S1[ClinVar]
+        S2[NCBI Gene]
+        S3[MedGen]
+        S4[HPO]
+        S5[RefSeq]
+    end
+
+    ING["scripts/ingest_*.py<br/>un script par source"]
+
+    RAW[("raw · MinIO<br/>format d'origine")]
+    BRONZE[("bronze<br/>Parquet")]
+    SILVER[("silver<br/>Delta Lake")]
+    QS{{quality_check_silver}}
+    GOLDRAG[("gold/rag/documents<br/>Delta Lake")]
+    GOLDAN[("gold/analytique<br/>Delta Lake")]
+    QG{{quality_check_gold}}
+    STOP1[Pipeline arrêté]
+    STOP2[Pipeline arrêté]
+
+    RAGAPP[RAG — assistant<br/>chunking, embeddings, LLM]
+    BIAPP[BI / DuckDB<br/>analyse]
+
+    S1 & S2 & S3 & S4 & S5 --> ING --> RAW
+    RAW -->|raw_to_bronze| BRONZE
+    BRONZE -->|bronze_to_silver| SILVER
+    SILVER --> QS
+    QS -- ok --> GOLDRAG
+    QS -- ok --> GOLDAN
+    QS -. incohérent .-> STOP1
+    GOLDRAG --> QG
+    GOLDAN --> QG
+    QG -- ok --> RAGAPP
+    QG -- ok --> BIAPP
+    QG -. incohérent .-> STOP2
+
+    subgraph AF["Orchestration Airflow"]
+        DAG1["dag_acquisition_sources<br/>mensuel, le 10 à 06:00 UTC"]
+        DAG2["dag_genomic_pipeline_brca / _sickle<br/>déclenché après l'acquisition"]
+    end
+
+    DAG1 -. orchestre .-> ING
+    DAG2 -. orchestre .-> BRONZE
+    DAG2 -. orchestre .-> SILVER
+    DAG2 -. orchestre .-> QS
+    DAG2 -. orchestre .-> GOLDRAG
+    DAG2 -. orchestre .-> GOLDAN
+    DAG2 -. orchestre .-> QG
+```
+
+- Chaque flèche pleine est un passage de couche (`src/transformations/`) ; chaque flèche en
+  pointillés est un déclenchement orchestré par un DAG Airflow (`dags/`).
+- Une partition n'est lisible par l'étape suivante qu'une fois son marqueur `_SUCCESS` écrit
+  (voir [Principes d'architecture](#principes-darchitecture)).
+- Un `quality_check_*` qui échoue arrête le run : la couche suivante n'est jamais écrite à
+  partir de données incohérentes.
+
 ## Services et ports
 
 Une fois la stack Docker démarrée :
@@ -304,13 +365,12 @@ src/transformations/  passages entre couches : raw_to_bronze, bronze_to_silver,
                       quality_check_gold
 scripts/              ingest_*.py : un script par source, écrit dans raw
                       run_collection.py : ancien script de collecte (voir plus bas)
+                      sauvegarde.sh : sauvegarde des buckets MinIO et de PostgreSQL
 dags/                 DAGs Airflow : acquisition mensuelle + un DAG par panel
 docker/               image Airflow, création des buckets MinIO
 docker-compose.yml    stack Airflow 3 + PostgreSQL + MinIO
 tests/                tests de la logique (rapides)
 tests_airflow/        tests de structure des DAGs
-reference/            contexte du mémoire : problématique, architecture, panels, choix techniques
-archive/nifi/         orchestration NiFi, évaluée puis écartée
 data/                 fichiers téléchargés et lac local (ignorés par git)
 ```
 
