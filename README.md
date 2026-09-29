@@ -107,13 +107,19 @@ docker compose ps        # les services doivent être « healthy »
 Guide de prise en main d'Airflow — lancer un run, lire un échec, relancer une tâche, ajouter
 une étape : `reference/guide_airflow.md`.
 
+Protocole d'évaluation du pipeline — les sept niveaux de preuve, l'échantillon de variants à
+confronter aux fiches ClinVar, et la grille de résultats à remplir :
+`reference/evaluation.md`.
+
 ### Connexion à Airflow
 
-Utilisateur `admin` ; le mot de passe est généré au démarrage :
+Utilisateur `admin` ; le mot de passe est celui que vous avez mis dans `.env` sous
+`AIRFLOW_ADMIN_PASSWORD`, réappliqué à chaque démarrage. Pour le relire tel que la stack
+l'utilise :
 
 ```bash
 docker exec genomique-airflow-apiserver \
-  cat /opt/airflow/simple_auth_manager_passwords.json.generated
+  cat /opt/airflow/logs/simple_auth_manager_passwords.json.generated
 ```
 
 ## Commandes courantes
