@@ -66,6 +66,15 @@ x-airflow-common: &airflow-common
     AIRFLOW__SMTP__SMTP_PASSWORD: ${SMTP_PASSWORD:-}
     AIRFLOW__SMTP__SMTP_MAIL_FROM: ${ALERT_FROM:-}
     ALERT_EMAIL: ${ALERT_EMAIL:-}
+    # RAG (sous-projet E1) : la tâche index_rag_documents écrit avec le compte
+    # rag_indexer, sans droit sur le schéma.
+    RAG_EMBEDDINGS_URL: http://rag-embeddings:8080
+    RAG_EMBEDDINGS_API_KEY: ${RAG_EMBEDDINGS_API_KEY:?RAG_EMBEDDINGS_API_KEY obligatoire, à renseigner}
+    RAG_PG_HOST: rag-postgres
+    RAG_PG_PORT: "5432"
+    RAG_PG_DB: rag
+    RAG_PG_USER: rag_indexer
+    RAG_PG_PASSWORD: ${RAG_INDEXER_PASSWORD:?RAG_INDEXER_PASSWORD obligatoire, à renseigner}
   volumes:
     # Code monté en lecture seule : une exécution arbitraire dans une tâche ne doit
     # pas pouvoir réécrire le dépôt de l'hôte. Python n'a pas besoin d'y écrire — il
@@ -78,8 +87,9 @@ x-airflow-common: &airflow-common
     - airflow-logs:/opt/airflow/logs
   working_dir: /opt/projet
   networks:
-
     - genomique-network
+    # Réseau interne du RAG : Airflow y joint rag-postgres et rag-embeddings.
+    - rag-network
   depends_on:
     postgres:
       condition: service_healthy
@@ -210,7 +220,8 @@ services:
         python3 -c "import json, os; p = os.environ['AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_PASSWORDS_FILE']; os.makedirs(os.path.dirname(p), exist_ok=True); d = json.load(open(p)) if os.path.exists(p) else {}; d['admin'] = os.environ['AIRFLOW_ADMIN_PASSWORD']; json.dump(d, open(p, 'w'))" &&
         airflow pools set ncbi 1 "E-utilities NCBI : une tâche à la fois, limite de débit globale" &&
         airflow pools set silver_write 1 "Écriture Silver : tables partagées entre panels, un seul run bronze_to_silver à la fois" &&
-        airflow pools set gold_write 1 "Écriture Gold : tables partagées entre panels, un seul run silver_to_gold à la fois"
+        airflow pools set gold_write 1 "Écriture Gold : tables partagées entre panels, un seul run silver_to_gold à la fois" &&
+        airflow pools set rag_index 1 "Indexation RAG : une indexation à la fois, le service d'embedding sature le processeur"
     restart: "no"
 
 #----------------------------------
@@ -304,13 +315,137 @@ services:
           memory: 768m
 
 #----------------------------------
+# RAG — base vectorielle (PostgreSQL + pgvector), séparée de la base d'Airflow
+#----------------------------------
+  rag-postgres:
+    image: pgvector/pgvector:0.8.6-pg16@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b
+    container_name: genomique-rag-postgres
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      # Superutilisateur d'amorçage : seul rag-postgres-init s'en sert. Les tâches
+      # passent par rag_indexer, l'API par rag_reader (RAG/sql/001_schema.sql).
+      POSTGRES_USER: rag_owner
+      POSTGRES_PASSWORD: ${RAG_OWNER_PASSWORD:?RAG_OWNER_PASSWORD obligatoire, à renseigner}
+      POSTGRES_DB: rag
+    volumes:
+      - rag-postgres-data:/var/lib/postgresql/data
+    # Aucun port publié : la base n'est joignable que depuis rag-network.
+    networks:
+      - rag-network
+    healthcheck:
+      # TCP et non socket : à la première initialisation, l'image lance un serveur
+      # temporaire qui n'écoute que sur le socket, d'où un faux « healthy » possible.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U rag_owner -d rag"]
+      interval: 10s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+#----------------------------------
+# RAG — schéma, comptes et droits (tourne à chaque démarrage, puis s'arrête)
+#----------------------------------
+  rag-postgres-init:
+    image: pgvector/pgvector:0.8.6-pg16@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b
+    container_name: genomique-rag-postgres-init
+    depends_on:
+      rag-postgres:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      PGHOST: rag-postgres
+      PGDATABASE: rag
+      PGUSER: rag_owner
+      PGPASSWORD: ${RAG_OWNER_PASSWORD:?RAG_OWNER_PASSWORD obligatoire, à renseigner}
+      RAG_INDEXER_PASSWORD: ${RAG_INDEXER_PASSWORD:?RAG_INDEXER_PASSWORD obligatoire, à renseigner}
+      RAG_READER_PASSWORD: ${RAG_READER_PASSWORD:?RAG_READER_PASSWORD obligatoire, à renseigner}
+    # Les mots de passe passent par des variables psql (-v) : ils ne sont jamais
+    # écrits dans le script SQL, et psql les cite lui-même (:'variable').
+    entrypoint:
+      - /bin/sh
+      - -c
+      - psql -q -v indexer_password="$$RAG_INDEXER_PASSWORD" -v reader_password="$$RAG_READER_PASSWORD" -f /sql/001_schema.sql
+    volumes:
+      - ./RAG/sql:/sql:ro
+    networks:
+      - rag-network
+    restart: "no"
+
+#----------------------------------
+# RAG — service d'embedding (Text Embeddings Inference, CPU)
+#----------------------------------
+  rag-embeddings:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9@sha256:2538ea1c9640d3763b15af668039d24172d063b42337b0c27796fc2be180c78d
+    container_name: genomique-rag-embeddings
+    restart: unless-stopped
+    # Utilisateur non root, racine en lecture seule, /tmp en mémoire : configuration
+    # vérifiée le 02/10/2026 (le service démarre et répond).
+    user: "${AIRFLOW_UID:?AIRFLOW_UID obligatoire, sortie de id -u sur l hôte}:0"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      # Le service exige `Authorization: Bearer <clé>` sur toute route hors /health.
+      API_KEY: ${RAG_EMBEDDINGS_API_KEY:?RAG_EMBEDDINGS_API_KEY obligatoire, à renseigner}
+    # Modèle exporté localement (docker/embeddings/) : rien n'est téléchargé au
+    # démarrage, et le réseau interne interdit de toute façon l'accès sortant.
+    command: ["--model-id", "/models/${RAG_EMBEDDING_MODEL:?RAG_EMBEDDING_MODEL obligatoire, à renseigner}", "--pooling", "mean", "--port", "8080"]
+    volumes:
+      - ./data/models:/models:ro
+    networks:
+      - rag-network
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          # Pic mesuré à 1,01 Go sur CPU (30/09/2026).
+          memory: 2g
+
+#----------------------------------
+# RAG — export des modèles (outil à la demande, profil « outils »)
+#----------------------------------
+  rag-model-export:
+    profiles: ["outils"]
+    build:
+      context: .
+      dockerfile: docker/embeddings/Dockerfile.export
+    user: "${AIRFLOW_UID:?AIRFLOW_UID obligatoire, sortie de id -u sur l hôte}:0"
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      HF_HOME: /tmp/hf
+    volumes:
+      - ./data/models:/models
+    # Seul service du RAG à sortir sur Internet : il télécharge le modèle épinglé.
+    networks:
+      - genomique-network
+    restart: "no"
+
+#----------------------------------
 # Volumes et réseau
 #----------------------------------
 volumes:
   postgres-data:
   minio-data:
   airflow-logs:
+  rag-postgres-data:
 
 networks:
   genomique-network:
     driver: bridge
+  # Réseau sans accès sortant : la base vectorielle et le service d'embedding n'ont
+  # aucune raison de joindre Internet.
+  rag-network:
+    driver: bridge
+    internal: true
