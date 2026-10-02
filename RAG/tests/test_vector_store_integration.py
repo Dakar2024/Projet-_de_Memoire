@@ -64,8 +64,10 @@ def test_delete_removes_only_the_named_documents(store):
 
 def test_a_failed_batch_leaves_no_partial_write(store):
     rows = [_row("a", "h1"), _row("b", "h2")]
+    vectors = _vectors(2)
+    vectors[1] = np.nan  # la première ligne est valide : elle doit être annulée avec la seconde
     with pytest.raises(psycopg.Error):
-        store.upsert(PANEL, rows, np.full((2, 768), np.nan, dtype=np.float32), MODEL)
+        store.upsert(PANEL, rows, vectors, MODEL)
 
     assert store.indexed_state(PANEL) == {}
 
