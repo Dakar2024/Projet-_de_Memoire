@@ -1,0 +1,21 @@
+# Configuration non secrète du RAG. Les secrets et les adresses de service viennent
+# de l'environnement (.env, voir .env.example).
+
+embedding:
+  # Empreinte de l'export servi par rag-embeddings, recopiée depuis
+  # data/models/<modèle>/export.json. Vide tant que le modèle n'est pas choisi
+  # (reference/choix_embedding.md) : l'indexation refuse alors de tourner.
+  fingerprint: ""
+  # Vecteurs de référence produits par le modèle validé (RAG/README.md).
+  canary_file: canari.json
+  # GPU et CPU donnent un cosinus ≥ 0,99897 pour un même texte (mesure du 01/10/2026) ;
+  # un autre modèle produit des vecteurs sans rapport. 0,995 sépare nettement les deux.
+  canary_min_cosine: 0.995
+  # Plafond du service : 32 textes par requête.
+  batch_size: 32
+  request_timeout_s: 60
+
+index:
+  # Même seuil que le contrôle de plausibilité du Silver : au-delà, une suppression
+  # massive trahit plus probablement une lecture du Gold incomplète qu'un vrai changement.
+  max_delete_ratio: 0.05

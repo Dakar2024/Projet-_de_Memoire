@@ -15,3 +15,11 @@ data/raw/*
 data/lake/
 !data/external/.gitkeep
 !data/raw/.gitkeep
+
+# RAG : consignes et schéma de référence de l'auteur, jamais versionnés
+RAG/consigne.md
+RAG/architecture RAG.jpeg
+# Modèles d'embedding exportés (centaines de Mo, régénérables par docker/embeddings/)
+data/models/
+# Résultats intermédiaires des expériences (vecteurs, rapports bruts)
+data/experiments/
