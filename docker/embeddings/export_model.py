@@ -1,0 +1,79 @@
+"""Exporte un modèle d'embedding pour le service rag-embeddings.
+
+Produit, dans <racine>/<nom>/ :
+- les poids en safetensors, la configuration et le tokenizer, lus par l'image GPU ;
+- onnx/model.onnx, lu par l'image CPU (le service prend l'ONNX en priorité) ;
+- export.json, avec l'empreinte SHA-256 de chaque fichier et l'empreinte de l'export,
+  à recopier dans RAG/config.yaml.
+
+Seules deux révisions épinglées sont acceptées. BioBERT n'est publié qu'en
+pytorch_model.bin (format pickle) : transformers 4.57.6 le charge avec
+`torch.load(weights_only=True)`, ce qui interdit l'exécution de code arbitraire.
+L'export est écrit dans un dossier temporaire puis renommé : un export interrompu
+n'est jamais servi.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import shutil
+import sys
+from pathlib import Path
+
+from optimum.exporters.onnx import main_export
+from transformers import AutoModel, AutoTokenizer
+
+PINNED_REVISIONS = {
+    "NeuML/pubmedbert-base-embeddings": "b79526d6ef3645e0df4530322e266f24c829f5ef",
+    "dmis-lab/biobert-base-cased-v1.2": "67c9c25b46986521ca33df05d8540da1210b3256",
+}
+
+
+def sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--model", required=True, choices=sorted(PINNED_REVISIONS))
+    parser.add_argument("--output-root", type=Path, default=Path("/models"))
+    parser.add_argument("--force", action="store_true", help="remplace un export existant")
+    args = parser.parse_args()
+
+    revision = PINNED_REVISIONS[args.model]
+    name = args.model.split("/", 1)[1]
+    final = args.output_root / name
+    partial = args.output_root / f".{name}.partial"
+    if final.exists() and not args.force:
+        sys.exit(f"{final} existe déjà : relancer avec --force pour le remplacer")
+    shutil.rmtree(partial, ignore_errors=True)
+
+    model = AutoModel.from_pretrained(args.model, revision=revision)
+    tokenizer = AutoTokenizer.from_pretrained(args.model, revision=revision)
+    model.save_pretrained(partial, safe_serialization=True)
+    tokenizer.save_pretrained(partial)
+    main_export(model_name_or_path=str(partial), output=partial / "onnx", task="feature-extraction")
+
+    files = {
+        str(path.relative_to(partial)): sha256(path)
+        for path in sorted(partial.rglob("*")) if path.is_file()
+    }
+    fingerprint = f"{args.model}@{revision[:12]}+onnx:{files['onnx/model.onnx'][:16]}"
+    manifest = {"model_id": args.model, "revision": revision, "fingerprint": fingerprint, "files": files}
+    (partial / "export.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+    if final.exists():
+        shutil.rmtree(final)
+    partial.rename(final)
+    print(fingerprint)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

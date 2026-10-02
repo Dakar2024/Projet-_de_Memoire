@@ -1,0 +1,15 @@
+# Export ONNX reproductible des modèles d'embedding. Tourne à la demande
+# (`docker compose run --rm rag-model-export …`), jamais en service permanent.
+# Environnement séparé : optimum-onnx 0.1.0 exige transformers < 4.58, incompatible
+# avec sentence-transformers 6 (vérifié le 30/09/2026).
+FROM python:3.12-slim@sha256:dddfd7e07f9d15aeeca61529320492139d21cac7f0070c00609243e51e4e0016
+
+RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu \
+        "torch==2.14.1+cpu" \
+        "transformers==4.57.6" \
+        "optimum-onnx[onnxruntime]==0.1.0" \
+        "huggingface_hub==0.36.2" \
+        "safetensors==0.8.0"
+
+COPY docker/embeddings/export_model.py /opt/export/export_model.py
+ENTRYPOINT ["python", "/opt/export/export_model.py"]
