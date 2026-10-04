@@ -5,7 +5,7 @@ embedding:
   # Empreinte de l'export servi par rag-embeddings, recopiée depuis
   # data/models/<modèle>/export.json. Vide tant que le modèle n'est pas choisi
   # (reference/choix_embedding.md) : l'indexation refuse alors de tourner.
-  fingerprint: ""
+  fingerprint: "NeuML/pubmedbert-base-embeddings@b79526d6ef36+onnx:2ab209f97e0a83ca"
   # Vecteurs de référence produits par le modèle validé (RAG/README.md).
   canary_file: canari.json
   # GPU et CPU donnent un cosinus ≥ 0,99897 pour un même texte (mesure du 01/10/2026) ;

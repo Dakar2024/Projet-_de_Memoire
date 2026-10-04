@@ -98,10 +98,18 @@ critiques que le jour d'un déploiement hors de la machine de développement.
 
 ## 5. Suite du projet
 
-- [ ] **Sous-projet RAG** : découpage, embeddings BioBERT, base vectorielle, récupération,
-      prompts, appel au LLM, API. Il lira `gold/rag/documents` (96 910 documents produits).
-      Structure de dossiers fixée par `architecture RAG.jpeg`. Une décision à trancher au
-      passage : les listes de phénotypes contiennent des termes HPO qui n'en sont pas vraiment
+- [x] **Sous-projet RAG — E1, indexation** : `gold/rag/documents` → pgvector, incrémental et
+      reprenable, tâche `index_rag_documents` en fin de DAG de panel. Modèle choisi par mesure :
+      NeuML PubMedBERT (`reference/choix_embedding.md`). Exploitation : `RAG/README.md`.
+- [ ] **Sous-projet RAG — E2, question-réponse** : recherche hybride (filtres gène et
+      signification, correspondance exacte `rs`/HGVS, similarité), prompts, appel au LLM
+      Anthropic, API Litestar. La mesure de E1 confirme que la similarité seule ne distingue pas
+      un variant pathogène d'un bénin (précision 0,305 sur la famille C).
+- [ ] **Sous-projet RAG — E3, évaluation et audit** : RAGAS, puis audit du RAG et application de
+      la même politique au pipeline. Décision à trancher **après** une première mesure RAGAS :
+      les listes de phénotypes contiennent des termes HPO qui n'en sont pas vraiment
       (« Autosomal dominant inheritance », « Middle age onset ») et occupent des places dans une
       liste plafonnée à dix.
+- [ ] **Sauvegarde de `rag-postgres-data`** dans `scripts/sauvegarde.sh`. La base se reconstruit
+      depuis le Gold, mais en ~4 h sur CPU (9 min sur GPU).
 - [ ] **Application web** : interface et API, lisant le RAG et `gold/analytique` via DuckDB.
