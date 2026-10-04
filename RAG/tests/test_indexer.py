@@ -178,3 +178,24 @@ def test_other_panels_are_untouched():
     _run(store, client, _documents(3))
 
     assert store.indexed_state("sickle") == {"gene:HBB": ("x", FP)}
+
+
+def test_run_index_refuses_a_served_model_other_than_the_configured_one(monkeypatch):
+    """Refus permanent, avant le canari, la lecture du Gold et toute connexion."""
+    from types import SimpleNamespace
+
+    from RAG.src.ingestion import indexer
+    from RAG.src.utils.errors import RagConfigurationError
+
+    def untouched(*args, **kwargs):
+        raise AssertionError("rien ne doit être lu ni joint avant le contrôle d'empreinte")
+
+    monkeypatch.setattr(indexer, "load_config", _config)
+    monkeypatch.setattr(indexer, "load_service_settings",
+                        lambda: SimpleNamespace(served_model_dir=Path("/nulle/part")))
+    monkeypatch.setattr(indexer, "served_fingerprint", lambda model_dir: "biobert@def+onnx:456")
+    for name in ("load_canary", "load_gold_documents", "PgVectorStore", "EmbeddingClient"):
+        monkeypatch.setattr(indexer, name, untouched)
+
+    with pytest.raises(RagConfigurationError, match="biobert@def\\+onnx:456"):
+        indexer.run_index("brca")
