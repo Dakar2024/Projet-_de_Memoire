@@ -18,6 +18,7 @@ from dags.common.panels import (
     PANEL_LABELS,
     PANEL_SOURCES,
     PANELS,
+    RAG_INDEX_POOL,
     SILVER_WRITE_POOL,
     SOURCES_READY,
 )
@@ -34,6 +35,9 @@ from transformations.quality_check_silver import quality_check_silver
 from transformations.raw_to_bronze import raw_to_bronze
 from transformations.silver_to_gold_analytique import silver_to_gold_analytique
 from transformations.silver_to_gold_rag import silver_to_gold_rag
+
+from RAG.src.ingestion.indexer import run_index
+from RAG.src.utils.errors import RagPermanentError
 
 DEFAULT_ARGS = {
     **alert_args(),
@@ -144,6 +148,20 @@ def build_panel_dag(panel: str, genes: list[str]) -> DAG:
         def task_quality_check_gold(sources_date: str) -> None:
             quality_check_gold(sources_date, panel)
 
+        # Une réindexation complète sur CPU dure ~4 h (mesure du 30/09/2026) : délai
+        # porté à 6 h pour cette seule tâche. Les erreurs permanentes (mauvais modèle,
+        # document trop long, Gold vide) échouent sans consommer les relances.
+        @task(
+            task_id="index_rag_documents",
+            pool=RAG_INDEX_POOL,
+            execution_timeout=dt.timedelta(hours=6),
+        )
+        def task_index_rag_documents() -> None:
+            try:
+                run_index(panel)
+            except RagPermanentError as exc:
+                raise AirflowFailException(str(exc)) from exc
+
         sources_date = task_resolve_sources_date()
         checked_raw = task_check_raw(
             task_ncbi_gene(sources_date),
@@ -159,7 +177,9 @@ def build_panel_dag(panel: str, genes: list[str]) -> DAG:
         gold_rag = task_silver_to_gold_rag(sources_date)
         gold_analytique = task_silver_to_gold_analytique(sources_date)
         checked_bronze >> silver >> quality >> [gold_rag, gold_analytique]
-        [gold_rag, gold_analytique] >> task_quality_check_gold(sources_date)
+        checked_gold = task_quality_check_gold(sources_date)
+        [gold_rag, gold_analytique] >> checked_gold
+        checked_gold >> task_index_rag_documents()
 
     return dag
 

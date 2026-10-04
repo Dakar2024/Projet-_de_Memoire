@@ -43,3 +43,8 @@ SILVER_WRITE_POOL = "silver_write"
 # Les tables Gold sont, comme les Silver, partagées entre les deux panels : le même
 # risque d'écriture concurrente s'applique. Pool créé par le service `airflow-init`.
 GOLD_WRITE_POOL = "gold_write"
+
+# Une indexation RAG à la fois : le service d'embedding sature déjà le processeur, et
+# deux indexations du même panel se bloqueraient sur le verrou de la base. Pool créé
+# par le service `airflow-init`.
+RAG_INDEX_POOL = "rag_index"
