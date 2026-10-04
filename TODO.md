@@ -113,3 +113,63 @@ critiques que le jour d'un déploiement hors de la machine de développement.
 - [ ] **Sauvegarde de `rag-postgres-data`** dans `scripts/sauvegarde.sh`. La base se reconstruit
       depuis le Gold, mais en ~4 h sur CPU (9 min sur GPU).
 - [ ] **Application web** : interface et API, lisant le RAG et `gold/analytique` via DuckDB.
+
+---
+
+## 6. RAG E1 — durcissements différés (revue finale du 04/10/2026)
+
+Écarts relevés par la revue finale de la branche `rag/e1-indexation` et volontairement laissés
+pour plus tard : aucun ne fausse l'index produit aujourd'hui, sur une machine de
+développement où seul Airflow joint la base vectorielle.
+
+### Sécurité — avant que `rag_reader` serve l'API (E2)
+
+- [ ] **Retirer le droit de tables temporaires** : `REVOKE TEMPORARY ON DATABASE rag FROM PUBLIC`.
+      Reporté : aucun client autre qu'Airflow ne se connecte avant E2.
+- [ ] **Faire converger les attributs des rôles** à chaque amorçage :
+      `ALTER ROLE … NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS`, et
+      `REVOKE ALL … FROM rag_indexer, rag_reader` avant les `GRANT`. Reporté : les rôles sont
+      créés par le script et personne d'autre ne les modifie ; à faire avant d'ouvrir
+      `rag_reader` à l'API.
+- [ ] **Passer les mots de passe à psql par `\getenv`** plutôt que par `-v` : ils apparaissent
+      brièvement dans la liste des processus et, si un `CREATE`/`ALTER ROLE` échoue, dans le
+      journal du serveur. Reporté : conteneur éphémère sur une machine mono-utilisateur ; à
+      faire avec la convergence des rôles ci-dessus.
+- [ ] **Réserver les secrets `RAG_*` et `rag-network` au scheduler**, seul à exécuter la tâche
+      d'indexation ; ils sont aujourd'hui sur tous les services Airflow, apiserver compris.
+      Reporté : demande de sortir ces clés de l'ancre `x-airflow-common` ; à faire avant
+      d'exposer l'apiserver hors de la machine.
+- [ ] **Isoler `rag-model-export`** sur un réseau d'export dédié, avec un plafond mémoire : il
+      est aujourd'hui sur `genomique-network`, qui atteint `postgres` et `minio`. Reporté :
+      outil lancé à la main, rarement ; à faire avant E2.
+- [ ] **Monter `./data/models` en lecture seule dans les services Airflow** : ils y ont
+      aujourd'hui l'écriture (via `./data`), donc une tâche compromise pourrait empoisonner le
+      modèle servi. Reporté : demande de redécouper le montage de `./data` ; à faire avant E2.
+
+### Robustesse — avant la mise en service régulière
+
+- [ ] **`connect_timeout` et `statement_timeout`** sur la connexion PostgreSQL. Reporté : seul
+      le délai de 6 h de la tâche borne aujourd'hui une base qui ne répond plus.
+- [ ] **Fermer la connexion si `register_vector` échoue** dans `__enter__`. Reporté : fuite
+      d'une connexion par échec, sans effet sur l'index.
+- [ ] **Ne pas masquer l'erreur d'origine dans `finally: unlock`** quand la connexion tombe.
+      Reporté : le diagnostic est plus difficile, l'issue (échec puis relance) reste juste.
+- [ ] **Importer le RAG dans le corps de la tâche Airflow** plutôt qu'au niveau du module : une
+      dépendance RAG manquante casse aujourd'hui l'analyse de tous les DAGs. Reporté : les
+      dépendances sont dans l'image ; à faire au prochain changement du DAG de panel.
+
+### Exploitation
+
+- [ ] **Supprimer la fenêtre sans modèle de `export_model.py --force`** (`rmtree` puis
+      `rename`). Reporté : réexport rare ; d'ici là, arrêter `rag-embeddings` avant un `--force`.
+- [ ] **Verrou de l'image d'export pour une autre architecture que x86_64.** Reporté : la
+      machine de développement est x86_64 ; à faire si l'export doit tourner ailleurs.
+- [ ] **Séparer les tests d'intégration de la base de production** : ils écrivent dans
+      `rag-postgres` sous le panel `test_integration`. Reporté : panel isolé et nettoyé par les
+      tests ; **E2 doit filtrer `panel IN ('brca','sickle')`**.
+- [ ] **Automatiser l'aller-retour complet indexation + rejeu** prévu par la spec §7.3.
+      Reporté : prouvé en conditions réelles le 04/10/2026 (RAG/README.md §6), non
+      automatisé ; à faire avec E3.
+- [ ] **Corriger l'avertissement de dépréciation Polars `is_in`** dans
+      `RAG/experiments/comparaison_embeddings.py`. Reporté : script de mesure déjà exécuté,
+      sans effet sur l'indexation ; à faire avant de le relancer.
