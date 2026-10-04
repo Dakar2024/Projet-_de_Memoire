@@ -88,6 +88,14 @@ Sortie de `evaluer`, recopiée sans modification :
 | B | 21 | 0.500 | 0.862 |
 | C | 20 | 0.055 | 0.305 |
 
+Réussite au 1ᵉʳ rang en famille A (exigée par la spec §6.2), recalculée depuis
+`data/experiments/scores.json` (rang réciproque 1 ⇔ fiche du gène en tête) :
+
+| Modèle | Fiche du gène au 1ᵉʳ rang | Rangs obtenus, triés |
+|---|---|---|
+| BioBERT | **5 / 18** | 1, 1, 1, 1, 1, 2, 3, 5, 7, 9, 10, 11, 12, 15, 49, 825, 13 658, 67 509 |
+| NeuML | **14 / 18** | 1 (×14), 2, 2, 3, 35 |
+
 **Écart moyen NeuML − BioBERT : +0,361, IC 95 % [+0,257 ; +0,469].**
 
 Par famille, à titre indicatif seulement :
@@ -100,8 +108,11 @@ Par famille, à titre indicatif seulement :
 
 Ce que disent ces chiffres :
 
-- **Famille A.** NeuML place la fiche du bon gène presque toujours en tête (rang réciproque
-  moyen 0,853). BioBERT la place en moyenne vers le troisième rang (0,369).
+- **Famille A.** NeuML place la fiche du bon gène en tête pour 14 gènes sur 18, et ne la
+  relègue jamais au-delà du 35ᵉ rang. BioBERT ne la place en tête que pour 5 gènes sur 18, et
+  pour trois gènes la relègue au-delà du 800ᵉ rang (825, 13 658 et 67 509). Le rang réciproque
+  moyen (0,369) ne se lit pas comme un « rang moyen » : son inverse est une moyenne harmonique,
+  dominée par les premiers rangs.
 - **Famille B.** Même à l'intérieur d'un seul gène, NeuML trouve des variants de la bonne
   maladie dans 86 % des dix premiers résultats, contre 50 % pour BioBERT.
 - **Famille C.** C'est la plus difficile, et les scores y sont bas pour les deux modèles.
@@ -133,6 +144,10 @@ selon une règle fixée avant la mesure, et il a perdu nettement.
 - **Une seule archive ClinVar** (septembre 2026).
 - **Pertinence par sous-chaîne du nom de maladie.** Un variant associé à une maladie de nom
   voisin mais non listée compte comme non pertinent : la précision mesurée est donc un minimum.
+- **Significations composées exclues en famille C.** Un variant classé par exemple
+  « Pathogenic; risk factor » ou « Conflicting classifications of pathogenicity » ne compte pas
+  comme pertinent pour une question sur les variants pathogènes. L'exclusion vaut de la même
+  façon pour les deux modèles : elle abaisse les deux précisions sans favoriser l'un.
 - **Bootstrap groupé sur les trois familles,** comme la spec le fixait, alors que leurs
   métriques diffèrent (rang réciproque pour A, précision pour B et C). Les intervalles par
   famille, tous positifs, montrent que cela ne change pas la conclusion.
@@ -140,8 +155,9 @@ selon une règle fixée avant la mesure, et il a perdu nettement.
   meilleur que BioBERT sur ces données.
 - **Durée de vectorisation.** Il a fallu 29 minutes pour BioBERT et 22 minutes pour NeuML sur
   GPU, lecture des données comprise, au lieu des 7 minutes estimées d'après le débit brut du
-  service. La différence vient du temps de lecture et de préparation des données, qui n'a pas
-  été mesuré à part.
+  service. L'origine de l'écart est une **hypothèse non mesurée** : lecture et préparation des
+  données, ou proxy de port de `docker run -p` entre le script et le service. Aucune des deux
+  n'a été mesurée à part.
 - **Avertissement de dépréciation Polars** (`is_in`) dans le calcul de la pertinence. Il est
   sans effet sur le résultat de Polars 1.44.1, mais il faudra le corriger avant une mise à jour
   de Polars.

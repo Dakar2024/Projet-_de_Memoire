@@ -29,7 +29,7 @@ rag-postgres : table rag_documents (vector(768), index HNSW cosinus)
 | `rag-postgres` | base vectorielle, distincte de la base d'Airflow | aucun port sur l'hôte, réseau `rag-network` seul |
 | `rag-postgres-init` | applique `RAG/sql/001_schema.sql` (idempotent) à chaque démarrage, puis s'arrête | — |
 | `rag-embeddings` | sert le modèle exporté (CPU par défaut) | aucun port, utilisateur non root, racine en lecture seule, clé d'API obligatoire |
-| `rag-model-export` | outil d'export ONNX à la demande (profil `outils`) | seul service du RAG à sortir sur Internet |
+| `rag-model-export` | outil d'export ONNX à la demande (profil `outils`) | seul service du RAG à sortir sur Internet ; dépendances verrouillées par empreinte pour x86_64 seulement |
 
 `rag-network` est un réseau **interne**, sans accès sortant. Les services Airflow y sont
 rattachés pour joindre la base et le service d'embedding.
@@ -38,7 +38,7 @@ Comptes PostgreSQL :
 
 | Compte | Utilisé par | Droits |
 |---|---|---|
-| `rag_owner` | `rag-postgres-init` | propriétaire du schéma |
+| `rag_owner` | `rag-postgres-init` | superutilisateur d'amorçage créé par l'image PostgreSQL, propriétaire du schéma |
 | `rag_indexer` | Airflow | lecture et écriture de `rag_documents` uniquement |
 | `rag_reader` | API de E2 | lecture seule |
 
@@ -67,7 +67,7 @@ dans `reference/choix_embedding.md`.
 ```bash
 cd ~/Documents/Projet-_de_Memoire
 
-# 1. Export ONNX reproductible (dépendances verrouillées par empreinte)
+# 1. Export ONNX reproductible (dépendances verrouillées par empreinte, machine x86_64)
 docker compose --env-file .env --profile outils build rag-model-export
 docker compose --env-file .env --profile outils run --rm rag-model-export \
   --model NeuML/pubmedbert-base-embeddings
@@ -176,12 +176,13 @@ pytest tests_airflow -q   # structure des DAGs, dont la tâche index_rag_documen
 Tests d'intégration contre le vrai `rag-postgres` : schéma, droits de chaque compte, écriture
 tout-ou-rien, verrou. Ils se lancent depuis un conteneur du réseau interne, et seulement sur ce
 fichier : les autres tests du RAG demandent `responses`, une dépendance de développement
-absente de l'image Airflow.
+absente de l'image Airflow. `-e RAG_READER_PASSWORD`, sans valeur, reprend la variable
+exportée dans le shell : le secret n'apparaît pas dans les arguments du processus de l'hôte.
 
 ```bash
 set -a; . ./.env; set +a
 docker compose --env-file .env run --rm --no-deps \
-  -e RAG_READER_PASSWORD="$RAG_READER_PASSWORD" \
+  -e RAG_READER_PASSWORD \
   --entrypoint bash airflow-scheduler -c '
     pip install --quiet --target /tmp/pytest-lib pytest==9.1.1 &&
     export PYTHONPATH=/tmp/pytest-lib:$PYTHONPATH &&
