@@ -9,14 +9,18 @@ Protocole :
 
 Usage, dans l'ordre (voir reference/choix_embedding.md pour les commandes complètes) :
   lister-maladies     aide à rédiger les questions B et C à partir des données
-  vectoriser          un passage par modèle, service démarré sur ce modèle
+  vectoriser          un passage par modèle (--model-dir data/models/<modèle>), service
+                      démarré sur ce modèle ; écrit <label>_manifest.json qui lie les
+                      vecteurs au modèle, aux documents et aux questions
   verifier-questions  chaque question a-t-elle assez de documents pertinents ?
-  evaluer             métriques, intervalle bootstrap, décision
+  evaluer             refuse si les manifestes ne concordent pas entre eux ou avec les
+                      données actuelles, puis métriques, intervalle bootstrap, décision
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -34,6 +38,11 @@ LABELS = ("biobert", "neuml")
 QUESTIONS_PATH = Path(__file__).with_name("questions_embeddings.yaml")
 MIN_RELEVANT = 10
 K = 10
+MODEL_LABELS = {
+    "dmis-lab/biobert-base-cased-v1.2": "biobert",
+    "NeuML/pubmedbert-base-embeddings": "neuml",
+}
+SAME_MODEL_COSINE = 0.99
 
 
 # --- Métriques (fonctions pures, testées) -----------------------------------------
@@ -65,6 +74,45 @@ def decide(mean: float, low: float) -> str:
     """Règle fixée avant la mesure : NeuML seulement si l'écart est positif et que
     l'intervalle de confiance exclut zéro. Sinon BioBERT, annoncé par le mémoire."""
     return "neuml" if mean > 0 and low > 0 else "biobert"
+
+
+# --- Garde-fous : lier les vecteurs aux documents, questions et modèle ------------------
+
+def _sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def chunk_hash(chunk_ids) -> str:
+    """Empreinte des `chunk_id` dans l'ordre des documents : détecte un texte Gold
+    modifié alors que les `doc_id` sont restés les mêmes."""
+    return _sha256("\n".join(chunk_ids).encode("utf-8"))
+
+
+def check_manifests(a, b, current_doc_ids, current_chunk_hash, current_questions_hash) -> None:
+    """Refuse (SystemExit) toute paire de vectorisations qui ne mesure pas la même
+    chose : sans cela, un résultat bien formé mais faux serait publié."""
+    if a is None or b is None:
+        raise SystemExit("manifeste manquant : vectoriser les deux modèles avant d'évaluer")
+    if {a["label"], b["label"]} != set(LABELS):
+        raise SystemExit(f"les étiquettes doivent être exactement {sorted(LABELS)}, "
+                         f"reçues {sorted([a['label'], b['label']])}")
+    if a["fingerprint"] == b["fingerprint"]:
+        raise SystemExit("les deux modèles ont la même empreinte : ce n'est pas une comparaison")
+    for m in (a, b):
+        if m["doc_ids"] != current_doc_ids or m["doc_ids"] != a["doc_ids"]:
+            raise SystemExit("les documents ont changé depuis la vectorisation : revectoriser")
+        if m["chunk_hash"] != current_chunk_hash or m["chunk_hash"] != a["chunk_hash"]:
+            raise SystemExit("le texte des documents a changé depuis la vectorisation : revectoriser")
+        if m["questions_hash"] != current_questions_hash or m["questions_hash"] != a["questions_hash"]:
+            raise SystemExit("les questions ont changé depuis la vectorisation : revectoriser")
+
+
+def same_model_suspected(docs_a: np.ndarray, docs_b: np.ndarray, threshold: float = SAME_MODEL_COSINE) -> bool:
+    """Deux modèles différents donnent des vecteurs du même document nettement
+    distincts ; un cosinus moyen proche de 1 trahit un conteneur non remplacé."""
+    unit = lambda v: v / np.linalg.norm(v, axis=1, keepdims=True)  # noqa: E731
+    mean_cosine = float(np.mean(np.sum(unit(docs_a) * unit(docs_b), axis=1)))
+    return not mean_cosine < threshold  # NaN => suspect
 
 
 # --- Données ------------------------------------------------------------------------
@@ -116,20 +164,39 @@ def cmd_lister_maladies(args) -> None:
             print(f"  {row['len']:6d}  {row['disease_name']}")
 
 
+def _read_manifest(out: Path, label: str):
+    path = out / f"{label}_manifest.json"
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+
+
 def cmd_vectoriser(args) -> None:
+    export = json.loads((Path(args.model_dir) / "export.json").read_text(encoding="utf-8"))
+    label = MODEL_LABELS.get(export["model_id"])
+    if label is None:
+        raise SystemExit(f"modèle inconnu : {export['model_id']!r}, attendu l'un de {sorted(MODEL_LABELS)}")
+    if args.label is not None and args.label != label:
+        raise SystemExit(f"--label {args.label} contredit le modèle de {args.model_dir} ({label})")
     client = EmbeddingClient(args.url, os.environ["RAG_EMBEDDINGS_API_KEY"], timeout_s=120)
     documents = _all_documents()
-    questions = yaml.safe_load(QUESTIONS_PATH.read_text(encoding="utf-8"))
+    questions_bytes = QUESTIONS_PATH.read_bytes()
+    questions = yaml.safe_load(questions_bytes)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     texts = documents["text"].to_list()
     vectors = np.concatenate([client.embed(texts[i:i + 32]) for i in range(0, len(texts), 32)])
-    np.save(out / f"{args.label}_docs.npy", vectors)
-    np.save(out / f"{args.label}_questions.npy",
-            np.concatenate([client.embed([q["question"] for q in questions[i:i + 32]])
-                            for i in range(0, len(questions), 32)]))
-    (out / "doc_ids.json").write_text(json.dumps(documents["doc_id"].to_list()), encoding="utf-8")
-    print(f"{args.label} : {vectors.shape[0]} documents, {len(questions)} questions")
+    qvectors = np.concatenate([client.embed([q["question"] for q in questions[i:i + 32]])
+                               for i in range(0, len(questions), 32)])
+    np.save(out / f"{label}_docs.npy", vectors)
+    np.save(out / f"{label}_questions.npy", qvectors)
+    manifest = {
+        "label": label, "model_id": export["model_id"], "fingerprint": export["fingerprint"],
+        "doc_ids": documents["doc_id"].to_list(),
+        "chunk_hash": chunk_hash(documents["chunk_id"].to_list()),
+        "questions_hash": _sha256(questions_bytes), "n_questions": len(questions),
+        "docs_shape": list(vectors.shape), "questions_shape": list(qvectors.shape),
+    }
+    (out / f"{label}_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    print(f"{label} : {vectors.shape[0]} documents, {len(questions)} questions")
 
 
 def cmd_verifier_questions(args) -> None:
@@ -151,30 +218,52 @@ def cmd_verifier_questions(args) -> None:
 def cmd_evaluer(args) -> None:
     out = Path(args.out)
     documents, diseases = _all_documents(), _diseases_by_doc()
-    if json.loads((out / "doc_ids.json").read_text(encoding="utf-8")) != documents["doc_id"].to_list():
-        raise SystemExit("les documents ont changé depuis la vectorisation : revectoriser")
-    questions = yaml.safe_load(QUESTIONS_PATH.read_text(encoding="utf-8"))
-    scores = {label: [] for label in LABELS}
+    questions_bytes = QUESTIONS_PATH.read_bytes()
+    manifests = {label: _read_manifest(out, label) for label in LABELS}
+    check_manifests(
+        manifests["biobert"], manifests["neuml"], documents["doc_id"].to_list(),
+        chunk_hash(documents["chunk_id"].to_list()), _sha256(questions_bytes),
+    )
+    questions = yaml.safe_load(questions_bytes)
+    vectors = {}
     for label in LABELS:
-        docs = np.load(out / f"{label}_docs.npy")
-        qvecs = np.load(out / f"{label}_questions.npy")
+        m = manifests[label]
+        docs, qvecs = np.load(out / f"{label}_docs.npy"), np.load(out / f"{label}_questions.npy")
+        if list(docs.shape) != m["docs_shape"] or list(qvecs.shape) != m["questions_shape"] \
+                or len(questions) != m["n_questions"] or qvecs.shape[0] != len(questions):
+            raise SystemExit(f"les vecteurs de {label} ne correspondent plus à leur manifeste : revectoriser")
+        vectors[label] = (docs, qvecs)
+    if same_model_suspected(vectors["biobert"][0], vectors["neuml"][0]):
+        raise SystemExit("les deux vectorisations semblent venir du même modèle : "
+                         "le service n'a pas été remplacé entre les deux passages")
+    scores = {label: {} for label in LABELS}
+    for label in LABELS:
+        docs, qvecs = vectors[label]
         for q, qvec in zip(questions, qvecs, strict=True):
             sims = docs @ qvec
             relevant = _relevance(q, documents, diseases)
             candidates = _candidates(q, documents)
             if q["family"] == "A":
-                scores[label].append(reciprocal_rank(sims, int(np.flatnonzero(relevant)[0]), candidates))
+                scores[label][q["id"]] = reciprocal_rank(sims, int(np.flatnonzero(relevant)[0]), candidates)
             else:
-                scores[label].append(precision_at_k(sims, relevant, K, candidates))
-    diffs = np.array(scores["neuml"]) - np.array(scores["biobert"])
+                scores[label][q["id"]] = precision_at_k(sims, relevant, K, candidates)
+    ids = [q["id"] for q in questions]
+    diffs = np.array([scores["neuml"][i] - scores["biobert"][i] for i in ids])
     mean, low, high = bootstrap_mean_ci(diffs)
     print("| Famille | n | BioBERT | NeuML |\n|---|---|---|---|")
     for family in ("A", "B", "C"):
-        idx = [i for i, q in enumerate(questions) if q["family"] == family]
-        print(f"| {family} | {len(idx)} | {np.mean([scores['biobert'][i] for i in idx]):.3f} "
-              f"| {np.mean([scores['neuml'][i] for i in idx]):.3f} |")
+        fam = [q["id"] for q in questions if q["family"] == family]
+        print(f"| {family} | {len(fam)} | {np.mean([scores['biobert'][i] for i in fam]):.3f} "
+              f"| {np.mean([scores['neuml'][i] for i in fam]):.3f} |")
     print(f"\nÉcart moyen NeuML − BioBERT : {mean:+.3f}, IC 95 % [{low:+.3f}, {high:+.3f}]")
     print(f"Décision (règle fixée avant la mesure) : {decide(mean, low)}")
+    print("\nPar famille, à titre indicatif, la décision reste celle de la règle globale :")
+    for family in ("A", "B", "C"):
+        fd = np.array([scores["neuml"][q["id"]] - scores["biobert"][q["id"]]
+                       for q in questions if q["family"] == family])
+        if len(fd):
+            fm, fl, fh = bootstrap_mean_ci(fd)
+            print(f"  {family} : écart {fm:+.3f}, IC 95 % [{fl:+.3f}, {fh:+.3f}] (n={len(fd)})")
     (out / "scores.json").write_text(json.dumps(scores), encoding="utf-8")
 
 
@@ -182,7 +271,8 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(required=True)
     p = sub.add_parser("lister-maladies"); p.add_argument("--top", type=int, default=8); p.set_defaults(func=cmd_lister_maladies)
-    p = sub.add_parser("vectoriser"); p.add_argument("--label", choices=LABELS, required=True)
+    p = sub.add_parser("vectoriser"); p.add_argument("--model-dir", required=True)
+    p.add_argument("--label", choices=LABELS, default=None, help="recoupement facultatif avec export.json")
     p.add_argument("--url", default="http://127.0.0.1:18080"); p.add_argument("--out", default="data/experiments")
     p.set_defaults(func=cmd_vectoriser)
     p = sub.add_parser("verifier-questions"); p.set_defaults(func=cmd_verifier_questions)
