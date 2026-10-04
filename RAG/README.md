@@ -73,18 +73,30 @@ docker compose --env-file .env --profile outils run --rm rag-model-export \
   --model NeuML/pubmedbert-base-embeddings
 # → affiche l'empreinte, aussi écrite dans data/models/pubmedbert-base-embeddings/export.json
 
-# 2. Recopier cette empreinte dans RAG/config.yaml (embedding.fingerprint)
+# 2. Recopier cette empreinte dans RAG/config.yaml (embedding.fingerprint),
+#    et le nom du dossier dans RAG_EMBEDDING_MODEL (.env)
 
-# 3. Démarrer le service sur CPU, puis produire le canari (référence de production)
+# 3. Démarrer le service sur CPU, puis produire le canari (référence de production).
+#    L'empreinte est lue dans export.json du dossier servi : la commande refuse de
+#    produire le canari si elle diffère de celle de RAG/config.yaml.
 docker compose --env-file .env up -d rag-embeddings
 docker compose --env-file .env exec -T airflow-scheduler \
-  python -m RAG.src.embeddings.canary --fingerprint "<empreinte>" > RAG/canari.json
+  python -m RAG.src.embeddings.canary > RAG/canari.json
 ```
 
-**Le canari** est formé de trois phrases fixes et de leurs vecteurs de référence. Avant chaque
-indexation, le service vectorise de nouveau ces phrases. Si un cosinus descend sous 0,995,
-l'indexation refuse de tourner. C'est le seul moyen de vérifier quel modèle le service sert
-réellement : son `/info` renvoie seulement `/model`.
+**Ce qui garantit le modèle servi** tient en deux contrôles, refaits avant chaque indexation :
+
+- **L'identité de la référence.** `RAG_EMBEDDING_MODEL` désigne à la fois le dossier servi par
+  `rag-embeddings` et celui dont l'indexation lit `export.json`. L'empreinte de ce fichier doit
+  égaler celle de `RAG/config.yaml`, sinon l'indexation (et la production du canari) refuse
+  de tourner.
+- **L'égalité avec la référence : le canari.** Trois phrases fixes et leurs vecteurs de
+  référence. Le service vectorise de nouveau ces phrases ; si un cosinus descend sous 0,995,
+  l'indexation refuse de tourner. Le canari prouve que le service sert **le même modèle que
+  la référence**, pas à lui seul quel modèle c'est : son `/info` renvoie seulement `/model`.
+
+Sur CPU, le canari vaut 1,000000 **par construction** : la référence a été produite par ce même
+service. Le chiffre informatif est celui du GPU (0,99999, §6).
 
 ## 4. Indexer
 

@@ -18,7 +18,13 @@ from RAG.src.chunking.chunker import check_token_lengths
 from RAG.src.embeddings.canary import Canary, load_canary, verify_canary
 from RAG.src.embeddings.embedder import EmbeddingClient
 from RAG.src.ingestion.loader import load_gold_documents
-from RAG.src.utils.config import RagConfig, load_config, load_service_settings
+from RAG.src.utils.config import (
+    RagConfig,
+    check_served_model,
+    load_config,
+    load_service_settings,
+    served_fingerprint,
+)
 from RAG.src.utils.diff import check_deletion_guard, plan_sync
 from RAG.src.utils.errors import IndexConsistencyError, IndexLockedError, RagConfigurationError
 from RAG.src.vectordb.vector_store import PgVectorStore, VectorStore
@@ -93,6 +99,9 @@ def run_index(panel: str, lake_uri: str | None = None, force_deletions: bool = F
         raise RagConfigurationError(f"panel inconnu : {panel!r}")
     config = load_config()
     services = load_service_settings()
+    # Avant tout le reste : le canari ne prouve que l'égalité avec la référence, pas
+    # l'identité du modèle ; celle-ci vient de export.json du dossier réellement servi.
+    check_served_model(config.embedding.fingerprint, served_fingerprint(services.served_model_dir))
     canary = load_canary(config.embedding.canary_path)
     client = EmbeddingClient(
         services.embeddings_url, services.embeddings_api_key, timeout_s=config.embedding.request_timeout_s

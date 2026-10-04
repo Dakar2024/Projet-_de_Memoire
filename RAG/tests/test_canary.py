@@ -1,6 +1,10 @@
+import json
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
+from RAG.src.embeddings import canary as canary_module
 from RAG.src.embeddings.canary import (
     CANARY_PHRASES,
     Canary,
@@ -84,3 +88,44 @@ def test_a_malformed_canary_file_is_a_configuration_error(tmp_path):
 def test_a_missing_canary_file_is_a_configuration_error(tmp_path):
     with pytest.raises(RagConfigurationError):
         load_canary(tmp_path / "absent.json")
+
+
+def _served(tmp_path, fingerprint: str):
+    (tmp_path / "export.json").write_text(json.dumps({"fingerprint": fingerprint}), encoding="utf-8")
+    return SimpleNamespace(embeddings_url="http://x", embeddings_api_key="k", served_model_dir=tmp_path)
+
+
+def _config(fingerprint: str):
+    return SimpleNamespace(embedding=SimpleNamespace(fingerprint=fingerprint))
+
+
+def test_main_labels_the_canary_with_the_served_export_fingerprint(tmp_path, monkeypatch, capsys):
+    """L'empreinte ne se saisit plus à la main : elle vient de export.json du dossier
+    réellement servi, et doit égaler celle de config.yaml."""
+    monkeypatch.setattr(canary_module, "load_service_settings", lambda: _served(tmp_path, FP))
+    monkeypatch.setattr(canary_module, "load_config", lambda: _config(FP))
+    monkeypatch.setattr(canary_module, "EmbeddingClient", lambda *a, **k: StubClient(_unit(3, 1)))
+
+    assert canary_module.main([]) == 0
+
+    assert json.loads(capsys.readouterr().out)["fingerprint"] == FP
+
+
+def test_main_refuses_when_the_served_export_is_not_the_configured_model(tmp_path, monkeypatch, capsys):
+    def no_service(*args, **kwargs):
+        raise AssertionError("le service ne doit pas être appelé")
+
+    monkeypatch.setattr(canary_module, "load_service_settings", lambda: _served(tmp_path, "biobert@x+onnx:y"))
+    monkeypatch.setattr(canary_module, "load_config", lambda: _config(FP))
+    monkeypatch.setattr(canary_module, "EmbeddingClient", no_service)
+
+    assert canary_module.main([]) == 1
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "biobert@x+onnx:y" in captured.err and FP in captured.err
+
+
+def test_main_no_longer_accepts_a_free_text_fingerprint():
+    with pytest.raises(SystemExit):
+        canary_module.main(["--fingerprint", FP])

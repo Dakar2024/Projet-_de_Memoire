@@ -4,9 +4,12 @@ import pytest
 
 from RAG.src.utils.config import (
     MAX_CLIENT_BATCH_SIZE,
+    PROJECT_ROOT,
     RAG_ROOT,
+    check_served_model,
     load_config,
     load_service_settings,
+    served_fingerprint,
 )
 from RAG.src.utils.errors import RagConfigurationError
 
@@ -28,6 +31,7 @@ ENV = {
     "RAG_PG_DB": "rag",
     "RAG_PG_USER": "rag_indexer",
     "RAG_PG_PASSWORD": "mot de passe'avec apostrophe",
+    "RAG_EMBEDDING_MODEL": "pubmedbert-base-embeddings",
 }
 
 
@@ -83,3 +87,55 @@ def test_missing_service_variables_are_all_named():
 
     assert "RAG_PG_PASSWORD" in str(excinfo.value)
     assert "RAG_EMBEDDINGS_API_KEY" in str(excinfo.value)
+
+
+def test_the_served_model_directory_comes_from_rag_embedding_model():
+    """Même variable que celle qui choisit le dossier servi par rag-embeddings."""
+    settings = load_service_settings(ENV)
+
+    assert settings.served_model_dir == PROJECT_ROOT / "data" / "models" / "pubmedbert-base-embeddings"
+    assert PROJECT_ROOT == RAG_ROOT.parent
+
+
+def test_a_missing_embedding_model_variable_is_named():
+    env = {k: v for k, v in ENV.items() if k != "RAG_EMBEDDING_MODEL"}
+
+    with pytest.raises(RagConfigurationError, match="RAG_EMBEDDING_MODEL"):
+        load_service_settings(env)
+
+
+@pytest.mark.parametrize("name", ["../secrets", "a/b", "a\\b", "..", "  "])
+def test_a_dangerous_model_directory_name_is_refused(name):
+    """Le nom sert à construire un chemin : il ne doit pas en sortir."""
+    with pytest.raises(RagConfigurationError, match="RAG_EMBEDDING_MODEL"):
+        load_service_settings(ENV | {"RAG_EMBEDDING_MODEL": name})
+
+
+def test_served_fingerprint_reads_export_json(tmp_path):
+    (tmp_path / "export.json").write_text(
+        '{"model_id": "m", "fingerprint": "m@abc+onnx:123", "files": {}}', encoding="utf-8")
+
+    assert served_fingerprint(tmp_path) == "m@abc+onnx:123"
+
+
+@pytest.mark.parametrize("content", [None, "pas du json", '{"model_id": "m"}', '{"fingerprint": ""}'])
+def test_an_absent_or_unreadable_export_json_is_a_configuration_error(tmp_path, content):
+    if content is not None:
+        (tmp_path / "export.json").write_text(content, encoding="utf-8")
+
+    with pytest.raises(RagConfigurationError, match="export.json"):
+        served_fingerprint(tmp_path)
+
+
+def test_matching_fingerprints_pass():
+    check_served_model("m@abc+onnx:123", "m@abc+onnx:123")
+
+
+def test_diverging_fingerprints_are_refused_and_both_are_named():
+    """`.env` désigne un dossier, `config.yaml` une empreinte : s'ils divergent, des
+    vecteurs d'un modèle seraient étiquetés du nom de l'autre."""
+    with pytest.raises(RagConfigurationError) as excinfo:
+        check_served_model("neuml@abc+onnx:123", "biobert@def+onnx:456")
+
+    assert "neuml@abc+onnx:123" in str(excinfo.value)
+    assert "biobert@def+onnx:456" in str(excinfo.value)
