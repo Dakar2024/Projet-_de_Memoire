@@ -20,6 +20,7 @@ data/lake/
 RAG/consigne.md
 RAG/architecture RAG.jpeg
 # Modèles d'embedding exportés (centaines de Mo, régénérables par docker/embeddings/)
-data/models/
+data/models/*
+!data/models/.gitkeep
 # Résultats intermédiaires des expériences (vecteurs, rapports bruts)
 data/experiments/
