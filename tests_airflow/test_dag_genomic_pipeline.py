@@ -1,6 +1,14 @@
+import datetime as dt
+
 import pytest
 
-from dags.common.panels import GOLD_WRITE_POOL, NCBI_POOL, SILVER_WRITE_POOL, SOURCES_READY
+from dags.common.panels import (
+    GOLD_WRITE_POOL,
+    NCBI_POOL,
+    RAG_INDEX_POOL,
+    SILVER_WRITE_POOL,
+    SOURCES_READY,
+)
 from dags.dag_genomic_pipeline import build_panel_dag
 
 INGESTIONS = {"ingest_ncbi_gene", "ingest_refseq", "ingest_hpo_terms", "ingest_medgen"}
@@ -27,6 +35,7 @@ def test_panel_dag_has_the_expected_tasks(dag):
         "silver_to_gold_rag",
         "silver_to_gold_analytique",
         "quality_check_gold",
+        "index_rag_documents",
     })
 
 
@@ -141,3 +150,47 @@ def test_task_failures_are_emailed(dag):
     assert args["email_on_failure"] is True
     assert args["email_on_retry"] is False
     assert args["email"] == ["alerte@example.test"]
+
+
+def test_rag_indexing_runs_last_on_checked_gold_only(dag):
+    """On n'indexe que des documents contrôlés : jamais avant quality_check_gold."""
+    assert dag.get_task("index_rag_documents").upstream_task_ids == {"quality_check_gold"}
+    assert dag.get_task("index_rag_documents").downstream_task_ids == set()
+
+
+def test_rag_indexing_is_serialised_and_has_room_for_a_full_cpu_run(dag):
+    """Une réindexation complète sur CPU dure ~4 h (mesure du 30/09/2026) : le délai
+    de 3 h des autres tâches la couperait. Le pool évite deux indexations en
+    parallèle sur un service d'embedding qui sature déjà le processeur."""
+    task = dag.get_task("index_rag_documents")
+    assert RAG_INDEX_POOL == "rag_index"
+    assert task.pool == RAG_INDEX_POOL
+    assert task.execution_timeout == dt.timedelta(hours=6)
+
+
+def test_permanent_rag_errors_fail_without_consuming_retries(dag, monkeypatch):
+    from airflow.sdk.exceptions import AirflowFailException
+
+    from dags import dag_genomic_pipeline
+    from RAG.src.utils.errors import CanaryMismatchError
+
+    def refuser(panel):
+        raise CanaryMismatchError("le service ne sert pas le modèle attendu")
+
+    monkeypatch.setattr(dag_genomic_pipeline, "run_index", refuser)
+
+    with pytest.raises(AirflowFailException, match="modèle attendu"):
+        dag.get_task("index_rag_documents").python_callable()
+
+
+def test_transient_rag_errors_are_left_to_the_retries(dag, monkeypatch):
+    from dags import dag_genomic_pipeline
+    from RAG.src.utils.errors import EmbeddingServiceError
+
+    def indisponible(panel):
+        raise EmbeddingServiceError("503")
+
+    monkeypatch.setattr(dag_genomic_pipeline, "run_index", indisponible)
+
+    with pytest.raises(EmbeddingServiceError):
+        dag.get_task("index_rag_documents").python_callable()
