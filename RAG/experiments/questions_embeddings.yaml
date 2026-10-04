@@ -1,0 +1,25 @@
+# Questions de la comparaison des modèles d'embedding (spec E1, §6).
+# Famille A : rôle d'un gène, un seul document pertinent (gene:<SYMBOLE>).
+# Famille B : maladie dans un gène, recherche filtrée sur ce gène.
+# Famille C : signification et maladie, tout le panel, sans filtre.
+# Les questions reformulent au lieu de recopier les documents.
+# Validées par l'utilisateur le <date à inscrire lors de la validation>.
+
+- {id: A01, family: A, question: "What is the function of the BRCA1 protein in the cell?", relevant: {doc_id: "gene:BRCA1"}}
+- {id: A02, family: A, question: "What does the BRCA2 gene do in DNA repair?", relevant: {doc_id: "gene:BRCA2"}}
+- {id: A03, family: A, question: "What is the role of the TP53 gene product in tumor suppression?", relevant: {doc_id: "gene:TP53"}}
+- {id: A04, family: A, question: "What is the role of PALB2 in DNA repair?", relevant: {doc_id: "gene:PALB2"}}
+- {id: A05, family: A, question: "What does the PTEN gene encode and which signaling pathway does it regulate?", relevant: {doc_id: "gene:PTEN"}}
+- {id: A06, family: A, question: "What is the biological function of the CDH1 gene?", relevant: {doc_id: "gene:CDH1"}}
+- {id: A07, family: A, question: "What kind of enzyme is encoded by STK11?", relevant: {doc_id: "gene:STK11"}}
+- {id: A08, family: A, question: "What is the role of the ATM kinase in the response to DNA damage?", relevant: {doc_id: "gene:ATM"}}
+- {id: A09, family: A, question: "What does the CHEK2 gene do in cell cycle control?", relevant: {doc_id: "gene:CHEK2"}}
+- {id: A10, family: A, question: "Which protein does BARD1 partner with, and what is its function?", relevant: {doc_id: "gene:BARD1"}}
+- {id: A11, family: A, question: "What is the function of RAD51C in homologous recombination?", relevant: {doc_id: "gene:RAD51C"}}
+- {id: A12, family: A, question: "What is the role of the RAD51D gene?", relevant: {doc_id: "gene:RAD51D"}}
+- {id: A13, family: A, question: "Which protein chain is encoded by the HBB gene?", relevant: {doc_id: "gene:HBB"}}
+- {id: A14, family: A, question: "How does BCL11A regulate fetal hemoglobin expression?", relevant: {doc_id: "gene:BCL11A"}}
+- {id: A15, family: A, question: "What is known about the HBS1L gene?", relevant: {doc_id: "gene:HBS1L"}}
+- {id: A16, family: A, question: "What is the function of the MYB transcription factor?", relevant: {doc_id: "gene:MYB"}}
+- {id: A17, family: A, question: "What role does KLF1 play in red blood cell development?", relevant: {doc_id: "gene:KLF1"}}
+- {id: A18, family: A, question: "Which enzyme is encoded by G6PD and what does it protect red blood cells from?", relevant: {doc_id: "gene:G6PD"}}
