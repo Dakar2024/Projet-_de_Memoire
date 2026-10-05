@@ -450,6 +450,8 @@ services:
       - /tmp
     security_opt:
       - no-new-privileges:true
+    cap_drop:
+      - ALL
     environment:
       PYTHONPATH: /opt/projet:/opt/projet/src
       RAG_EMBEDDINGS_URL: http://rag-embeddings:8080
@@ -470,7 +472,10 @@ services:
       - ./RAG:/opt/projet/RAG:ro
       - ./src:/opt/projet/src:ro
       - ./data/models:/opt/projet/data/models:ro
-      - ./data/experiments:/opt/projet/data/experiments
+      # Seul dossier écrit : les mesures de E2a (cache d'analyses, séries). Le reste de
+      # data/experiments (mesures de E1) n'est ni lu ni modifiable d'ici. Le dossier doit
+      # exister sur l'hôte (mkdir -p data/experiments/e2a), sinon Docker le crée en root.
+      - ./data/experiments/e2a:/opt/projet/data/experiments/e2a
     # rag-network pour la base et l'embedding ; rag-egress pour joindre OpenRouter.
     # rag-egress donne un accès Internet NON filtré : Docker ne filtre pas par domaine,
     # seul le code se limite à OpenRouter (proxy filtrant prévu avant E2b, TODO.md §6).
