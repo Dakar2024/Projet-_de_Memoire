@@ -25,8 +25,11 @@ _AA3 = {
 
 _END = r"(?=[\s,;:.?!)/]|$)"
 _RS = re.compile(r"\brs\s?(\d{1,10})\b", re.IGNORECASE)
+# Le préfixe de transcrit est facultatif ; le gène qu'il cite entre parenthèses est
+# capturé (groupe 1) pour ne pas être perdu avec l'identifiant. Côté protéine, aucun
+# préfixe n'est accepté : il reste dans le texte, et son gène avec.
 _HGVS_C = re.compile(
-    r"(?:N[MRG]_\d+(?:\.\d+)?(?:\([A-Za-z0-9-]+\))?:)?"
+    r"(?:N[MRG]_\d+(?:\.\d+)?(?:\(([A-Za-z0-9-]+)\))?:)?"
     r"(c\.[0-9_+\-*]+(?:[ACGT]>[ACGT]|delins[ACGT]+|del[ACGT]*|dup[ACGT]*|ins[ACGT]+))" + _END,
     re.IGNORECASE,
 )
@@ -83,21 +86,28 @@ def _normalize_p3(raw: str) -> str:
 
 def extract_identifiers(question: str) -> Identifiers:
     rs = _unique(int(match) for match in _RS.findall(question))
-    hgvs_c = _unique(_normalize_c(match) for match in _HGVS_C.findall(question))
+    coding = list(_HGVS_C.finditer(question))
+    hgvs_c = _unique(_normalize_c(match.group(2)) for match in coding)
     hgvs_p = _unique(
         [_normalize_p3(match) for match in _HGVS_P3.findall(question)]
         + [f"p.{_AA3[a]}{pos}{_AA3[b]}" for a, pos, b in _HGVS_P1.findall(question)]
     )
     # Les gènes se cherchent dans la question privée de ses identifiants : sinon
-    # « R1443 » (p.R1443*) ou « RS334 » passeraient pour des symboles de gènes.
+    # « R1443 » (p.R1443*) ou « RS334 » passeraient pour des symboles de gènes. Les
+    # identifiants sont remplacés par autant d'espaces, pour garder les positions et donc
+    # l'ordre d'apparition des gènes, préfixes de transcrit compris.
     rest = question
     for pattern in (_RS, _HGVS_C, _HGVS_P3, _HGVS_P1):
-        rest = pattern.sub(" ", rest)
-    genes = _unique(_PANEL[token.upper()] for token in _TOKEN.findall(rest) if token.upper() in _PANEL)
+        rest = pattern.sub(lambda match: " " * len(match.group()), rest)
+    tokens = sorted([(match.start(), match.group()) for match in _TOKEN.finditer(rest)]
+                    + [(match.start(1), match.group(1)) for match in coding if match.group(1)])
+    genes = _unique(_PANEL[token.upper()] for _, token in tokens if token.upper() in _PANEL)
     # Hors panel : un symbole en majuscules avec un chiffre (MLH1), ou en majuscules
-    # juste après « gène » (APC). Un mot en minuscules n'est jamais un gène.
+    # juste après « gène » (APC), ou tout symbole cité dans un préfixe de transcrit
+    # (NM_000249.4(MLH1):). Un mot en minuscules n'est jamais un gène.
     suspects = [token for token in _TOKEN.findall(rest)
                 if _GENE_LIKE.match(token) and any(ch.isdigit() for ch in token)]
     suspects += [token for token in _AFTER_GENE_WORD.findall(rest) if _GENE_LIKE.match(token)]
+    suspects += [match.group(1) for match in coding if match.group(1)]
     out_of_panel = _unique(token for token in suspects if token.upper() not in _PANEL)
     return Identifiers(rs=rs, hgvs_c=hgvs_c, hgvs_p=hgvs_p, genes=genes, out_of_panel=out_of_panel)
