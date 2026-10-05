@@ -1,10 +1,10 @@
-# RAG génomique — sous-projet E1 : indexation
+# RAG génomique — E1 : indexation, E2a : recherche
 
 E1 copie les documents de `gold/rag/documents` dans une base vectorielle (PostgreSQL +
-pgvector), avec leurs vecteurs, de façon incrémentale, reprenable et vérifiée. Il ne contient
-ni recherche pour l'utilisateur, ni prompt, ni LLM :
+pgvector), avec leurs vecteurs, de façon incrémentale, reprenable et vérifiée (§1 à §7).
+E2a cherche dans cette base à partir d'une question en français (§8). Restent :
 
-- **E2** (à venir) : recherche hybride, prompts, appel au LLM, API Litestar ;
+- **E2b** (à venir) : génération de la réponse, prompts, API Litestar ;
 - **E3** (à venir) : évaluation RAGAS et audit.
 
 Documents de référence :
@@ -190,3 +190,117 @@ docker compose --env-file .env run --rm --no-deps \
     export RAG_TEST_PG_READER_CONNINFO="host=rag-postgres dbname=rag user=rag_reader password=$RAG_READER_PASSWORD" &&
     python -m pytest -p no:cacheprovider -m integration RAG/tests/test_vector_store_integration.py -q'
 ```
+
+## 8. Recherche (E2a)
+
+Spec : `docs/superpowers/specs/2026-10-04-sous-projet-e2a-recherche-rag-design.md` (amendements
+au §9). La recherche ne génère pas de réponse : elle renvoie les 10 documents à transmettre au LLM
+de génération (E2b) et une trace qui explique comment ils ont été trouvés.
+
+### 8.1 Fonctionnement
+
+```
+question en français
+  ├─ règles (RAG/src/retrieval/identifiers.py) : rs, HGVS c./p. normalisés comme ClinVar, gènes du panel
+  ├─ LLM d'analyse (RAG/src/retrieval/analysis.py) : reformulation anglaise, signification demandée
+  │    (énumération fermée, sortie JSON stricte), maladie ; indisponible → recherche dégradée signalée
+  └─ cascade (RAG/src/retrieval/retriever.py), panel brca + sickle, compte rag_reader :
+       1. étage exact : documents dont le rs ou le HGVS correspond (restreint au gène cité)
+       2. filtres : gène cité, libellés ClinVar de la signification (relâchés sous 3 documents)
+       3. similarité cosinus, toujours en recherche exacte (l'index HNSW est mesuré insuffisant, §8.5)
+```
+
+Indicateurs de la trace : `identifier_not_found`, `significance_relaxed`, `gene_out_of_panel`,
+`analysis_unavailable`. La question n'atteint jamais le SQL : les filtres viennent des règles et
+d'une énumération validée.
+
+### 8.2 Service `rag-search`
+
+Outil à la demande (profil `outils`), qui deviendra l'API en E2b. Utilisateur non root, racine en
+lecture seule, `no-new-privileges`, `cap_drop: ALL`, compte PostgreSQL `rag_reader`. Réseaux :
+`rag-network` (base, embedding) et `rag-egress`, sortie Internet **non filtrée** (Docker ne filtre
+pas par domaine ; proxy filtrant prévu avant E2b, `TODO.md`). Seuls `data/experiments/e2a` et
+`data/experiments/e2a-essai` y sont montés en écriture : les créer sur l'hôte avant la première
+mesure (`mkdir -p data/experiments/e2a data/experiments/e2a-essai`), sinon Docker les crée au nom de
+root.
+
+Au démarrage, la recherche vérifie que le service d'embedding sert le modèle de l'index (empreinte,
+canari) et que toutes les lignes de l'index portent cette empreinte.
+
+### 8.3 Clés
+
+Dans le `.env` de la racine, facultatives pour le pipeline :
+
+- `OPENROUTER_API_KEY` : profils officiels (`llm.profiles` de `RAG/config.yaml`), chacun figé sur
+  un point d'accès OpenRouter sans basculement, en zéro rétention, sortie JSON stricte. Le
+  fournisseur servi (champ `provider` de la réponse) et le coût (`usage.cost`) sont contrôlés ; une
+  réponse d'un autre fournisseur est rejetée.
+- `GROQ_API_KEY` : profil d'essai gratuit (`llm.trial_profiles`), zéro rétention à activer dans
+  *Data Controls* de la console Groq. Il valide la chaîne ; il ne sert jamais au choix du modèle.
+
+### 8.4 Essayer une question
+
+```bash
+docker compose --env-file .env --profile outils run --rm rag-search \
+  -m RAG.src.retrieval.cli "Le variant rs80357906 sur BRCA1 est-il pathogène ?"
+# --profile essai-groq-gpt-oss-120b pour l'essai gratuit ; --mode similarity|filters|full
+```
+
+### 8.5 Mesurer
+
+Jeu de 89 questions validé par l'utilisateur (`RAG/experiments/questions_recherche.yaml`) :
+59 questions de E1 traduites, 20 à identifiants tirés de l'index, 10 pièges.
+
+```bash
+# 1. Vérité terrain, sur l'hôte (lit le Gold dans MinIO)
+set -a; . ./.env; set +a
+export AWS_ENDPOINT_URL=http://127.0.0.1:${MINIO_API_PORT} AWS_ACCESS_KEY_ID=$MINIO_AIRFLOW_USER \
+       AWS_SECRET_ACCESS_KEY=$MINIO_AIRFLOW_PASSWORD AWS_REGION=us-east-1 LAKE_URI=s3:// PYTHONPATH=src:.
+venv/bin/python -m RAG.experiments.mesure_recherche verite-terrain
+
+# 2. Séries, dans rag-search (le cache évite de repayer une analyse déjà faite)
+R="docker compose --env-file .env --profile outils run --rm rag-search -m RAG.experiments.mesure_recherche"
+for p in claude-opus-5.5 mistral-medium gpt-oss-120b; do $R mesurer --profile $p --mode full; done
+venv/bin/python -m RAG.experiments.mesure_recherche evaluer        # désigne le profil retenu
+for m in similarity filters; do $R mesurer --profile <retenu> --mode $m; done
+$R mesurer --profile <retenu> --mode similarity --approx           # diagnostic de l'index HNSW
+venv/bin/python -m RAG.experiments.mesure_recherche evaluer
+# Essai gratuit : mêmes commandes avec --profile essai-groq-gpt-oss-120b, puis evaluer --essai
+```
+
+`evaluer` refuse de conclure si une série diverge (questions, prompt, configuration, corpus indexé,
+modèle d'embedding), si un candidat manque, ou si les questions à identifiants ne sont pas réussies
+à 100 %.
+
+Répétition générale du 5 octobre 2026 (essai Groq, gpt-oss-120b, recherche exacte) :
+
+| Version | P1-A | P1-B | P1-C | P2 | P3 |
+|---|---|---|---|---|---|
+| V0 E1 (questions anglaises) | 0,853 | 0,862 | 0,305 | — | — |
+| V1 similarité seule | 0,838 | 0,729 | 0,330 | 0 | 0,70 |
+| V2 + filtres | 0,907 | 0,829 | 0,495 | 0 | 0,70 |
+| V3 complète | 0,907 | 0,829 | 0,495 | 1,000 | 1,000 |
+
+Signification extraite juste dans 94 % des cas ; latence médiane : analyse 2,2 s, vectorisation
+0,14 s, base 0,17 s (maximum 1,1 s). Rappel de l'index HNSW (`ef_search` 40) par rapport à la
+recherche exacte : 0,515 — d'où la recherche toujours exacte. La mesure officielle (choix du modèle
+d'analyse) sera consignée dans `reference/mesure_recherche_e2a.md`.
+
+### 8.6 Tests d'intégration de la recherche
+
+```bash
+set -a; . ./.env; set +a
+docker compose --env-file .env --profile outils run --rm \
+  -e RAG_READER_PASSWORD -e RAG_INDEXER_PASSWORD \
+  --entrypoint sh rag-search -c '
+    pip install --quiet --target /tmp/pytest-lib pytest==9.1.1 &&
+    export PYTHONPATH=/tmp/pytest-lib:$PYTHONPATH &&
+    export RAG_TEST_PG_READER_CONNINFO="host=rag-postgres dbname=rag user=rag_reader password=$RAG_READER_PASSWORD" &&
+    export RAG_TEST_PG_CONNINFO="host=rag-postgres dbname=rag user=rag_indexer password=$RAG_INDEXER_PASSWORD" &&
+    python -m pytest -p no:cacheprovider -m integration RAG/tests/test_search_store_integration.py -q'
+```
+
+Limites connues : les noms historiques de variants (« 5382insC », « Glu6Val ») ne sont pas traduits ;
+un symbole en majuscules avec un chiffre (« CD4 ») peut être signalé à tort comme gène hors panel ;
+le cache des analyses (`data/experiments/`, non versionné) contient la reformulation anglaise des
+questions en clair.
