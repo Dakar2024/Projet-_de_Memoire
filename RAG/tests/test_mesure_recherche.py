@@ -434,3 +434,40 @@ def test_evaluer_dispatches_on_the_essai_flag(monkeypatch):
     m.main(["evaluer", "--essai"])
 
     assert calls == ["officiel", "essai"]
+
+
+def test_an_exhausted_quota_stops_the_measurement_at_once():
+    """Sans cet arrêt, chaque question restante attendrait encore les 429 pour rien."""
+    from RAG.experiments.mesure_recherche import check_analysis_failure
+
+    with pytest.raises(SystemExit, match="quota Groq épuisé") as excinfo:
+        check_analysis_failure("P1-B03", {"available": False,
+                                          "error": "LlmQuotaExhaustedError: quota Groq épuisé (429)"}, "essai")
+    assert "P1-B03" in str(excinfo.value) and "cache" in str(excinfo.value)
+
+
+def test_mesurer_stops_at_the_first_exhausted_quota(tmp_path, monkeypatch):
+    import argparse
+
+    import RAG.src.retrieval.retriever as retriever
+
+    class QuotaSearcher(_FakeSearcher):
+        searched = 0
+
+        def search(self, question, mode, force_exact):
+            QuotaSearcher.searched += 1
+
+            class Result:
+                def as_dict(self):
+                    return {"documents": [], "trace": {"flags": [], "identifiers": {}, "timings_ms": {},
+                            "analysis": {"available": False,
+                                         "error": "LlmQuotaExhaustedError: quota Groq épuisé (429)"}}}
+            return Result()
+
+    m = _dirs(tmp_path, monkeypatch)
+    monkeypatch.setattr(retriever, "Searcher", QuotaSearcher)
+
+    with pytest.raises(SystemExit, match="quota Groq épuisé"):
+        m.cmd_mesurer(argparse.Namespace(profile=TRIAL_PROFILE, mode="full", exact=False))
+    assert QuotaSearcher.searched == 1
+    assert not (tmp_path / "e2a-essai" / "runs").exists()

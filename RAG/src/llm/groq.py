@@ -41,6 +41,7 @@ from RAG.src.llm.common import (
 from RAG.src.utils.config import LlmProfile
 from RAG.src.utils.errors import (
     LlmPermanentError,
+    LlmQuotaExhaustedError,
     LlmTruncatedError,
     LlmUnavailableError,
     RagConfigurationError,
@@ -72,11 +73,32 @@ def parse_duration(text: str | None) -> float | None:
 def rate_limit_wait(headers: Mapping[str, str]) -> float:
     """Attente avant de réessayer après un 429 : `retry-after`, sinon
     `x-ratelimit-reset-tokens`, sinon une valeur par défaut ; toujours bornée."""
+    seconds = announced_wait(headers)
+    return DEFAULT_RATE_LIMIT_WAIT_S if seconds is None else min(seconds, MAX_RATE_LIMIT_WAIT_S)
+
+
+def announced_wait(headers: Mapping[str, str]) -> float | None:
+    """Attente annoncée par un 429, non bornée : `retry-after`, sinon
+    `x-ratelimit-reset-tokens` ; `None` si aucune n'est lisible."""
     for name in ("retry-after", "x-ratelimit-reset-tokens"):
         seconds = parse_duration(headers.get(name))
         if seconds is not None:
-            return min(seconds, MAX_RATE_LIMIT_WAIT_S)
-    return DEFAULT_RATE_LIMIT_WAIT_S
+            return seconds
+    return None
+
+
+def quota_exhausted_reason(headers: Mapping[str, str]) -> str | None:
+    """Motif d'arrêt si un 429 annonce un quota épuisé : plus aucune requête du jour, ou
+    une attente au-delà du plafond. `x-ratelimit-reset-requests` ne compte que dans le
+    premier cas : sur une réponse normale il annonce déjà plus d'une minute (« 1m26.4s »)."""
+    if (headers.get("x-ratelimit-remaining-requests") or "").strip() == "0":
+        reset = parse_duration(headers.get("x-ratelimit-reset-requests"))
+        delay = f", réinitialisation annoncée dans {reset:.0f} s" if reset is not None else ""
+        return f"plus aucune requête autorisée{delay}"
+    wait = announced_wait(headers)
+    if wait is not None and wait > MAX_RATE_LIMIT_WAIT_S:
+        return f"réinitialisation annoncée dans {wait:.0f} s (plafond d'attente {MAX_RATE_LIMIT_WAIT_S:.0f} s)"
+    return None
 
 
 def build_payload(profile: LlmProfile, *, system: str, user: str, schema_name: str,
@@ -126,7 +148,8 @@ class GroqClient:
                       schema: dict, max_tokens: int) -> LlmCall:
         """Analyse au format `LlmCall`. `cost_usd` vaut toujours 0,0 : offre gratuite, et
         Groq ne renvoie aucun coût. Un 429 n'est pas facturé : on attend puis on réessaie,
-        au plus `max_rate_limit_waits` fois."""
+        au plus `max_rate_limit_waits` fois ; un quota épuisé (aucune requête restante,
+        attente annoncée au-delà du plafond, attentes épuisées) lève `LlmQuotaExhaustedError`."""
         payload = build_payload(profile, system=system, user=user, schema_name=schema_name,
                                 schema=schema, max_tokens=max_tokens)
         waits = 0
@@ -134,11 +157,20 @@ class GroqClient:
             response = self._post("/chat/completions", payload)
             if response.status_code != 429:
                 break
+            # Quota épuisé : attendre ne servirait à rien, ni pour cette question ni pour les suivantes.
+            reason = quota_exhausted_reason(response.headers)
+            if reason is not None:
+                raise LlmQuotaExhaustedError(f"quota Groq épuisé (429) pour {profile.name} : {reason}")
             if waits >= self._max_waits:
-                raise LlmUnavailableError(
-                    f"Groq limite le débit (429) pour {profile.name} après {waits} attentes")
+                raise LlmQuotaExhaustedError(
+                    f"quota Groq épuisé (429) pour {profile.name} : toujours dépassé après {waits} attentes")
             waits += 1
             self._sleep(rate_limit_wait(response.headers))
+        if response.status_code == 413:
+            # Une seule requête dépasse la limite de jetons par minute : relancer ne changera rien.
+            raise LlmPermanentError(
+                f"Groq refuse la requête (413) pour {profile.name} : elle dépasse la limite de jetons "
+                "par minute de l'offre gratuite, réduire llm.max_tokens ou le prompt")
         if response.status_code in PERMANENT_STATUSES:
             raise LlmPermanentError(
                 f"Groq refuse la requête ({response.status_code}) pour {profile.name}{error_code(response)}")
