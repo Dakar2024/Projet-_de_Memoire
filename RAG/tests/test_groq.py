@@ -7,7 +7,7 @@ import responses
 from RAG.src.llm.groq import GROQ_BASE_URL, GroqClient, build_payload, parse_duration, rate_limit_wait
 from RAG.src.utils.config import LlmProfile
 from RAG.src.utils.errors import (
-    LlmPermanentError, LlmTruncatedError, LlmUnavailableError, RagConfigurationError,
+    LlmPermanentError, LlmQuotaExhaustedError, LlmTruncatedError, LlmUnavailableError, RagConfigurationError,
 )
 
 TRIAL = LlmProfile("essai-groq-gpt-oss-120b", "openai/gpt-oss-120b", "groq", "Groq", None, backend="groq")
@@ -107,14 +107,70 @@ def test_a_rate_limit_without_retry_after_uses_the_token_reset():
 
 
 @responses.activate
-def test_repeated_rate_limits_end_as_unavailable():
+def test_repeated_rate_limits_end_as_an_exhausted_quota():
     for _ in range(4):
-        responses.add(responses.POST, CHAT, status=429, headers={"retry-after": "999"})
+        responses.add(responses.POST, CHAT, status=429, headers={"retry-after": "2"})
     sleep = FakeSleep()
 
-    with pytest.raises(LlmUnavailableError, match="429"):
+    with pytest.raises(LlmQuotaExhaustedError, match="429") as excinfo:
         _call(_client(sleep=sleep, max_rate_limit_waits=3))
-    assert sleep.waits == [60.0, 60.0, 60.0] and len(responses.calls) == 4
+    assert isinstance(excinfo.value, LlmUnavailableError)
+    assert sleep.waits == [2.0, 2.0, 2.0] and len(responses.calls) == 4
+
+
+@responses.activate
+@pytest.mark.parametrize("headers, announced", [
+    ({"retry-after": "999"}, "999"),
+    ({"x-ratelimit-reset-tokens": "2m"}, "120"),
+    ({"retry-after": "illisible", "x-ratelimit-reset-tokens": "61s"}, "61"),
+])
+def test_a_wait_announced_beyond_the_cap_stops_at_once(headers, announced):
+    responses.add(responses.POST, CHAT, status=429, headers=headers, json={"error": {
+        "message": "gsk_secret usr", "code": "rate_limit_exceeded"}})
+    sleep = FakeSleep()
+
+    with pytest.raises(LlmQuotaExhaustedError) as excinfo:
+        _call(_client(sleep=sleep))
+    message = str(excinfo.value)
+    assert sleep.waits == [] and len(responses.calls) == 1
+    assert announced in message and TRIAL.name in message
+    assert "gsk_secret" not in message and "usr" not in message
+
+
+@responses.activate
+def test_no_request_left_today_stops_at_once_with_the_announced_reset():
+    responses.add(responses.POST, CHAT, status=429, headers={
+        "retry-after": "3", "x-ratelimit-remaining-requests": "0", "x-ratelimit-reset-requests": "2h0m0s"})
+    sleep = FakeSleep()
+
+    with pytest.raises(LlmQuotaExhaustedError, match="7200") as excinfo:
+        _call(_client(sleep=sleep))
+    assert sleep.waits == [] and len(responses.calls) == 1
+    assert "gsk_secret" not in str(excinfo.value)
+
+
+@responses.activate
+def test_a_short_announced_wait_with_requests_left_is_waited():
+    """`x-ratelimit-reset-requests` (« 1m26.4s » observé sur une réponse normale) ne
+    compte que si plus aucune requête ne reste : sinon il ferait croire à un quota épuisé."""
+    responses.add(responses.POST, CHAT, status=429, headers={
+        "retry-after": "4", "x-ratelimit-remaining-requests": "998", "x-ratelimit-reset-requests": "1m26.4s"})
+    _chat_ok()
+    sleep = FakeSleep()
+
+    assert _call(_client(sleep=sleep)).content == {"a": 1}
+    assert sleep.waits == [4.0]
+
+
+@responses.activate
+def test_a_request_beyond_the_tokens_per_minute_limit_is_permanent():
+    responses.add(responses.POST, CHAT, status=413, json={"error": {"message": "gsk_secret usr",
+                                                                    "code": "rate_limit_exceeded"}})
+
+    with pytest.raises(LlmPermanentError, match="413") as excinfo:
+        _call(_client())
+    assert "gsk_secret" not in str(excinfo.value) and "usr" not in str(excinfo.value)
+    assert len(responses.calls) == 1
 
 
 @pytest.mark.parametrize("text, seconds", [

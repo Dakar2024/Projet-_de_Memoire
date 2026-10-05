@@ -57,6 +57,11 @@ class LlmUnavailableError(Exception):
     """OpenRouter injoignable, saturé ou réponse inexploitable : transitoire."""
 
 
+class LlmQuotaExhaustedError(LlmUnavailableError):
+    """Quota du fournisseur épuisé : inutile de réessayer avant sa réinitialisation. Une
+    mesure s'arrête à la première occurrence au lieu d'attendre pour chaque question."""
+
+
 class LlmProviderMismatchError(Exception):
     """La requête a été servie par un autre fournisseur que celui qui était figé."""
 

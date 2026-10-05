@@ -161,8 +161,12 @@ def check_trial_field(run_profiles: set[str], trial_profiles: set[str]) -> None:
 
 def check_analysis_failure(question_id: str, analysis: dict, profile_name: str) -> None:
     """Un mauvais fournisseur est systématique (profil mal décrit) : inutile de payer les
-    questions suivantes. Les autres indisponibilités sont transitoires et rejouables."""
+    questions suivantes. Un quota épuisé aussi : chaque question suivante attendrait pour
+    rien. Les autres indisponibilités sont transitoires et rejouables."""
     error = analysis.get("error") or ""
+    if not analysis.get("available") and error.startswith("LlmQuotaExhaustedError"):
+        raise SystemExit(f"{question_id} : {error[:200]}\nmesure interrompue : quota Groq épuisé — relancer "
+                         "après la réinitialisation ; le cache garde les analyses réussies")
     if not analysis.get("available") and error.startswith("LlmProviderMismatchError"):
         raise SystemExit(f"{question_id} : {error[:200]}\nmesure interrompue : vérifier provider_name du "
                          f"profil {profile_name} dans RAG/config.yaml (champ provider de la réponse de chat)")
