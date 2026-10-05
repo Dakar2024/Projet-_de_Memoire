@@ -148,3 +148,15 @@ def test_check_index_matches_truth():
         check_index_matches_truth({"a__full": _manifest(index_doc_ids_sha256="g")}, "h")
     with pytest.raises(SystemExit, match="a__full"):
         check_index_matches_truth({"a__full": _manifest()}, "h")
+
+
+def test_part2_is_not_won_by_chance_through_similarity():
+    """Un document pertinent en tête ne compte que s'il vient de la correspondance exacte."""
+    q = {"part": 2}
+
+    assert score_question(q, ["clinvar:1"], [], {}, {"clinvar:1"}, K, stages=["exact"]) == 1.0
+    assert score_question(q, ["clinvar:1"], [], {}, {"clinvar:1"}, K, stages=["similarity"]) == 0.0
+    assert score_question(q, ["clinvar:1"], [], {}, {"clinvar:1"}, K, stages=["filtered"]) == 0.0
+    assert score_question(q, ["clinvar:1"], ["identifier_not_found"], {}, {"clinvar:1"}, K) == 0.0
+    assert score_question(q, ["clinvar:1"], ["identifier_not_found"], {}, {"clinvar:1"}, K,
+                          stages=["exact"]) == 0.0
