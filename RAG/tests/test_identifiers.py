@@ -97,3 +97,25 @@ def test_slash_separates_coding_and_protein_forms():
     ids = extract_identifiers("c.5266dupC/p.Gln1756fs")
 
     assert (ids.hgvs_c, ids.hgvs_p) == (("c.5266dup",), ("p.Gln1756fs",))
+
+
+def test_gene_in_transcript_prefix_is_kept():
+    """Le préfixe NM_…(GENE): est retiré avec l'identifiant, mais le gène qu'il cite
+    doit rester dans la question : sinon la correspondance exacte n'est plus restreinte
+    au bon gène."""
+    ids = extract_identifiers("NM_007294.4(BRCA1):c.68_69delAG")
+
+    assert ids.hgvs_c == ("c.68_69del",)
+    assert ids.genes == ("BRCA1",) and ids.out_of_panel == ()
+
+
+def test_out_of_panel_gene_in_transcript_prefix_is_reported():
+    ids = extract_identifiers("Que dire de NM_000249.4(MLH1):c.1852_1854del ?")
+
+    assert ids.genes == () and ids.out_of_panel == ("MLH1",)
+
+
+def test_genes_keep_their_order_of_appearance_with_a_prefix():
+    ids = extract_identifiers("HBB puis NM_007294.4(BRCA1):c.68_69delAG et brca2")
+
+    assert ids.genes == ("HBB", "BRCA1", "BRCA2")
