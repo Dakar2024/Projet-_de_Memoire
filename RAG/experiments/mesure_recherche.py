@@ -110,14 +110,18 @@ def v0_scores(e1_scores: dict, questions: list[dict]) -> dict[str, list[float]]:
     return groups
 
 
-def check_run_manifest(name: str, manifest: dict, *, questions_sha: str, prompt_version: str, k: int) -> None:
-    """Refuse une mesure incohérente avec les questions, le prompt, k ou son propre nom de fichier."""
+def check_run_manifest(name: str, manifest: dict, *, questions_sha: str, prompt_version: str, prompt_sha: str,
+                       k: int) -> None:
+    """Refuse une mesure incohérente avec les questions, le prompt (version et empreinte), k
+    ou son propre nom de fichier."""
     profile, _, rest = name.partition("__")
     mode, _, suffix = rest.partition("__")
     if manifest["questions_sha256"] != questions_sha:
         raise SystemExit(f"{name} : questions modifiées depuis la mesure, remesurer")
     if manifest["prompt_version"] != prompt_version:
         raise SystemExit(f"{name} : version de prompt {manifest['prompt_version']} différente de {prompt_version}")
+    if manifest.get("prompt_sha256") != prompt_sha:
+        raise SystemExit(f"{name} : prompt modifié depuis la mesure (empreinte différente), remesurer")
     if manifest["k"] != k:
         raise SystemExit(f"{name} : k = {manifest['k']} au lieu de {k}")
     if (manifest["profile"], manifest["mode"], bool(manifest["exact"])) != (profile, mode, suffix == "exact"):
@@ -193,10 +197,11 @@ def cmd_mesurer(args) -> None:
     if failures:
         raise SystemExit("analyses indisponibles, mesure non enregistrée (relancer ; le cache garde les "
                          "réussites) :\n" + "\n".join(failures))
-    from RAG.src.prompts.analysis import PROMPT_VERSION
+    from RAG.src.prompts.analysis import PROMPT_SHA, PROMPT_VERSION
     from RAG.src.utils.config import load_config
     manifest = {"questions_sha256": _sha256(QUESTIONS_PATH), "profile": profile.name, "model": profile.model,
-                "provider_tag": profile.provider_tag, "prompt_version": PROMPT_VERSION, "mode": args.mode,
+                "provider_tag": profile.provider_tag, "prompt_version": PROMPT_VERSION,
+                "prompt_sha256": PROMPT_SHA, "mode": args.mode,
                 "exact": bool(args.exact), "k": searcher.config.k,
                 "embedding_fingerprint": load_config().embedding.fingerprint}
     name = f"{profile.name}__{args.mode}{'__exact' if args.exact else ''}.json"
@@ -212,7 +217,7 @@ def _median_latency(run: dict) -> float:
 
 
 def cmd_evaluer(args) -> None:
-    from RAG.src.prompts.analysis import PROMPT_VERSION
+    from RAG.src.prompts.analysis import PROMPT_SHA, PROMPT_VERSION
     from RAG.src.utils.config import load_search_config
 
     questions = _load_questions()
@@ -225,7 +230,7 @@ def cmd_evaluer(args) -> None:
     for path in sorted((OUT / "runs").glob("*.json")):
         run = json.loads(path.read_text(encoding="utf-8"))
         check_run_manifest(path.stem, run["manifest"], questions_sha=questions_sha,
-                           prompt_version=PROMPT_VERSION, k=K)
+                           prompt_version=PROMPT_VERSION, prompt_sha=PROMPT_SHA, k=K)
         loaded[path.stem] = run
     if not loaded:
         raise SystemExit("aucune mesure dans data/experiments/e2a/runs")

@@ -105,16 +105,17 @@ def test_exact_doc_ids_follows_the_store_semantics():
 
 
 def _manifest(**over):
-    base = {"questions_sha256": "q", "prompt_version": "p1", "k": 10, "profile": "a", "mode": "full",
+    base = {"questions_sha256": "q", "prompt_version": "p1", "prompt_sha256": "s1", "k": 10, "profile": "a", "mode": "full",
             "exact": False, "model": "m", "provider_tag": "t", "embedding_fingerprint": "f"}
     return {**base, **over}
 
 
 def test_check_run_manifest_accepts_a_consistent_run_and_refuses_the_rest():
-    ok = dict(questions_sha="q", prompt_version="p1", k=10)
+    ok = dict(questions_sha="q", prompt_version="p1", prompt_sha="s1", k=10)
     check_run_manifest("a__full", _manifest(), **ok)
     check_run_manifest("a__similarity__exact", _manifest(mode="similarity", exact=True), **ok)
     for name, manifest in [("a__full", _manifest(questions_sha256="x")), ("a__full", _manifest(prompt_version="p0")),
+                           ("a__full", _manifest(prompt_sha256="s0")),
                            ("a__full", _manifest(k=5)), ("b__full", _manifest()),
                            ("a__filters", _manifest()), ("a__full__exact", _manifest())]:
         with pytest.raises(SystemExit):
