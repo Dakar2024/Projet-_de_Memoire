@@ -146,6 +146,10 @@ développement où seul Airflow joint la base vectorielle.
       aujourd'hui l'écriture (via `./data`), donc une tâche compromise pourrait empoisonner le
       modèle servi. Reporté : demande de redécouper le montage de `./data` ; à faire avant E2.
 
+- [ ] **Proxy sortant filtrant (squid/tinyproxy, `openrouter.ai:443` seulement) sur
+      `rag-egress`**, `rag-search` sur réseau interne + `HTTPS_PROXY` — avant E2b.
+      Aujourd'hui `rag-egress` donne un accès Internet non filtré (Docker ne filtre pas par
+      domaine) : seul le code se limite à OpenRouter.
 - [ ] **Verrouiller par empreinte les dépendances de l'image `rag-search`**, comme l'image
       d'export : versions épinglées aujourd'hui, sans empreintes. À faire avant que le service
       devienne l'API (E2b).
