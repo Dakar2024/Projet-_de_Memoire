@@ -103,7 +103,9 @@ def exact_doc_ids(documents: pl.DataFrame, identifiers) -> set[str]:
 
 def v0_scores(e1_scores: dict, questions: list[dict]) -> dict[str, list[float]]:
     """Scores E1 (neuml) regroupés par famille de la partie 1 ; `A01` correspond à `P1-A01`."""
-    neuml = e1_scores["neuml"]
+    neuml = e1_scores.get("neuml") if isinstance(e1_scores, dict) else None
+    if not isinstance(neuml, dict):
+        raise SystemExit("scores E1 sans le modèle « neuml » : fichier de E1 inattendu, V0 non calculable")
     groups: dict[str, list[float]] = {"A": [], "B": [], "C": []}
     for q in questions:
         if q["part"] != 1:
@@ -113,6 +115,40 @@ def v0_scores(e1_scores: dict, questions: list[dict]) -> dict[str, list[float]]:
             raise SystemExit(f"scores E1 : question {key} absente")
         groups[q["family"]].append(float(neuml[key]))
     return groups
+
+
+def load_v0_scores(path: Path, questions: list[dict]) -> dict[str, list[float]] | None:
+    """Scores V0 depuis le fichier de E1 ; `None` s'il est absent (la ligne V0 le signale)."""
+    if not path.exists():
+        return None
+    return v0_scores(json.loads(path.read_text(encoding="utf-8")), questions)
+
+
+def config_sha256(raw_config: dict) -> str:
+    """Empreinte des sections `search` et `llm` de RAG/config.yaml, sans
+    `llm.analysis_profile` : ce choix change à la mise en service, pas les conditions de mesure."""
+    llm = {key: value for key, value in (raw_config.get("llm") or {}).items() if key != "analysis_profile"}
+    sections = {"search": raw_config.get("search"), "llm": llm}
+    return hashlib.sha256(json.dumps(sections, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def check_analysis_failure(question_id: str, analysis: dict, profile_name: str) -> None:
+    """Un mauvais fournisseur est systématique (profil mal décrit) : inutile de payer les
+    questions suivantes. Les autres indisponibilités sont transitoires et rejouables."""
+    error = analysis.get("error") or ""
+    if not analysis.get("available") and error.startswith("LlmProviderMismatchError"):
+        raise SystemExit(f"{question_id} : {error[:200]}\nmesure interrompue : vérifier provider_name du "
+                         f"profil {profile_name} dans RAG/config.yaml (nom renvoyé par /generation)")
+
+
+def permanent_error_exit(exc: Exception) -> SystemExit:
+    """Erreur permanente (clé, crédit, réponse coupée) : message court, sans trace d'appel.
+    Les messages du client OpenRouter ne citent ni la clé ni le corps des réponses."""
+    message = f"mesure interrompue, erreur permanente : {type(exc).__name__}: {exc}"
+    if hasattr(exc, "cost_usd"):
+        cost = exc.cost_usd
+        message += f"\ncoût de la réponse inexploitable : {'inconnu' if cost is None else f'{cost} $'}"
+    return SystemExit(message)
 
 
 def check_run_manifest(name: str, manifest: dict, *, questions_sha: str, prompt_version: str, prompt_sha: str,
@@ -134,10 +170,14 @@ def check_run_manifest(name: str, manifest: dict, *, questions_sha: str, prompt_
 
 
 def check_runs_consistency(manifests: dict[str, dict]) -> None:
-    """Toutes les mesures partagent le modèle d'embedding ; un profil garde son modèle et son fournisseur."""
+    """Toutes les mesures partagent le modèle d'embedding et la configuration (sections
+    `search` et `llm`) ; un profil garde son modèle et son fournisseur."""
     fingerprints = {m["embedding_fingerprint"] for m in manifests.values()}
     if len(fingerprints) > 1:
         raise SystemExit("modèle d'embedding différent entre les mesures : remesurer")
+    configs = {m.get("config_sha256") for m in manifests.values()}
+    if len(configs) > 1 or None in configs:
+        raise SystemExit("configuration (search, llm) différente ou absente entre les mesures : remesurer")
     seen: dict[str, tuple] = {}
     for name, m in manifests.items():
         pair = (m["model"], m["provider_tag"])
@@ -159,9 +199,14 @@ def check_index_matches_truth(manifests: dict[str, dict], truth_sha: str) -> Non
 
 
 def check_complete_field(full_profiles: set[str], configured: set[str]) -> None:
+    """Les séries « full » doivent couvrir exactement les profils configurés."""
     missing = sorted(configured - full_profiles)
     if missing:
         raise SystemExit(f"mesures « full » manquantes pour {missing} : pas de décision sur un champ incomplet")
+    extra = sorted(full_profiles - configured)
+    if extra:
+        raise SystemExit(f"mesures « full » de profils non configurés {extra} : fichiers périmés à retirer "
+                         "de data/experiments/e2a/runs")
 
 
 # --- Sous-commandes --------------------------------------------------------------------
@@ -201,32 +246,40 @@ def cmd_verite_terrain(args) -> None:
 
 def cmd_mesurer(args) -> None:
     from RAG.src.retrieval.retriever import Searcher
+    from RAG.src.utils.errors import LlmPermanentError
 
     questions = _load_questions()
     results, failures = {}, []
-    with Searcher(profile_name=args.profile, cache_path=OUT / "cache_analyses.json") as searcher:
-        profile = searcher.config.analysis_profile
-        index_sha = searcher.index_doc_ids_sha256()
-        for q in questions:
-            r = searcher.search(q["question"], mode=args.mode, force_exact=True if args.exact else None).as_dict()
-            if not r["trace"]["analysis"]["available"]:
-                failures.append(f"{q['id']} : {r['trace']['analysis']['error']}")
-            results[q["id"]] = {"doc_ids": [d["doc_id"] for d in r["documents"]],
-                                "stages": [d["stage"] for d in r["documents"]], "flags": r["trace"]["flags"],
-                                "identifiers": r["trace"]["identifiers"], "analysis": r["trace"]["analysis"],
-                                "timings_ms": r["trace"]["timings_ms"]}
-        if searcher.index_doc_ids_sha256() != index_sha:
-            raise SystemExit("index modifié pendant la mesure (indexation concurrente) : remesurer")
+    try:
+        with Searcher(profile_name=args.profile, cache_path=OUT / "cache_analyses.json") as searcher:
+            profile = searcher.config.analysis_profile
+            index_sha = searcher.index_doc_ids_sha256()
+            for q in questions:
+                r = searcher.search(q["question"], mode=args.mode,
+                                    force_exact=True if args.exact else None).as_dict()
+                analysis = r["trace"]["analysis"]
+                check_analysis_failure(q["id"], analysis, profile.name)
+                if not analysis["available"]:
+                    failures.append(f"{q['id']} : {analysis['error']}")
+                results[q["id"]] = {"doc_ids": [d["doc_id"] for d in r["documents"]],
+                                    "stages": [d["stage"] for d in r["documents"]], "flags": r["trace"]["flags"],
+                                    "identifiers": r["trace"]["identifiers"], "analysis": analysis,
+                                    "timings_ms": r["trace"]["timings_ms"]}
+            if searcher.index_doc_ids_sha256() != index_sha:
+                raise SystemExit("index modifié pendant la mesure (indexation concurrente) : remesurer")
+    except LlmPermanentError as exc:
+        raise permanent_error_exit(exc) from None
     if failures:
         raise SystemExit("analyses indisponibles, mesure non enregistrée (relancer ; le cache garde les "
                          "réussites) :\n" + "\n".join(failures))
     from RAG.src.prompts.analysis import PROMPT_SHA, PROMPT_VERSION
-    from RAG.src.utils.config import load_config
+    from RAG.src.utils.config import DEFAULT_CONFIG_PATH, load_config
     manifest = {"questions_sha256": _sha256(QUESTIONS_PATH), "profile": profile.name, "model": profile.model,
                 "provider_tag": profile.provider_tag, "prompt_version": PROMPT_VERSION,
                 "prompt_sha256": PROMPT_SHA, "mode": args.mode,
                 "exact": bool(args.exact), "k": searcher.config.k,
                 "embedding_fingerprint": load_config().embedding.fingerprint,
+                "config_sha256": config_sha256(yaml.safe_load(DEFAULT_CONFIG_PATH.read_text(encoding="utf-8"))),
                 "index_doc_ids_sha256": index_sha}
     name = f"{profile.name}__{args.mode}{'__exact' if args.exact else ''}.json"
     (OUT / "runs").mkdir(parents=True, exist_ok=True)
@@ -300,8 +353,8 @@ def cmd_evaluer(args) -> None:
 
     print("\n## Apport de chaque ingrédient (profil retenu)\n")
     print("| Version | P1-A | P1-B | P1-C | P2 | P3 |\n|---|---|---|---|---|---|")
-    if E1_SCORES_PATH.exists():
-        v0 = v0_scores(json.loads(E1_SCORES_PATH.read_text(encoding="utf-8")), questions)
+    v0 = load_v0_scores(E1_SCORES_PATH, questions)
+    if v0 is not None:
         print("| V0 E1 (anglais) | " + " | ".join(f"{np.mean(v0[f]):.3f}" for f in "ABC") + " | — | — |")
     else:
         print("| V0 E1 (anglais) | (scores E1 absents) |||||")
