@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
@@ -67,17 +67,23 @@ class ServiceSettings:
     served_model_dir: Path
 
 
+# Clients LLM connus. `openrouter` sert la mesure officielle ; `groq` ne sert qu'à l'essai
+# gratuit de validation de la chaîne (`llm.trial_profiles`).
+LLM_BACKENDS = ("openrouter", "groq")
+
+
 @dataclass(frozen=True)
 class LlmProfile:
-    """Un modèle figé sur un point d'accès précis d'OpenRouter : le tag désigne le
-    point d'accès dans la requête, le nom est celui que renvoie OpenRouter pour
-    dire qui a réellement servi la requête."""
+    """Un modèle figé sur un point d'accès précis : le tag désigne le point d'accès dans
+    la requête OpenRouter, le nom est celui que renvoie le service pour dire qui a
+    réellement servi la requête. `backend` choisit le client (OpenRouter par défaut)."""
 
     name: str
     model: str
     provider_tag: str
     provider_name: str
     quantization: str | None
+    backend: str = "openrouter"
 
 
 @dataclass(frozen=True)
@@ -89,6 +95,8 @@ class SearchConfig:
     profiles: dict[str, LlmProfile]
     llm_timeout_s: float
     llm_max_tokens: int
+    # Profils d'essai : jamais candidats de la règle de choix du modèle.
+    trial_profiles: dict[str, LlmProfile] = field(default_factory=dict)
 
 
 def load_config(path: Path = DEFAULT_CONFIG_PATH) -> RagConfig:
@@ -184,16 +192,23 @@ def _profile(name: str, raw: Mapping) -> LlmProfile:
     quantization = raw.get("quantization")
     if quantization is not None and not (isinstance(quantization, str) and quantization.strip()):
         raise RagConfigurationError(f"profil LLM « {name} » : quantization invalide")
-    return LlmProfile(name=name, quantization=quantization, **{k: v.strip() for k, v in fields.items()})
+    backend = raw.get("backend", "openrouter")
+    if backend not in LLM_BACKENDS:
+        raise RagConfigurationError(f"profil LLM « {name} » : backend {backend!r} inconnu, "
+                                    f"attendu {' ou '.join(LLM_BACKENDS)}")
+    return LlmProfile(name=name, quantization=quantization, backend=backend,
+                      **{k: v.strip() for k, v in fields.items()})
 
 
 def load_search_config(path: Path = DEFAULT_CONFIG_PATH, profile: str | None = None) -> SearchConfig:
     """Réglages de la recherche (E2a). `profile` remplace le profil d'analyse par
-    défaut : la mesure compare ainsi plusieurs modèles sans toucher au fichier."""
+    défaut : la mesure compare ainsi plusieurs modèles sans toucher au fichier. Il peut
+    désigner un profil d'essai (`llm.trial_profiles`), qui reste hors de `profiles`."""
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
         search, llm = raw["search"], raw["llm"]
         profiles = {name: _profile(name, value) for name, value in llm["profiles"].items()}
+        trials = {name: _profile(name, value) for name, value in (llm.get("trial_profiles") or {}).items()}
         k = int(search["k"])
         min_filtered = int(search["min_filtered"])
         max_chars = int(search["max_question_chars"])
@@ -204,8 +219,17 @@ def load_search_config(path: Path = DEFAULT_CONFIG_PATH, profile: str | None = N
         raise RagConfigurationError(f"{path} : sections search/llm illisibles ou incomplètes : {exc!r}") from exc
     if not profiles:
         raise RagConfigurationError(f"{path} : aucun profil LLM")
-    if chosen not in profiles:
-        raise RagConfigurationError(f"{path} : profil d'analyse « {chosen} » absent de llm.profiles")
+    # Un profil officiel concourt à la règle de choix, mesurée sur OpenRouter seulement.
+    off_router = sorted(name for name, p in profiles.items() if p.backend != "openrouter")
+    if off_router:
+        raise RagConfigurationError(f"{path} : profils officiels hors OpenRouter {off_router} "
+                                    "(backend) : les déplacer dans llm.trial_profiles")
+    both = sorted(set(profiles) & set(trials))
+    if both:
+        raise RagConfigurationError(f"{path} : profils à la fois officiels et d'essai {both}")
+    if chosen not in profiles and chosen not in trials:
+        raise RagConfigurationError(
+            f"{path} : profil d'analyse « {chosen} » absent de llm.profiles et de llm.trial_profiles")
     if not 1 <= k <= 50:
         raise RagConfigurationError(f"{path} : search.k doit être entre 1 et 50")
     if not 1 <= min_filtered <= k:
@@ -216,8 +240,8 @@ def load_search_config(path: Path = DEFAULT_CONFIG_PATH, profile: str | None = N
         raise RagConfigurationError(f"{path} : llm.request_timeout_s > 0 et llm.max_tokens ≥ 256 requis")
     return SearchConfig(
         k=k, min_filtered=min_filtered, max_question_chars=max_chars,
-        analysis_profile=profiles[chosen], profiles=profiles,
-        llm_timeout_s=timeout, llm_max_tokens=max_tokens,
+        analysis_profile=profiles.get(chosen) or trials[chosen], profiles=profiles,
+        llm_timeout_s=timeout, llm_max_tokens=max_tokens, trial_profiles=trials,
     )
 
 
@@ -228,4 +252,14 @@ def load_openrouter_key(env: Mapping[str, str] | None = None) -> str:
     key = (env.get("OPENROUTER_API_KEY") or "").strip()
     if not key:
         raise RagConfigurationError("OPENROUTER_API_KEY absente ou vide (.env)")
+    return key
+
+
+def load_groq_key(env: Mapping[str, str] | None = None) -> str:
+    """Clé Groq (essai gratuit seulement), lue dans l'environnement. Le message d'erreur
+    nomme la variable, jamais sa valeur."""
+    env = os.environ if env is None else env
+    key = (env.get("GROQ_API_KEY") or "").strip()
+    if not key:
+        raise RagConfigurationError("GROQ_API_KEY absente ou vide (.env)")
     return key

@@ -53,3 +53,15 @@ llm:
       provider_tag: deepinfra/bf16
       provider_name: DeepInfra
       quantization: bf16
+  # Essai gratuit de validation de la chaîne (API Groq, offre gratuite, zéro rétention
+  # activée dans Data Controls). Jamais candidat de la règle de choix du modèle : ses
+  # séries vont dans data/experiments/e2a-essai, et cette section n'entre pas dans
+  # l'empreinte de configuration des séries officielles. Groq ne permet de figer ni
+  # point d'accès ni quantification : provider_tag est informatif.
+  trial_profiles:
+    essai-groq-gpt-oss-120b:
+      model: openai/gpt-oss-120b
+      backend: groq
+      provider_tag: groq
+      provider_name: Groq
+      quantization: null

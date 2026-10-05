@@ -74,3 +74,64 @@ def test_openrouter_key_is_required_and_never_echoed():
     with pytest.raises(RagConfigurationError, match="OPENROUTER_API_KEY"):
         load_openrouter_key({"OPENROUTER_API_KEY": "   "})
     assert load_openrouter_key({"OPENROUTER_API_KEY": "sk-or-abc"}) == "sk-or-abc"
+
+
+TRIAL = VALID + """
+  trial_profiles:
+    essai-groq: {model: openai/gpt-oss-120b, backend: groq, provider_tag: groq, provider_name: Groq, quantization: null}
+"""
+
+
+def test_repository_config_has_a_separate_groq_trial_profile():
+    config = load_search_config(DEFAULT_CONFIG_PATH, profile="essai-groq-gpt-oss-120b")
+
+    trial = config.analysis_profile
+    assert (trial.model, trial.backend, trial.provider_name, trial.quantization) == (
+        "openai/gpt-oss-120b", "groq", "Groq", None)
+    assert set(config.trial_profiles) == {"essai-groq-gpt-oss-120b"}
+    assert "essai-groq-gpt-oss-120b" not in config.profiles
+
+
+def test_official_profiles_stay_on_openrouter():
+    config = load_search_config(DEFAULT_CONFIG_PATH)
+
+    assert {p.backend for p in config.profiles.values()} == {"openrouter"}
+
+
+def test_a_trial_profile_can_be_chosen_by_argument_or_by_default(tmp_path):
+    config = load_search_config(_write(tmp_path, TRIAL), profile="essai-groq")
+    assert config.analysis_profile.name == "essai-groq" and config.analysis_profile.backend == "groq"
+    assert set(config.profiles) == {"claude-opus-5.5", "gpt-oss-120b"}
+
+    default = load_search_config(_write(tmp_path, TRIAL.replace("analysis_profile: claude-opus-5.5",
+                                                                "analysis_profile: essai-groq")))
+    assert default.analysis_profile.name == "essai-groq"
+
+
+def test_trial_profiles_are_optional(tmp_path):
+    assert load_search_config(_write(tmp_path, VALID)).trial_profiles == {}
+
+
+def test_an_unknown_backend_is_refused(tmp_path):
+    with pytest.raises(RagConfigurationError, match="backend"):
+        load_search_config(_write(tmp_path, TRIAL.replace("backend: groq", "backend: ollama")))
+
+
+def test_an_official_profile_cannot_leave_openrouter(tmp_path):
+    """Un profil officiel participe à la règle de choix : il reste sur OpenRouter."""
+    text = VALID.replace("provider_name: DeepInfra,", "provider_name: DeepInfra, backend: groq,")
+    with pytest.raises(RagConfigurationError, match="backend"):
+        load_search_config(_write(tmp_path, text))
+
+
+def test_a_name_in_both_sections_is_refused(tmp_path):
+    with pytest.raises(RagConfigurationError, match="gpt-oss-120b"):
+        load_search_config(_write(tmp_path, TRIAL.replace("essai-groq:", "gpt-oss-120b:")))
+
+
+def test_groq_key_is_required_and_never_echoed():
+    from RAG.src.utils.config import load_groq_key
+
+    with pytest.raises(RagConfigurationError, match="GROQ_API_KEY"):
+        load_groq_key({"GROQ_API_KEY": "  ", "OPENROUTER_API_KEY": "sk-or-abc"})
+    assert load_groq_key({"GROQ_API_KEY": "gsk_abc"}) == "gsk_abc"

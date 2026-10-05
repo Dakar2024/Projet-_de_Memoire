@@ -245,3 +245,14 @@ def test_load_v0_scores_tolerates_a_missing_e1_file(tmp_path):
     path.write_text(json.dumps({"autre": {}}), encoding="utf-8")
     with pytest.raises(SystemExit, match="neuml"):
         load_v0_scores(path, qs)
+
+
+def test_config_sha256_ignores_trial_profiles():
+    """Les séries officielles ne dépendent pas des essais."""
+    from RAG.experiments.mesure_recherche import config_sha256
+
+    raw = {"search": {"k": 10}, "llm": {"analysis_profile": "a", "profiles": {"a": {"model": "m"}}}}
+    with_trial = {**raw, "llm": {**raw["llm"], "trial_profiles": {"essai": {"model": "m", "backend": "groq"}}}}
+
+    assert config_sha256(with_trial) == config_sha256(raw)
+    assert "trial_profiles" in with_trial["llm"]
