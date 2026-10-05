@@ -104,6 +104,16 @@ def test_exact_doc_ids_follows_the_store_semantics():
     assert exact_doc_ids(docs, Identifiers((), ("c.1A>G",), (), ("TP53",), ())) == {"v3"}
 
 
+def test_exact_doc_ids_ignores_hgvs_when_only_an_out_of_panel_gene_is_cited():
+    docs = pl.DataFrame({
+        "doc_id": ["v1", "v3"], "doc_type": ["variant", "variant"], "gene_symbol": ["BRCA1", "TP53"],
+        "rs_dbsnp": [7, None], "hgvs_c": [None, "c.1A>G"], "hgvs_p": [None, None],
+    }, schema_overrides={"rs_dbsnp": pl.Int64, "hgvs_c": pl.Utf8, "hgvs_p": pl.Utf8})
+
+    assert exact_doc_ids(docs, Identifiers((), ("c.1A>G",), (), (), ("MLH1",))) == set()
+    assert exact_doc_ids(docs, Identifiers((7,), ("c.1A>G",), (), (), ("MLH1",))) == {"v1"}
+
+
 def _manifest(**over):
     base = {"questions_sha256": "q", "prompt_version": "p1", "prompt_sha256": "s1", "k": 10, "profile": "a", "mode": "full",
             "exact": False, "model": "m", "provider_tag": "t", "embedding_fingerprint": "f",

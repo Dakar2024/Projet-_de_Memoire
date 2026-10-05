@@ -267,3 +267,37 @@ def test_store_hashes_the_doc_ids_of_the_measured_panels_only(monkeypatch):
     assert store.doc_ids_sha256() == doc_ids_sha256(["clinvar:1", "clinvar:2"])
     (sql, params), = captured
     assert "panel = ANY(%s::text[])" in sql and params == (list(PANELS),)
+
+
+def _exact_calls(store):
+    return [kwargs for kind, kwargs in store.calls if kind == "exact"]
+
+
+def test_hgvs_with_only_an_out_of_panel_gene_is_never_searched_exactly():
+    store = FakeStore(exact=[doc("clinvar:9", stage="exact")], similar=[doc("clinvar:2")])
+
+    result = _search("Le variant c.1A>G de MLH1 est-il pathogène ?", store)
+
+    assert not any(c["hgvs_c"] or c["hgvs_p"] for c in _exact_calls(store))
+    assert "clinvar:9" not in [d.doc_id for d in result.documents]
+    assert "gene_out_of_panel" in result.trace.flags and "identifier_not_found" in result.trace.flags
+
+
+def test_rs_with_only_an_out_of_panel_gene_is_still_searched_exactly():
+    store = FakeStore(exact=[doc("clinvar:1", stage="exact")])
+
+    result = _search("Le variant rs80357906 de MLH1 ?", store)
+
+    (call,) = _exact_calls(store)
+    assert call["rs"] == (80357906,) and not call["hgvs_c"] and not call["hgvs_p"]
+    assert result.documents[0].doc_id == "clinvar:1"
+    assert "gene_out_of_panel" in result.trace.flags and "identifier_not_found" not in result.trace.flags
+
+
+def test_hgvs_with_a_panel_gene_and_an_out_of_panel_gene_is_unchanged():
+    store = FakeStore(exact=[doc("clinvar:1", stage="exact")])
+
+    _search("Le variant c.1A>G de BRCA1 et de MLH1 ?", store)
+
+    (call,) = _exact_calls(store)
+    assert call["hgvs_c"] == ("c.1A>G",) and call["genes"] == ("BRCA1",)
