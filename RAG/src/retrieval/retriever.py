@@ -22,15 +22,18 @@ from pgvector.psycopg import register_vector
 from ingestion.config import PANEL_GENES
 from RAG.src.embeddings.canary import load_canary, verify_canary
 from RAG.src.embeddings.embedder import EmbeddingClient
+from RAG.src.llm.groq import GroqClient
 from RAG.src.llm.openrouter import OpenRouterClient
 from RAG.src.retrieval.analysis import AnalysisCache, QueryAnalysis, analyze
 from RAG.src.retrieval.identifiers import Identifiers, extract_identifiers
 from RAG.src.retrieval.significance import clinvar_labels
 from RAG.src.utils.config import (
     DEFAULT_CONFIG_PATH,
+    LlmProfile,
     SearchConfig,
     check_served_model,
     load_config,
+    load_groq_key,
     load_openrouter_key,
     load_search_config,
     load_service_settings,
@@ -300,9 +303,19 @@ class PgSearchStore:
         return self._documents(self._rows(_resorted(sql), params, exact=exact, limit=limit), stage)
 
 
+def build_llm_client(profile: LlmProfile, env, timeout_s: float) -> OpenRouterClient | GroqClient:
+    """Client du profil : OpenRouter (mesure officielle) ou Groq (essai gratuit). Seule la
+    clé du client choisi est exigée."""
+    if profile.backend == "openrouter":
+        return OpenRouterClient(load_openrouter_key(env), timeout_s=timeout_s)
+    if profile.backend == "groq":
+        return GroqClient(load_groq_key(env), timeout_s=timeout_s)
+    raise RagConfigurationError(f"profil {profile.name} : backend {profile.backend!r} inconnu")
+
+
 class Searcher:
-    """Câblage réel, ouvert une fois : vérifie le modèle d'embedding, puis assemble
-    OpenRouter, le service d'embedding et la base (`rag_reader`)."""
+    """Câblage réel, ouvert une fois : vérifie le modèle d'embedding, puis assemble le
+    client LLM du profil, le service d'embedding et la base (`rag_reader`)."""
 
     def __init__(self, *, profile_name: str | None = None, cache_path: Path | None = None,
                  config_path: Path = DEFAULT_CONFIG_PATH, env=None) -> None:
@@ -315,7 +328,7 @@ class Searcher:
         self._fingerprint = rag.embedding.fingerprint
         verify_canary(self._embedder, load_canary(rag.embedding.canary_path), rag.embedding.fingerprint,
                       rag.embedding.canary_min_cosine)
-        self._llm = OpenRouterClient(load_openrouter_key(env), timeout_s=self.config.llm_timeout_s)
+        self._llm = build_llm_client(self.config.analysis_profile, env, self.config.llm_timeout_s)
         self._cache = AnalysisCache(cache_path) if cache_path else None
         self._store = PgSearchStore(services.pg_conninfo)
         self._settings = SearchSettings(self.config.k, self.config.min_filtered, self.config.max_question_chars)
