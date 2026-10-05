@@ -437,6 +437,52 @@ services:
     restart: "no"
 
 #----------------------------------
+# RAG — recherche (E2a), outil à la demande ; deviendra l'API en E2b
+#----------------------------------
+  rag-search:
+    profiles: ["outils"]
+    build:
+      context: .
+      dockerfile: docker/rag-search/Dockerfile
+    user: "${AIRFLOW_UID:?AIRFLOW_UID obligatoire, sortie de id -u sur l hôte}:0"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      PYTHONPATH: /opt/projet:/opt/projet/src
+      RAG_EMBEDDINGS_URL: http://rag-embeddings:8080
+      RAG_EMBEDDINGS_API_KEY: ${RAG_EMBEDDINGS_API_KEY:?RAG_EMBEDDINGS_API_KEY obligatoire, à renseigner}
+      RAG_EMBEDDING_MODEL: ${RAG_EMBEDDING_MODEL:?RAG_EMBEDDING_MODEL obligatoire, à renseigner}
+      RAG_PG_HOST: rag-postgres
+      RAG_PG_PORT: "5432"
+      RAG_PG_DB: rag
+      # Lecture seule : la recherche n'écrit jamais dans la base.
+      RAG_PG_USER: rag_reader
+      RAG_PG_PASSWORD: ${RAG_READER_PASSWORD:?RAG_READER_PASSWORD obligatoire, à renseigner}
+      # `:-` et non `:?` : une clé absente ne doit pas bloquer les commandes Compose
+      # du pipeline ; le code refuse lui-même de chercher sans clé.
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+    working_dir: /opt/projet
+    # Montages restreints : ni .env, ni le reste du dépôt dans ce conteneur relié à Internet.
+    volumes:
+      - ./RAG:/opt/projet/RAG:ro
+      - ./src:/opt/projet/src:ro
+      - ./data/models:/opt/projet/data/models:ro
+      - ./data/experiments:/opt/projet/data/experiments
+    # rag-network pour la base et l'embedding ; rag-egress pour OpenRouter seulement.
+    # Pas genomique-network : ni base d'Airflow, ni MinIO.
+    networks:
+      - rag-network
+      - rag-egress
+    entrypoint: ["python"]
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+#----------------------------------
 # Volumes et réseau
 #----------------------------------
 volumes:
@@ -453,3 +499,7 @@ networks:
   rag-network:
     driver: bridge
     internal: true
+  # Sortie vers Internet du seul service de recherche (OpenRouter). Aucun autre
+  # service n'y est rattaché.
+  rag-egress:
+    driver: bridge

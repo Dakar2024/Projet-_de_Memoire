@@ -23,4 +23,5 @@ RAG/architecture RAG.jpeg
 data/models/*
 !data/models/.gitkeep
 # Résultats intermédiaires des expériences (vecteurs, rapports bruts)
-data/experiments/
+data/experiments/*
+!data/experiments/.gitkeep
