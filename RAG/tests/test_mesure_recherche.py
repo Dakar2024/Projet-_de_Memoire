@@ -106,7 +106,8 @@ def test_exact_doc_ids_follows_the_store_semantics():
 
 def _manifest(**over):
     base = {"questions_sha256": "q", "prompt_version": "p1", "prompt_sha256": "s1", "k": 10, "profile": "a", "mode": "full",
-            "exact": False, "model": "m", "provider_tag": "t", "embedding_fingerprint": "f"}
+            "exact": False, "model": "m", "provider_tag": "t", "embedding_fingerprint": "f",
+            "config_sha256": "c"}
     return {**base, **over}
 
 
@@ -160,3 +161,77 @@ def test_part2_is_not_won_by_chance_through_similarity():
     assert score_question(q, ["clinvar:1"], ["identifier_not_found"], {}, {"clinvar:1"}, K) == 0.0
     assert score_question(q, ["clinvar:1"], ["identifier_not_found"], {}, {"clinvar:1"}, K,
                           stages=["exact"]) == 0.0
+
+
+def test_check_complete_field_refuses_an_extra_profile():
+    """Une série « full » d'un profil retiré de la configuration est un fichier périmé :
+    elle participerait au choix du modèle."""
+    with pytest.raises(SystemExit, match="ancien"):
+        check_complete_field({"a", "b", "ancien"}, {"a", "b"})
+
+
+def test_check_runs_consistency_requires_the_same_configuration():
+    check_runs_consistency({"a__full": _manifest(), "b__full": _manifest(profile="b")})
+    with pytest.raises(SystemExit, match="configuration"):
+        check_runs_consistency({"a__full": _manifest(), "b__full": _manifest(profile="b", config_sha256="d")})
+    with pytest.raises(SystemExit, match="configuration"):
+        check_runs_consistency({"a__full": _manifest(), "b__full": {**_manifest(profile="b"), "config_sha256": None}})
+
+
+def test_config_sha256_covers_search_and_llm_but_not_the_chosen_profile():
+    from RAG.experiments.mesure_recherche import config_sha256
+
+    raw = {"embedding": {"x": 1}, "search": {"k": 10},
+           "llm": {"analysis_profile": "a", "max_tokens": 2000, "profiles": {"a": {"model": "m"}}}}
+    reference = config_sha256(raw)
+
+    assert config_sha256({**raw, "embedding": {"x": 2}}) == reference
+    assert config_sha256({**raw, "llm": {**raw["llm"], "analysis_profile": "b"}}) == reference
+    assert config_sha256({**raw, "search": {"k": 5}}) != reference
+    assert config_sha256({**raw, "llm": {**raw["llm"], "max_tokens": 4000}}) != reference
+    assert raw["llm"]["analysis_profile"] == "a"
+
+
+def test_a_provider_mismatch_stops_the_measurement_at_once():
+    from RAG.experiments.mesure_recherche import check_analysis_failure
+
+    check_analysis_failure("P1-A01", {"available": True, "error": None}, "claude")
+    check_analysis_failure("P1-A01", {"available": False, "error": "LlmUnavailableError: 503"}, "claude")
+    with pytest.raises(SystemExit, match="provider_name") as excinfo:
+        check_analysis_failure("P1-A01", {"available": False,
+                                          "error": "LlmProviderMismatchError: servi par « Amazon »"}, "claude")
+    assert "claude" in str(excinfo.value) and "P1-A01" in str(excinfo.value)
+
+
+def test_a_permanent_error_is_reported_without_traceback():
+    from RAG.experiments.mesure_recherche import permanent_error_exit
+    from RAG.src.utils.errors import LlmPermanentError, LlmTruncatedError
+
+    truncated = permanent_error_exit(LlmTruncatedError("augmenter llm.max_tokens", cost_usd=0.012))
+    refused = permanent_error_exit(LlmPermanentError("OpenRouter refuse la requête (401)"))
+    unknown = permanent_error_exit(LlmTruncatedError("augmenter llm.max_tokens"))
+
+    assert isinstance(truncated, SystemExit)
+    assert "LlmTruncatedError" in str(truncated.code) and "llm.max_tokens" in str(truncated.code)
+    assert "0.012" in str(truncated.code) and "inconnu" in str(unknown.code)
+    assert "401" in str(refused.code)
+
+
+def test_v0_scores_refuses_e1_scores_without_the_neuml_model():
+    with pytest.raises(SystemExit, match="neuml"):
+        v0_scores({"biobert": {"A01": 0.5}}, [{"id": "P1-A01", "part": 1, "family": "A"}])
+
+
+def test_load_v0_scores_tolerates_a_missing_e1_file(tmp_path):
+    import json
+
+    from RAG.experiments.mesure_recherche import load_v0_scores
+
+    qs = [{"id": "P1-A01", "part": 1, "family": "A"}]
+    assert load_v0_scores(tmp_path / "absent.json", qs) is None
+    path = tmp_path / "scores.json"
+    path.write_text(json.dumps({"neuml": {"A01": 0.5}}), encoding="utf-8")
+    assert load_v0_scores(path, qs) == {"A": [0.5], "B": [], "C": []}
+    path.write_text(json.dumps({"autre": {}}), encoding="utf-8")
+    with pytest.raises(SystemExit, match="neuml"):
+        load_v0_scores(path, qs)
