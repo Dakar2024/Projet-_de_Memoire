@@ -68,3 +68,68 @@ def test_significance_accuracy():
     analyses = {"q1": {"significance": "pathogenic"}, "q2": {"significance": "benign"}}
 
     assert significance_accuracy(questions, analyses) == 0.5
+
+
+# --- Garde-fous de la mesure -------------------------------------------------------------
+
+import polars as pl
+
+from RAG.experiments.mesure_recherche import (
+    check_complete_field, check_run_manifest, check_runs_consistency, exact_doc_ids, v0_scores,
+)
+from RAG.src.retrieval.identifiers import Identifiers
+
+
+def test_choose_model_refuses_an_empty_field():
+    with pytest.raises(ValueError):
+        choose_model({}, {})
+
+
+def test_v0_scores_groups_e1_scores_by_family():
+    qs = [{"id": "P1-A01", "part": 1, "family": "A"}, {"id": "P1-B01", "part": 1, "family": "B"},
+          {"id": "P2-01", "part": 2}]
+
+    assert v0_scores({"neuml": {"A01": 0.5, "B01": 0.25}}, qs) == {"A": [0.5], "B": [0.25], "C": []}
+
+
+def test_exact_doc_ids_follows_the_store_semantics():
+    docs = pl.DataFrame({
+        "doc_id": ["v1", "v2", "v3", "g1"], "doc_type": ["variant", "variant", "variant", "gene"],
+        "gene_symbol": ["BRCA1", "BRCA1", "TP53", "BRCA1"], "rs_dbsnp": [7, 7, None, 7],
+        "hgvs_c": [None, None, "c.1A>G", None], "hgvs_p": [None] * 4,
+    }, schema_overrides={"rs_dbsnp": pl.Int64, "hgvs_c": pl.Utf8, "hgvs_p": pl.Utf8})
+
+    assert exact_doc_ids(docs, Identifiers((7,), (), (), (), ())) == {"v1", "v2"}
+    assert exact_doc_ids(docs, Identifiers((), ("c.1A>G",), (), ("BRCA1",), ())) == set()
+    assert exact_doc_ids(docs, Identifiers((), ("c.1A>G",), (), ("TP53",), ())) == {"v3"}
+
+
+def _manifest(**over):
+    base = {"questions_sha256": "q", "prompt_version": "p1", "k": 10, "profile": "a", "mode": "full",
+            "exact": False, "model": "m", "provider_tag": "t", "embedding_fingerprint": "f"}
+    return {**base, **over}
+
+
+def test_check_run_manifest_accepts_a_consistent_run_and_refuses_the_rest():
+    ok = dict(questions_sha="q", prompt_version="p1", k=10)
+    check_run_manifest("a__full", _manifest(), **ok)
+    check_run_manifest("a__similarity__exact", _manifest(mode="similarity", exact=True), **ok)
+    for name, manifest in [("a__full", _manifest(questions_sha256="x")), ("a__full", _manifest(prompt_version="p0")),
+                           ("a__full", _manifest(k=5)), ("b__full", _manifest()),
+                           ("a__filters", _manifest()), ("a__full__exact", _manifest())]:
+        with pytest.raises(SystemExit):
+            check_run_manifest(name, manifest, **ok)
+
+
+def test_check_runs_consistency():
+    check_runs_consistency({"a__full": _manifest(), "a__filters": _manifest(mode="filters")})
+    with pytest.raises(SystemExit):
+        check_runs_consistency({"a__full": _manifest(), "b__full": _manifest(profile="b", embedding_fingerprint="g")})
+    with pytest.raises(SystemExit):
+        check_runs_consistency({"a__full": _manifest(), "a__filters": _manifest(mode="filters", model="autre")})
+
+
+def test_check_complete_field():
+    check_complete_field({"a", "b"}, {"a", "b"})
+    with pytest.raises(SystemExit, match="b"):
+        check_complete_field({"a"}, {"a", "b"})
