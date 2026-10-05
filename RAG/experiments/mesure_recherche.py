@@ -14,16 +14,18 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import sys
 from pathlib import Path
 
 import numpy as np
+import polars as pl
 import yaml
 
 from RAG.experiments.comparaison_embeddings import bootstrap_mean_ci
 
-QUESTIONS_PATH = Path(__file__).with_name("questions_recherche.yaml")
-OUT = Path("data/experiments/e2a")
+QUESTIONS_PATH = Path(__file__).resolve().with_name("questions_recherche.yaml")
+_ROOT = Path(__file__).resolve().parents[2]  # racine du dépôt, ou /opt/projet dans le conteneur
+OUT = _ROOT / "data" / "experiments" / "e2a"
+E1_SCORES_PATH = _ROOT / "data" / "experiments" / "scores.json"
 K = 10
 SEED = 20261001
 _ID_KEYS = ("rs", "hgvs_c", "hgvs_p", "genes")
@@ -60,6 +62,8 @@ def choose_model(scores: dict[str, list[float]], costs: dict[str, float], seed: 
     """Règle fixée avant la mesure : le meilleur score moyen désigne le meilleur modèle ;
     un modèle dont l'intervalle à 95 % de l'écart avec le meilleur contient zéro ne s'en
     distingue pas ; on retient le moins cher des modèles indistinguables du meilleur."""
+    if not scores:
+        raise ValueError("choose_model : aucun modèle à comparer")
     means = {name: float(np.mean(values)) for name, values in scores.items()}
     best = max(means, key=lambda name: (means[name], -costs[name]))
     intervals, indistinguishable = {}, [best]
@@ -81,10 +85,68 @@ def significance_accuracy(questions: list[dict], analyses: dict[str, dict]) -> f
     return sum(expected == got for expected, got in pairs) / len(pairs)
 
 
+def exact_doc_ids(documents: pl.DataFrame, identifiers) -> set[str]:
+    """Documents de variant que la correspondance exacte doit retrouver (même sémantique que
+    PgSearchStore.exact_matches : rs OU HGVS c. OU HGVS p., restreint aux gènes cités)."""
+    match = (pl.col("rs_dbsnp").is_in(list(identifiers.rs)) | pl.col("hgvs_c").is_in(list(identifiers.hgvs_c))
+             | pl.col("hgvs_p").is_in(list(identifiers.hgvs_p)))
+    selected = documents.filter((pl.col("doc_type") == "variant") & match)
+    if identifiers.genes:
+        selected = selected.filter(pl.col("gene_symbol").is_in(list(identifiers.genes)))
+    return set(selected["doc_id"].to_list())
+
+
+def v0_scores(e1_scores: dict, questions: list[dict]) -> dict[str, list[float]]:
+    """Scores E1 (neuml) regroupés par famille de la partie 1 ; `A01` correspond à `P1-A01`."""
+    neuml = e1_scores["neuml"]
+    groups: dict[str, list[float]] = {"A": [], "B": [], "C": []}
+    for q in questions:
+        if q["part"] != 1:
+            continue
+        key = q["id"].removeprefix("P1-")
+        if key not in neuml:
+            raise SystemExit(f"scores E1 : question {key} absente")
+        groups[q["family"]].append(float(neuml[key]))
+    return groups
+
+
+def check_run_manifest(name: str, manifest: dict, *, questions_sha: str, prompt_version: str, k: int) -> None:
+    """Refuse une mesure incohérente avec les questions, le prompt, k ou son propre nom de fichier."""
+    profile, _, rest = name.partition("__")
+    mode, _, suffix = rest.partition("__")
+    if manifest["questions_sha256"] != questions_sha:
+        raise SystemExit(f"{name} : questions modifiées depuis la mesure, remesurer")
+    if manifest["prompt_version"] != prompt_version:
+        raise SystemExit(f"{name} : version de prompt {manifest['prompt_version']} différente de {prompt_version}")
+    if manifest["k"] != k:
+        raise SystemExit(f"{name} : k = {manifest['k']} au lieu de {k}")
+    if (manifest["profile"], manifest["mode"], bool(manifest["exact"])) != (profile, mode, suffix == "exact"):
+        raise SystemExit(f"{name} : le manifeste (profil, mode, exact) ne correspond pas au nom du fichier")
+
+
+def check_runs_consistency(manifests: dict[str, dict]) -> None:
+    """Toutes les mesures partagent le modèle d'embedding ; un profil garde son modèle et son fournisseur."""
+    fingerprints = {m["embedding_fingerprint"] for m in manifests.values()}
+    if len(fingerprints) > 1:
+        raise SystemExit("modèle d'embedding différent entre les mesures : remesurer")
+    seen: dict[str, tuple] = {}
+    for name, m in manifests.items():
+        pair = (m["model"], m["provider_tag"])
+        if seen.setdefault(m["profile"], pair) != pair:
+            raise SystemExit(f"{name} : modèle ou fournisseur différent des autres mesures du profil {m['profile']}")
+
+
+def check_complete_field(full_profiles: set[str], configured: set[str]) -> None:
+    missing = sorted(configured - full_profiles)
+    if missing:
+        raise SystemExit(f"mesures « full » manquantes pour {missing} : pas de décision sur un champ incomplet")
+
+
 # --- Sous-commandes --------------------------------------------------------------------
 
 def cmd_verite_terrain(args) -> None:
     from RAG.experiments.comparaison_embeddings import _all_documents, _diseases_by_doc, _relevance
+    from RAG.src.retrieval.identifiers import extract_identifiers
 
     questions = _load_questions()
     documents, diseases = _all_documents(), _diseases_by_doc()
@@ -96,6 +158,10 @@ def cmd_verite_terrain(args) -> None:
             missing = set(rule["doc_ids"]) - set(doc_ids)
             if missing:
                 raise SystemExit(f"{q['id']} : documents absents du Gold {sorted(missing)}")
+            expected = exact_doc_ids(documents, extract_identifiers(q["question"]))
+            if expected != set(rule["doc_ids"]):
+                raise SystemExit(f"{q['id']} : documents exacts attendus {sorted(expected)} "
+                                 f"mais déclarés {sorted(rule['doc_ids'])}")
             relevant[q["id"]] = list(rule["doc_ids"])
         elif q["part"] == 1:
             mask = _relevance(q, documents, diseases)
@@ -140,65 +206,83 @@ def cmd_mesurer(args) -> None:
     print(f"{name} : {len(results)} questions")
 
 
-def _load_run(path: Path, questions_sha: str, fingerprint: str | None) -> dict:
-    run = json.loads(path.read_text(encoding="utf-8"))
-    manifest = run["manifest"]
-    if manifest["questions_sha256"] != questions_sha:
-        raise SystemExit(f"{path.name} : questions modifiées depuis la mesure, remesurer")
-    if fingerprint and manifest["embedding_fingerprint"] != fingerprint:
-        raise SystemExit(f"{path.name} : modèle d'embedding différent des autres mesures")
-    return run
+def _median_latency(run: dict) -> float:
+    values = [r["analysis"].get("latency_ms") or 0.0 for r in run["results"].values()]
+    return float(np.median(values))
 
 
 def cmd_evaluer(args) -> None:
+    from RAG.src.prompts.analysis import PROMPT_VERSION
+    from RAG.src.utils.config import load_search_config
+
     questions = _load_questions()
     questions_sha = _sha256(QUESTIONS_PATH)
     truth = json.loads((OUT / "verite_terrain.json").read_text(encoding="utf-8"))
     if truth["manifest"]["questions_sha256"] != questions_sha:
         raise SystemExit("vérité terrain calculée sur d'autres questions : relancer verite-terrain")
     relevant = {qid: set(ids) for qid, ids in truth["relevant"].items()}
-    runs = {p.stem: p for p in sorted((OUT / "runs").glob("*.json"))}
-    fingerprint = None
     loaded = {}
-    for name, path in runs.items():
-        loaded[name] = _load_run(path, questions_sha, fingerprint)
-        fingerprint = fingerprint or loaded[name]["manifest"]["embedding_fingerprint"]
+    for path in sorted((OUT / "runs").glob("*.json")):
+        run = json.loads(path.read_text(encoding="utf-8"))
+        check_run_manifest(path.stem, run["manifest"], questions_sha=questions_sha,
+                           prompt_version=PROMPT_VERSION, k=K)
+        loaded[path.stem] = run
+    if not loaded:
+        raise SystemExit("aucune mesure dans data/experiments/e2a/runs")
+    check_runs_consistency({n: r["manifest"] for n, r in loaded.items()})
+    print(f"Vérité terrain : Gold {truth['manifest']['gold_doc_ids_sha256'][:12]}, "
+          f"questions {questions_sha[:12]}\n")
 
     def scores_of(run: dict) -> dict[str, float]:
         return {q["id"]: score_question(q, run["results"][q["id"]]["doc_ids"], run["results"][q["id"]]["flags"],
                                         run["results"][q["id"]]["identifiers"], relevant[q["id"]], K)
                 for q in questions}
 
+    scored = {n: scores_of(r) for n, r in loaded.items()}
     full = {n.split("__")[0]: r for n, r in loaded.items() if n.endswith("__full")}
+    check_complete_field(set(full), set(load_search_config().profiles))
+
     print("## Critère d'acceptation : partie 2 à 100 %\n")
-    for profile, run in full.items():
-        s = scores_of(run)
+    failed = False
+    for profile in full:
+        s = scored[f"{profile}__full"]
         part2 = [s[q["id"]] for q in questions if q["part"] == 2]
-        print(f"- {profile} : {sum(part2):.0f}/{len(part2)} {'OK' if all(part2) else 'ÉCHEC — bug à corriger'}")
+        failed = failed or not all(part2)
+        print(f"- {profile} : {sum(part2):.0f}/{len(part2)} {'OK' if all(part2) else 'ÉCHEC'}")
+    if failed:
+        raise SystemExit("critère partie 2 non atteint : bug à corriger avant toute décision")
 
     costs = {p: sum(r["results"][q["id"]]["analysis"]["cost_usd"] for q in questions) for p, r in full.items()}
-    per_q = {p: [scores_of(r)[q["id"]] for q in questions] for p, r in full.items()}
+    per_q = {p: [scored[f"{p}__full"][q["id"]] for q in questions] for p in full}
     choice, details = choose_model(per_q, costs)
     print("\n## Choix du modèle d'analyse (règle fixée d'avance)\n")
-    print("| Profil | Score moyen | Coût total ($) | Exactitude signification |\n|---|---|---|---|")
+    print("| Profil | Score moyen | Coût total ($) | Exactitude signification | Latence médiane (ms) |\n|---|---|---|---|---|")
     for p, run in full.items():
         analyses = {qid: res["analysis"] for qid, res in run["results"].items()}
-        print(f"| {p} | {details['means'][p]:.3f} | {costs[p]:.4f} | {significance_accuracy(questions, analyses):.3f} |")
+        print(f"| {p} | {details['means'][p]:.3f} | {costs[p]:.4f} | "
+              f"{significance_accuracy(questions, analyses):.3f} | {_median_latency(run):.0f} |")
+    print("\nLatence : celle de l'appel d'origine ; un rejeu depuis le cache la conserve.")
     for p, iv in details["intervals"].items():
         print(f"- {details['best']} − {p} : {iv['ecart']:+.3f}, IC 95 % [{iv['ic_bas']:+.3f}, {iv['ic_haut']:+.3f}]")
     print(f"\nDécision : **{choice}** (meilleur : {details['best']} ; indistinguables : {details['indistinguishable']})")
 
     print("\n## Apport de chaque ingrédient (profil retenu)\n")
     print("| Version | P1-A | P1-B | P1-C | P2 | P3 |\n|---|---|---|---|---|---|")
+    if E1_SCORES_PATH.exists():
+        v0 = v0_scores(json.loads(E1_SCORES_PATH.read_text(encoding="utf-8")), questions)
+        print("| V0 E1 (anglais) | " + " | ".join(f"{np.mean(v0[f]):.3f}" for f in "ABC") + " | — | — |")
+    else:
+        print("| V0 E1 (anglais) | (scores E1 absents) |||||")
     for label, mode in (("V1 similarité", "similarity"), ("V2 + filtres", "filters"), ("V3 complète", "full")):
-        run = loaded.get(f"{choice}__{mode}")
-        if not run:
+        s = scored.get(f"{choice}__{mode}")
+        if not s:
             print(f"| {label} | (mesure absente) |||||")
             continue
-        s = scores_of(run)
         groups = [[s[q["id"]] for q in questions if q["part"] == 1 and q["family"] == fam] for fam in "ABC"]
         groups += [[s[q["id"]] for q in questions if q["part"] == part] for part in (2, 3)]
         print(f"| {label} | " + " | ".join(f"{np.mean(g):.3f}" for g in groups) + " |")
+    print("\nV0 = questions anglaises, recherche exacte sur tout le corpus, présélection filter_gene en "
+          "famille B (protocole E1) ; l'écart V0→V1 n'isole donc pas le seul effet du français et de l'analyse.")
 
     exact_run = loaded.get(f"{choice}__similarity__exact")
     approx_run = loaded.get(f"{choice}__similarity")
