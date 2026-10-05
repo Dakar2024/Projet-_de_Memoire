@@ -5,7 +5,7 @@ import pytest
 from RAG.src.llm.openrouter import LlmCall
 from RAG.src.retrieval.analysis import AnalysisCache, analyze, validate_analysis
 from RAG.src.utils.config import LlmProfile
-from RAG.src.utils.errors import LlmPermanentError, LlmProviderMismatchError, LlmUnavailableError
+from RAG.src.utils.errors import RagConfigurationError, LlmPermanentError, LlmProviderMismatchError, LlmUnavailableError
 
 PROFILE = LlmProfile("mistral-medium", "mistralai/mistral-medium-3-5", "mistral/zdr", "Mistral", None)
 GOOD = {"english_query": "Is BRCA1 rs80357906 pathogenic?", "significance": "none", "disease": None}
@@ -64,8 +64,11 @@ def test_transient_failures_degrade_to_the_raw_question(failure):
     assert result.significance == "none" and result.error
 
 
-def test_an_invalid_answer_degrades_too():
-    assert _analyze(StubClient({**GOOD, "significance": "grave"})).available is False
+def test_an_invalid_answer_degrades_too_but_keeps_its_cost():
+    result = _analyze(StubClient({**GOOD, "significance": "grave"}))
+
+    assert result.available is False and result.significance == "none"
+    assert (result.cost_usd, result.provider_name) == (0.0012, "Mistral")
 
 
 def test_permanent_errors_propagate():
@@ -89,7 +92,7 @@ def test_failures_are_never_cached(tmp_path):
     cache = AnalysisCache(tmp_path / "cache.json")
     _analyze(StubClient(LlmUnavailableError("503")), cache)
 
-    assert not (tmp_path / "cache.json").exists() or json.loads((tmp_path / "cache.json").read_text()) == {}
+    assert not (tmp_path / "cache.json").exists()
 
 
 def test_cache_key_depends_on_model_and_prompt_version(tmp_path):
@@ -98,3 +101,27 @@ def test_cache_key_depends_on_model_and_prompt_version(tmp_path):
     other = LlmProfile("x", "openai/gpt-oss-120b", "deepinfra/bf16", "DeepInfra", "bf16")
 
     assert cache.get("Le variant rs80357906 est-il pathogène ?", other) is None
+
+
+@pytest.mark.parametrize("text", ['{"tronque": ', "[1, 2]"])
+def test_an_unreadable_cache_file_stops_instead_of_resetting(tmp_path, text):
+    path = tmp_path / "cache.json"
+    path.write_text(text, encoding="utf-8")
+
+    with pytest.raises(RagConfigurationError, match="cache.json"):
+        AnalysisCache(path)
+
+
+def test_a_hand_edited_cache_entry_is_a_miss(tmp_path):
+    path = tmp_path / "cache.json"
+    _analyze(StubClient(GOOD), AnalysisCache(path))
+    data = json.loads(path.read_text(encoding="utf-8"))
+    for entry in data.values():
+        entry["significance"] = "grave"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    client = StubClient(GOOD)
+
+    result = _analyze(client, AnalysisCache(path))
+
+    assert client.calls == 1 and result.available and not result.from_cache
+    assert result.significance == "none"

@@ -19,7 +19,7 @@ from pathlib import Path
 from RAG.src.prompts.analysis import ANALYSIS_SCHEMA, PROMPT_VERSION, SCHEMA_NAME, SYSTEM_PROMPT, user_message
 from RAG.src.retrieval.significance import SIGNIFICANCE_VALUES
 from RAG.src.utils.config import LlmProfile
-from RAG.src.utils.errors import LlmProviderMismatchError, LlmUnavailableError
+from RAG.src.utils.errors import LlmProviderMismatchError, LlmUnavailableError, RagConfigurationError
 
 _KEYS = {"english_query", "significance", "disease"}
 _MAX_QUERY_CHARS = 2000
@@ -60,13 +60,25 @@ def validate_analysis(content: Mapping) -> tuple[str, str, str | None]:
 
 class AnalysisCache:
     """Analyses réussies, sur disque. Clé : version du prompt, modèle, point d'accès et
-    texte exact de la question. Un rejeu redonne exactement la même analyse."""
+    texte exact de la question. Un rejeu redonne exactement la même analyse.
+
+    Une entrée relue conserve le coût, la latence et le fournisseur de l'appel d'origine :
+    la mesure compare le coût unitaire d'analyse par modèle, et une reprise doit donner le
+    même total. `from_cache` distingue les rejeux. Un seul écrivain à la fois (mesure
+    séquentielle). Le fichier est une entrée non fiable : illisible, il interrompt au lieu
+    d'être réinitialisé en silence (cela refacturerait)."""
 
     def __init__(self, path: Path) -> None:
         self._path = path
-        self._data: dict[str, dict] = (
-            json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-        )
+        self._data: dict[str, dict] = {}
+        if path.exists():
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                raise RagConfigurationError(f"cache d'analyse illisible : {path} ({exc})") from exc
+            if not isinstance(data, dict):
+                raise RagConfigurationError(f"cache d'analyse invalide (objet JSON attendu) : {path}")
+            self._data = data
 
     @staticmethod
     def key(question: str, profile: LlmProfile) -> str:
@@ -84,24 +96,47 @@ class AnalysisCache:
         os.replace(tmp, self._path)
 
 
+def _valid_entry(entry: object) -> bool:
+    """Une entrée de cache éditée à la main ne doit jamais atteindre la recherche."""
+    if not isinstance(entry, dict):
+        return False
+    try:
+        validate_analysis({k: entry[k] for k in _KEYS})
+    except (KeyError, ValueError, TypeError):
+        return False
+    numbers = (entry.get("cost_usd"), entry.get("latency_ms"))
+    return (isinstance(entry.get("provider_name"), str)
+            and all(isinstance(n, (int, float)) and not isinstance(n, bool) and n >= 0 for n in numbers))
+
+
 def analyze(question: str, *, client, profile: LlmProfile, max_tokens: int,
             cache: AnalysisCache | None = None,
             clock: Callable[[], float] = time.perf_counter) -> QueryAnalysis:
-    cached = cache.get(question, profile) if cache else None
-    if cached:
-        return QueryAnalysis(available=True, profile=profile.name, from_cache=True, **cached)
+    """Analyse la question. Limite connue : si le LLM est indisponible ou servi par le mauvais
+    fournisseur, le coût reste 0,0 (l'exception ne porte pas l'appel) ; une réponse payée
+    mais invalide conserve en revanche son coût et son fournisseur."""
+    cached = cache.get(question, profile) if cache is not None else None
+    if cached is not None and _valid_entry(cached):
+        stored = {k: cached[k] for k in (*_KEYS, "provider_name", "cost_usd", "latency_ms")}
+        return QueryAnalysis(available=True, profile=profile.name, from_cache=True, **stored)
     start = clock()
     try:
         call = client.complete_json(profile, system=SYSTEM_PROMPT, user=user_message(question),
                                     schema_name=SCHEMA_NAME, schema=ANALYSIS_SCHEMA, max_tokens=max_tokens)
-        query, significance, disease = validate_analysis(call.content)
-    except (LlmUnavailableError, LlmProviderMismatchError, ValueError) as exc:
+    except (LlmUnavailableError, LlmProviderMismatchError) as exc:
         return QueryAnalysis(english_query=question, significance="none", disease=None, available=False,
                              profile=profile.name, latency_ms=(clock() - start) * 1000,
+                             error=f"{type(exc).__name__}: {str(exc)[:200]}")
+    try:
+        query, significance, disease = validate_analysis(call.content)
+    except ValueError as exc:
+        return QueryAnalysis(english_query=question, significance="none", disease=None, available=False,
+                             profile=profile.name, provider_name=call.provider_name,
+                             cost_usd=call.cost_usd, latency_ms=(clock() - start) * 1000,
                              error=f"{type(exc).__name__}: {str(exc)[:200]}")
     stored = {"english_query": query, "significance": significance, "disease": disease,
               "provider_name": call.provider_name, "cost_usd": call.cost_usd,
               "latency_ms": (clock() - start) * 1000}
-    if cache:
+    if cache is not None:
         cache.put(question, profile, stored)
     return QueryAnalysis(available=True, profile=profile.name, **stored)
