@@ -146,6 +146,10 @@ développement où seul Airflow joint la base vectorielle.
       aujourd'hui l'écriture (via `./data`), donc une tâche compromise pourrait empoisonner le
       modèle servi. Reporté : demande de redécouper le montage de `./data` ; à faire avant E2.
 
+- [ ] **Verrouiller par empreinte les dépendances de l'image `rag-search`**, comme l'image
+      d'export : versions épinglées aujourd'hui, sans empreintes. À faire avant que le service
+      devienne l'API (E2b).
+
 ### Robustesse — avant la mise en service régulière
 
 - [ ] **`connect_timeout` et `statement_timeout`** sur la connexion PostgreSQL. Reporté : seul
