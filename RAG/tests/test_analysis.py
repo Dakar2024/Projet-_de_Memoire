@@ -1,0 +1,100 @@
+import json
+
+import pytest
+
+from RAG.src.llm.openrouter import LlmCall
+from RAG.src.retrieval.analysis import AnalysisCache, analyze, validate_analysis
+from RAG.src.utils.config import LlmProfile
+from RAG.src.utils.errors import LlmPermanentError, LlmProviderMismatchError, LlmUnavailableError
+
+PROFILE = LlmProfile("mistral-medium", "mistralai/mistral-medium-3-5", "mistral/zdr", "Mistral", None)
+GOOD = {"english_query": "Is BRCA1 rs80357906 pathogenic?", "significance": "none", "disease": None}
+
+
+class StubClient:
+    def __init__(self, result):
+        self.result = result
+        self.calls = 0
+
+    def complete_json(self, profile, **kwargs):
+        self.calls += 1
+        if isinstance(self.result, Exception):
+            raise self.result
+        return LlmCall(self.result, "gen-1", "Mistral", 0.0012, 100, 30)
+
+
+def _analyze(client, cache=None, question="Le variant rs80357906 est-il pathogène ?"):
+    return analyze(question, client=client, profile=PROFILE, max_tokens=2000, cache=cache)
+
+
+def test_a_valid_answer_is_used():
+    result = _analyze(StubClient(GOOD))
+
+    assert result.available and result.english_query == GOOD["english_query"]
+    assert (result.significance, result.disease) == ("none", None)
+    assert (result.provider_name, result.cost_usd, result.profile) == ("Mistral", 0.0012, "mistral-medium")
+
+
+def test_validate_analysis_rejects_unknown_significance():
+    with pytest.raises(ValueError):
+        validate_analysis({**GOOD, "significance": "DROP TABLE rag_documents"})
+
+
+@pytest.mark.parametrize("content", [
+    {**GOOD, "english_query": "   "},
+    {"english_query": "x", "significance": "none"},
+    {**GOOD, "extra": 1},
+    {**GOOD, "disease": 12},
+])
+def test_malformed_answers_are_rejected(content):
+    with pytest.raises(ValueError):
+        validate_analysis(content)
+
+
+def test_blank_disease_becomes_none():
+    assert validate_analysis({**GOOD, "disease": "  "})[2] is None
+
+
+@pytest.mark.parametrize("failure", [LlmUnavailableError("503"), LlmProviderMismatchError("Bedrock")])
+def test_transient_failures_degrade_to_the_raw_question(failure):
+    result = _analyze(StubClient(failure))
+
+    assert result.available is False
+    assert result.english_query == "Le variant rs80357906 est-il pathogène ?"
+    assert result.significance == "none" and result.error
+
+
+def test_an_invalid_answer_degrades_too():
+    assert _analyze(StubClient({**GOOD, "significance": "grave"})).available is False
+
+
+def test_permanent_errors_propagate():
+    with pytest.raises(LlmPermanentError):
+        _analyze(StubClient(LlmPermanentError("402")))
+
+
+def test_cache_avoids_a_second_paid_call(tmp_path):
+    cache = AnalysisCache(tmp_path / "cache.json")
+    client = StubClient(GOOD)
+
+    first = _analyze(client, cache)
+    second = _analyze(client, AnalysisCache(tmp_path / "cache.json"))
+
+    assert client.calls == 1
+    assert second.from_cache and second.english_query == first.english_query
+    assert second.cost_usd == first.cost_usd
+
+
+def test_failures_are_never_cached(tmp_path):
+    cache = AnalysisCache(tmp_path / "cache.json")
+    _analyze(StubClient(LlmUnavailableError("503")), cache)
+
+    assert not (tmp_path / "cache.json").exists() or json.loads((tmp_path / "cache.json").read_text()) == {}
+
+
+def test_cache_key_depends_on_model_and_prompt_version(tmp_path):
+    cache = AnalysisCache(tmp_path / "cache.json")
+    _analyze(StubClient(GOOD), cache)
+    other = LlmProfile("x", "openai/gpt-oss-120b", "deepinfra/bf16", "DeepInfra", "bf16")
+
+    assert cache.get("Le variant rs80357906 est-il pathogène ?", other) is None
