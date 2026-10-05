@@ -72,3 +72,28 @@ def test_as_dict_is_json_ready():
     assert extract_identifiers("rs334 sur HBB").as_dict() == {
         "rs": [334], "hgvs_c": [], "hgvs_p": [], "genes": ["HBB"], "out_of_panel": [],
     }
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("p.Gln1756Profs*74", "p.Gln1756fs"),
+    ("p.Gln1756ProfsTer74", "p.Gln1756fs"),
+    ("p.R1443X", "p.Arg1443Ter"),
+    ("p.Arg1443X", "p.Arg1443Ter"),
+    ("p.Arg1443*", "p.Arg1443Ter"),
+    ("p.Arg1443Ter", "p.Arg1443Ter"),
+])
+def test_stop_codon_and_frameshift_spellings(text, expected):
+    ids = extract_identifiers(text + " sur BRCA1")
+
+    assert ids.hgvs_p == (expected,)
+    assert ids.out_of_panel == ()
+
+
+def test_x_is_not_accepted_as_reference_residue():
+    assert extract_identifiers("p.X12A").hgvs_p == ()
+
+
+def test_slash_separates_coding_and_protein_forms():
+    ids = extract_identifiers("c.5266dupC/p.Gln1756fs")
+
+    assert (ids.hgvs_c, ids.hgvs_p) == (("c.5266dup",), ("p.Gln1756fs",))
