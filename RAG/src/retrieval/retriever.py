@@ -1,5 +1,9 @@
 """Recherche hybride (E2a) : exact → filtres → similarité, avec garde-fous.
 
+Toutes les étapes utilisent la recherche vectorielle exacte (l'index HNSW perd la moitié
+des documents pertinents sur ce corpus, cf. PgSearchStore) ; `force_exact=False` ne sert
+qu'à la mesure de diagnostic de l'index.
+
 `search()` ne connaît aucun service : l'analyse, la vectorisation et la base lui sont
 passées, ce qui la rend testable sans réseau. `Searcher` fait le câblage réel et
 vérifie d'abord, comme l'indexation, que le service d'embedding sert le modèle de
@@ -153,13 +157,15 @@ def search(question: str, *, settings: SearchSettings, analyze: Callable[[str], 
 
     remaining = settings.k - len(documents)
     if remaining > 0:
-        exact = force_exact if force_exact is not None else bool(genes or labels)
+        # Toujours exacte par défaut : l'index HNSW ne retrouve que la moitié des documents
+        # pertinents (voir PgSearchStore). `force_exact=False` ne sert qu'au diagnostic.
+        exact = force_exact if force_exact is not None else True
         found = store.similar(query_vector=vector, genes=genes, significances=labels,
                               exclude_doc_ids=[d.doc_id for d in documents], limit=remaining, exact=exact)
         if labels and len(found) < min(settings.min_filtered, remaining):
             trace.flags.append("significance_relaxed")
             labels = ()
-            exact = force_exact if force_exact is not None else bool(genes)
+            exact = force_exact if force_exact is not None else True
             found = store.similar(query_vector=vector, genes=genes, significances=(),
                                   exclude_doc_ids=[d.doc_id for d in documents], limit=remaining, exact=exact)
         trace.exact_search = exact
@@ -202,9 +208,13 @@ def check_index_models(models: Sequence[str], expected: str) -> None:
 
 class PgSearchStore:
     """Lecture seule (`rag_reader`). Délais bornés : connexion 10 s, requête 30 s.
-    Avec un filtre, la recherche est exacte (pgvector filtre après le parcours de son
-    index approché, ce qui peut perdre des documents) ; sans filtre, l'index HNSW est
-    parcouru en mode itératif."""
+    La recherche est toujours exacte (balayage séquentiel). Mesuré le 05/10/2026 sur
+    l'index réel (59 questions) : le rappel@10 de l'index HNSW face à la recherche
+    exacte est de 0,47 à ef_search 40, 0,58 à 200, 0,66 à 400 et 1,00 seulement à 1000
+    (808 ms, pas plus rapide que l'exacte, 714 ms) ; le parcours itératif n'y change
+    rien. Cause probable, non vérifiée : 32 % des documents ont un corps identique, donc
+    des vecteurs identiques. L'index HNSW reste en place, inutilisé (`exact=False`
+    réservé au diagnostic) ; à réévaluer si le corpus grandit."""
 
     def __init__(self, conninfo: str) -> None:
         self._conninfo = conninfo

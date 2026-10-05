@@ -116,7 +116,7 @@ def test_exact_doc_ids_ignores_hgvs_when_only_an_out_of_panel_gene_is_cited():
 
 def _manifest(**over):
     base = {"questions_sha256": "q", "prompt_version": "p1", "prompt_sha256": "s1", "k": 10, "profile": "a", "mode": "full",
-            "exact": False, "model": "m", "provider_tag": "t", "embedding_fingerprint": "f",
+            "approx": False, "model": "m", "provider_tag": "t", "embedding_fingerprint": "f",
             "config_sha256": "c"}
     return {**base, **over}
 
@@ -124,11 +124,12 @@ def _manifest(**over):
 def test_check_run_manifest_accepts_a_consistent_run_and_refuses_the_rest():
     ok = dict(questions_sha="q", prompt_version="p1", prompt_sha="s1", k=10)
     check_run_manifest("a__full", _manifest(), **ok)
-    check_run_manifest("a__similarity__exact", _manifest(mode="similarity", exact=True), **ok)
+    check_run_manifest("a__similarity__approx", _manifest(mode="similarity", approx=True), **ok)
     for name, manifest in [("a__full", _manifest(questions_sha256="x")), ("a__full", _manifest(prompt_version="p0")),
                            ("a__full", _manifest(prompt_sha256="s0")),
                            ("a__full", _manifest(k=5)), ("b__full", _manifest()),
-                           ("a__filters", _manifest()), ("a__full__exact", _manifest())]:
+                           ("a__filters", _manifest()), ("a__full__approx", _manifest()), ("a__similarity__approx", _manifest(mode="similarity")),
+                           ("a__similarity", _manifest(mode="similarity", approx=True))]:
         with pytest.raises(SystemExit):
             check_run_manifest(name, manifest, **ok)
 
@@ -319,7 +320,7 @@ def test_mesurer_writes_trial_runs_apart_from_official_ones(tmp_path, monkeypatc
     monkeypatch.setattr(retriever, "Searcher", _FakeSearcher)
     _FakeSearcher.instances.clear()
 
-    m.cmd_mesurer(argparse.Namespace(profile=profile, mode="full", exact=False))
+    m.cmd_mesurer(argparse.Namespace(profile=profile, mode="full", approx=False))
 
     assert _FakeSearcher.instances[0].cache_path == tmp_path / folder / "cache_analyses.json"
     assert [p.name for p in (tmp_path / folder / "runs").iterdir()] == [f"{profile}__full.json"]
@@ -344,7 +345,7 @@ def _perfect_run(profile, mode, questions, *, broken_part2=False):
             "timings_ms": {}}
     manifest = {"questions_sha256": m_sha(), "profile": profile, "model": "openai/gpt-oss-120b",
                 "provider_tag": "groq", "prompt_version": PROMPT_VERSION, "prompt_sha256": PROMPT_SHA,
-                "mode": mode, "exact": False, "k": 10, "embedding_fingerprint": "f", "config_sha256": "c",
+                "mode": mode, "approx": False, "k": 10, "embedding_fingerprint": "f", "config_sha256": "c",
                 "index_doc_ids_sha256": "h"}
     return {"manifest": manifest, "results": results}
 
@@ -389,6 +390,54 @@ def test_evaluer_essai_reports_without_choosing_a_model(tmp_path, monkeypatch, c
     assert re.search(rf"- {TRIAL_PROFILE} : (\d+)/\1 OK", out)
     assert "V3 complète" in out and "V1 similarité" in out
     assert "1.000" in out
+
+
+@pytest.mark.parametrize("approx_doc, expected", [(None, "1.000"), ("zzz", "0.000")])
+def test_evaluer_essai_prints_the_hnsw_recall_against_exact_search(tmp_path, monkeypatch, capsys, approx_doc, expected):
+    import argparse
+    import json
+
+    m = _dirs(tmp_path, monkeypatch)
+    _write_trial_field(tmp_path)
+    runs = tmp_path / "e2a-essai" / "runs"
+    run = json.loads((runs / f"{TRIAL_PROFILE}__similarity.json").read_text(encoding="utf-8"))
+    run["manifest"]["approx"] = True
+    if approx_doc:
+        for r in run["results"].values():
+            r["doc_ids"] = [approx_doc] if r["doc_ids"] else []
+    (runs / f"{TRIAL_PROFILE}__similarity__approx.json").write_text(json.dumps(run), encoding="utf-8")
+
+    m.cmd_evaluer_essai(argparse.Namespace(essai=True))
+
+    assert ("Diagnostic : rappel moyen de l'index HNSW (ef_search 40) par rapport à la recherche exacte = "
+            + expected) in capsys.readouterr().out
+
+
+def test_mesurer_approx_forces_the_hnsw_search_and_names_the_run(tmp_path, monkeypatch):
+    import argparse
+    import json
+
+    import RAG.src.retrieval.retriever as retriever
+
+    class Spy(_FakeSearcher):
+        forced = []
+
+        def search(self, question, mode, force_exact):
+            Spy.forced.append(force_exact)
+            return super().search(question, mode, force_exact)
+
+    m = _dirs(tmp_path, monkeypatch)
+    monkeypatch.setattr(retriever, "Searcher", Spy)
+
+    m.cmd_mesurer(argparse.Namespace(profile=TRIAL_PROFILE, mode="similarity", approx=True))
+    m.cmd_mesurer(argparse.Namespace(profile=TRIAL_PROFILE, mode="similarity", approx=False))
+
+    assert set(Spy.forced[: len(Spy.forced) // 2]) == {False} and set(Spy.forced[len(Spy.forced) // 2:]) == {None}
+    runs = tmp_path / "e2a-essai" / "runs"
+    assert sorted(p.name for p in runs.iterdir()) == [f"{TRIAL_PROFILE}__similarity.json",
+                                                      f"{TRIAL_PROFILE}__similarity__approx.json"]
+    manifest = json.loads((runs / f"{TRIAL_PROFILE}__similarity__approx.json").read_text(encoding="utf-8"))["manifest"]
+    assert manifest["approx"] is True and "exact" not in manifest
 
 
 def test_evaluer_essai_shows_everything_then_fails_on_part2(tmp_path, monkeypatch, capsys):
@@ -468,6 +517,6 @@ def test_mesurer_stops_at_the_first_exhausted_quota(tmp_path, monkeypatch):
     monkeypatch.setattr(retriever, "Searcher", QuotaSearcher)
 
     with pytest.raises(SystemExit, match="quota Groq épuisé"):
-        m.cmd_mesurer(argparse.Namespace(profile=TRIAL_PROFILE, mode="full", exact=False))
+        m.cmd_mesurer(argparse.Namespace(profile=TRIAL_PROFILE, mode="full", approx=False))
     assert QuotaSearcher.searched == 1
     assert not (tmp_path / "e2a-essai" / "runs").exists()
