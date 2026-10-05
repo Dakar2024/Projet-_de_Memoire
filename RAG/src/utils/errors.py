@@ -43,3 +43,19 @@ class IndexLockedError(Exception):
 
 class IndexConsistencyError(Exception):
     """Après indexation, l'index ne reflète pas exactement le Gold."""
+
+
+class QuestionRejectedError(RagPermanentError):
+    """Question vide ou trop longue : refusée avant tout appel réseau."""
+
+
+class LlmPermanentError(RagPermanentError):
+    """OpenRouter refuse la requête (clé, crédit, aucun point d'accès conforme)."""
+
+
+class LlmUnavailableError(Exception):
+    """OpenRouter injoignable, saturé ou réponse inexploitable : transitoire."""
+
+
+class LlmProviderMismatchError(Exception):
+    """La requête a été servie par un autre fournisseur que celui qui était figé."""

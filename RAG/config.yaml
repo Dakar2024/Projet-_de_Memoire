@@ -19,3 +19,37 @@ index:
   # Même seuil que le contrôle de plausibilité du Silver : au-delà, une suppression
   # massive trahit plus probablement une lecture du Gold incomplète qu'un vrai changement.
   max_delete_ratio: 0.05
+
+search:
+  # Documents transmis au LLM de génération (E2b) et mesurés en E2a.
+  k: 10
+  # En dessous, le filtre de signification est relâché et la trace le signale.
+  min_filtered: 3
+  # Au-delà, la question est refusée avant tout appel réseau (plafonne aussi le coût).
+  max_question_chars: 1000
+
+llm:
+  # Profil d'analyse de la question. Valeur de départ : la mesure de E2a la fixe
+  # (reference/mesure_recherche_e2a.md).
+  analysis_profile: claude-opus-5.5
+  request_timeout_s: 60
+  # La réflexion interne du modèle compte dans ce plafond (documentation OpenRouter).
+  max_tokens: 2000
+  # Chaque profil fige un point d'accès qui cumule zéro rétention et sorties
+  # structurées (API publique d'OpenRouter, vérifiée le 05/10/2026).
+  profiles:
+    claude-opus-5.5:
+      model: anthropic/claude-opus-5.5
+      provider_tag: google-vertex/europe
+      provider_name: Google
+      quantization: null
+    mistral-medium:
+      model: mistralai/mistral-medium-3-5
+      provider_tag: mistral/zdr
+      provider_name: Mistral
+      quantization: null
+    gpt-oss-120b:
+      model: openai/gpt-oss-120b
+      provider_tag: deepinfra/bf16
+      provider_name: DeepInfra
+      quantization: bf16
