@@ -301,3 +301,32 @@ def test_hgvs_with_a_panel_gene_and_an_out_of_panel_gene_is_unchanged():
 
     (call,) = _exact_calls(store)
     assert call["hgvs_c"] == ("c.1A>G",) and call["genes"] == ("BRCA1",)
+
+
+def _profile(backend):
+    from RAG.src.utils.config import LlmProfile
+
+    if backend == "groq":
+        return LlmProfile("essai", "openai/gpt-oss-120b", "groq", "Groq", None, backend="groq")
+    return LlmProfile("oss", "openai/gpt-oss-120b", "deepinfra/bf16", "DeepInfra", "bf16", backend=backend)
+
+
+def test_the_llm_client_follows_the_profile_backend():
+    from RAG.src.llm.groq import GroqClient
+    from RAG.src.llm.openrouter import OpenRouterClient
+    from RAG.src.retrieval.retriever import build_llm_client
+
+    assert isinstance(build_llm_client(_profile("openrouter"), {"OPENROUTER_API_KEY": "sk-or"}, 30.0),
+                      OpenRouterClient)
+    assert isinstance(build_llm_client(_profile("groq"), {"GROQ_API_KEY": "gsk"}, 30.0), GroqClient)
+
+
+def test_only_the_key_of_the_chosen_backend_is_required():
+    from RAG.src.retrieval.retriever import build_llm_client
+
+    with pytest.raises(RagConfigurationError, match="GROQ_API_KEY"):
+        build_llm_client(_profile("groq"), {"OPENROUTER_API_KEY": "sk-or"}, 30.0)
+    with pytest.raises(RagConfigurationError, match="OPENROUTER_API_KEY"):
+        build_llm_client(_profile("openrouter"), {"GROQ_API_KEY": "gsk"}, 30.0)
+    with pytest.raises(RagConfigurationError, match="backend"):
+        build_llm_client(_profile("ollama"), {"OPENROUTER_API_KEY": "sk-or", "GROQ_API_KEY": "gsk"}, 30.0)
