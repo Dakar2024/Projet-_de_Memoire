@@ -151,3 +151,39 @@ def test_cache_key_changes_when_the_prompt_changes_even_without_a_new_version(mo
     monkeypatch.setattr(prompts, attribute, value)
 
     assert AnalysisCache.key("question", PROFILE) != before
+
+
+@pytest.mark.parametrize("field,value", [
+    ("provider_name", "Amazon Bedrock"),
+    ("provider_name", None),
+    ("cost_usd", -0.5),
+    ("cost_usd", True),
+    ("cost_usd", float("nan")),
+    ("cost_usd", "0.001"),
+    ("latency_ms", -1.0),
+    ("latency_ms", False),
+])
+def test_an_invalid_cache_hit_is_a_miss_and_is_overwritten(tmp_path, field, value):
+    """Un hit servi par un autre fournisseur que celui du profil, ou au coût ou à la latence
+    invalides, ne doit ni atteindre la recherche ni fausser le coût de la mesure."""
+    path = tmp_path / "cache.json"
+    _analyze(StubClient(GOOD), AnalysisCache(path))
+    data = json.loads(path.read_text(encoding="utf-8"))
+    (key,) = data
+    data[key][field] = value
+    path.write_text(json.dumps(data), encoding="utf-8")
+    client = StubClient(GOOD)
+
+    result = _analyze(client, AnalysisCache(path))
+
+    assert client.calls == 1 and not result.from_cache
+    rewritten = json.loads(path.read_text(encoding="utf-8"))[key]
+    assert rewritten["provider_name"] == "Mistral" and rewritten["cost_usd"] == 0.0012
+    assert isinstance(rewritten["latency_ms"], float) and rewritten["latency_ms"] >= 0
+
+
+def test_a_truncated_answer_stops_the_search():
+    from RAG.src.utils.errors import LlmTruncatedError
+
+    with pytest.raises(LlmTruncatedError):
+        _analyze(StubClient(LlmTruncatedError("coupée", cost_usd=0.01)))
