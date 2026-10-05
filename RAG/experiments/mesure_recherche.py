@@ -7,6 +7,11 @@ Trois étapes, chacune avec son lieu d'exécution :
                   choix du modèle selon la règle fixée d'avance
 
 Aucune conclusion si les manifestes divergent ou si une seule analyse a échoué.
+
+Essai gratuit (profils de `llm.trial_profiles`, Groq) : `mesurer --profile <essai>` écrit
+dans data/experiments/e2a-essai, jamais dans e2a ; `evaluer --essai` y lit ses séries et
+affiche les mêmes contrôles et scores, sans choix de modèle. La vérité terrain reste celle
+de e2a (lue seulement). `evaluer` sans `--essai` ignore les essais.
 """
 
 from __future__ import annotations
@@ -25,6 +30,8 @@ from RAG.experiments.comparaison_embeddings import bootstrap_mean_ci
 QUESTIONS_PATH = Path(__file__).resolve().with_name("questions_recherche.yaml")
 _ROOT = Path(__file__).resolve().parents[2]  # racine du dépôt, ou /opt/projet dans le conteneur
 OUT = _ROOT / "data" / "experiments" / "e2a"
+# Séries de l'essai gratuit : jamais mêlées aux séries officielles.
+OUT_ESSAI = _ROOT / "data" / "experiments" / "e2a-essai"
 E1_SCORES_PATH = _ROOT / "data" / "experiments" / "scores.json"
 K = 10
 SEED = 20261001
@@ -135,6 +142,21 @@ def config_sha256(raw_config: dict) -> str:
            if key not in ("analysis_profile", "trial_profiles")}
     sections = {"search": raw_config.get("search"), "llm": llm}
     return hashlib.sha256(json.dumps(sections, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def output_dir(config) -> Path:
+    """Dossier des séries et du cache du profil d'analyse : e2a-essai pour un profil
+    d'essai, e2a pour un profil officiel."""
+    return OUT_ESSAI if config.analysis_profile.name in config.trial_profiles else OUT
+
+
+def check_trial_field(run_profiles: set[str], trial_profiles: set[str]) -> None:
+    """Les séries d'essai ne portent que sur des profils d'essai configurés : une série
+    d'un profil officiel n'a rien à faire dans e2a-essai."""
+    stray = sorted(run_profiles - trial_profiles)
+    if stray:
+        raise SystemExit(f"séries de profils qui ne sont pas des profils d'essai {stray} : fichiers à retirer "
+                         "de data/experiments/e2a-essai/runs")
 
 
 def check_analysis_failure(question_id: str, analysis: dict, profile_name: str) -> None:
@@ -251,12 +273,14 @@ def cmd_verite_terrain(args) -> None:
 
 def cmd_mesurer(args) -> None:
     from RAG.src.retrieval.retriever import Searcher
+    from RAG.src.utils.config import load_search_config
     from RAG.src.utils.errors import LlmPermanentError
 
     questions = _load_questions()
+    out = output_dir(load_search_config(profile=args.profile))
     results, failures = {}, []
     try:
-        with Searcher(profile_name=args.profile, cache_path=OUT / "cache_analyses.json") as searcher:
+        with Searcher(profile_name=args.profile, cache_path=out / "cache_analyses.json") as searcher:
             profile = searcher.config.analysis_profile
             index_sha = searcher.index_doc_ids_sha256()
             for q in questions:
@@ -287,8 +311,8 @@ def cmd_mesurer(args) -> None:
                 "config_sha256": config_sha256(yaml.safe_load(DEFAULT_CONFIG_PATH.read_text(encoding="utf-8"))),
                 "index_doc_ids_sha256": index_sha}
     name = f"{profile.name}__{args.mode}{'__exact' if args.exact else ''}.json"
-    (OUT / "runs").mkdir(parents=True, exist_ok=True)
-    (OUT / "runs" / name).write_text(json.dumps({"manifest": manifest, "results": results}, ensure_ascii=False),
+    (out / "runs").mkdir(parents=True, exist_ok=True)
+    (out / "runs" / name).write_text(json.dumps({"manifest": manifest, "results": results}, ensure_ascii=False),
                                      encoding="utf-8")
     print(f"{name} : {len(results)} questions")
 
@@ -298,9 +322,10 @@ def _median_latency(run: dict) -> float:
     return float(np.median(values))
 
 
-def cmd_evaluer(args) -> None:
+def _load_field(runs_dir: Path) -> tuple[list[dict], dict[str, set[str]], dict[str, dict]]:
+    """Questions, vérité terrain (toujours celle de e2a, lue seulement) et séries de
+    `runs_dir`, après tous les contrôles de cohérence."""
     from RAG.src.prompts.analysis import PROMPT_SHA, PROMPT_VERSION
-    from RAG.src.utils.config import load_search_config
 
     questions = _load_questions()
     questions_sha = _sha256(QUESTIONS_PATH)
@@ -309,29 +334,36 @@ def cmd_evaluer(args) -> None:
         raise SystemExit("vérité terrain calculée sur d'autres questions : relancer verite-terrain")
     relevant = {qid: set(ids) for qid, ids in truth["relevant"].items()}
     loaded = {}
-    for path in sorted((OUT / "runs").glob("*.json")):
+    for path in sorted(runs_dir.glob("*.json")):
         run = json.loads(path.read_text(encoding="utf-8"))
         check_run_manifest(path.stem, run["manifest"], questions_sha=questions_sha,
                            prompt_version=PROMPT_VERSION, prompt_sha=PROMPT_SHA, k=K)
         loaded[path.stem] = run
     if not loaded:
-        raise SystemExit("aucune mesure dans data/experiments/e2a/runs")
+        raise SystemExit(f"aucune mesure dans data/experiments/{runs_dir.parent.name}/runs")
     check_runs_consistency({n: r["manifest"] for n, r in loaded.items()})
     check_index_matches_truth({n: r["manifest"] for n, r in loaded.items()},
                               truth["manifest"]["gold_doc_ids_sha256"])
     print(f"Vérité terrain : Gold {truth['manifest']['gold_doc_ids_sha256'][:12]}, "
           f"questions {questions_sha[:12]}\n")
+    return questions, relevant, loaded
 
-    def scores_of(run: dict) -> dict[str, float]:
-        return {q["id"]: score_question(q, run["results"][q["id"]]["doc_ids"], run["results"][q["id"]]["flags"],
-                                        run["results"][q["id"]]["identifiers"], relevant[q["id"]], K,
-                                        stages=run["results"][q["id"]].get("stages"))
-                for q in questions}
 
-    scored = {n: scores_of(r) for n, r in loaded.items()}
-    full = {n.split("__")[0]: r for n, r in loaded.items() if n.endswith("__full")}
-    check_complete_field(set(full), set(load_search_config().profiles))
+def _scores_of(run: dict, questions: list[dict], relevant: dict[str, set[str]]) -> dict[str, float]:
+    return {q["id"]: score_question(q, run["results"][q["id"]]["doc_ids"], run["results"][q["id"]]["flags"],
+                                    run["results"][q["id"]]["identifiers"], relevant[q["id"]], K,
+                                    stages=run["results"][q["id"]].get("stages"))
+            for q in questions}
 
+
+def _groups(s: dict[str, float], questions: list[dict]) -> list[list[float]]:
+    """Scores regroupés : P1-A, P1-B, P1-C, P2, P3."""
+    groups = [[s[q["id"]] for q in questions if q["part"] == 1 and q["family"] == fam] for fam in "ABC"]
+    return groups + [[s[q["id"]] for q in questions if q["part"] == part] for part in (2, 3)]
+
+
+def _print_part2(full: dict, scored: dict, questions: list[dict]) -> bool:
+    """Critère d'acceptation, affiché profil par profil ; vrai s'il échoue."""
     print("## Critère d'acceptation : partie 2 à 100 %\n")
     failed = False
     for profile in full:
@@ -339,7 +371,43 @@ def cmd_evaluer(args) -> None:
         part2 = [s[q["id"]] for q in questions if q["part"] == 2]
         failed = failed or not all(part2)
         print(f"- {profile} : {sum(part2):.0f}/{len(part2)} {'OK' if all(part2) else 'ÉCHEC'}")
-    if failed:
+    return failed
+
+
+def _print_ablation(profile: str, scored: dict, loaded: dict, questions: list[dict]) -> None:
+    """Apport de chaque ingrédient (V0 à V3) et diagnostic HNSW pour un profil."""
+    print("| Version | P1-A | P1-B | P1-C | P2 | P3 |\n|---|---|---|---|---|---|")
+    v0 = load_v0_scores(E1_SCORES_PATH, questions)
+    if v0 is not None:
+        print("| V0 E1 (anglais) | " + " | ".join(f"{np.mean(v0[f]):.3f}" for f in "ABC") + " | — | — |")
+    else:
+        print("| V0 E1 (anglais) | (scores E1 absents) |||||")
+    for label, mode in (("V1 similarité", "similarity"), ("V2 + filtres", "filters"), ("V3 complète", "full")):
+        s = scored.get(f"{profile}__{mode}")
+        if not s:
+            print(f"| {label} | (mesure absente) |||||")
+            continue
+        print(f"| {label} | " + " | ".join(f"{np.mean(g):.3f}" for g in _groups(s, questions)) + " |")
+    print("\nV0 = questions anglaises, recherche exacte sur tout le corpus, présélection filter_gene en "
+          "famille B (protocole E1) ; l'écart V0→V1 n'isole donc pas le seul effet du français et de l'analyse.")
+
+    exact_run = loaded.get(f"{profile}__similarity__exact")
+    approx_run = loaded.get(f"{profile}__similarity")
+    if exact_run and approx_run:
+        overlaps = [len(set(exact_run["results"][q["id"]]["doc_ids"]) & set(approx_run["results"][q["id"]]["doc_ids"]))
+                    / max(1, len(exact_run["results"][q["id"]]["doc_ids"])) for q in questions]
+        print(f"\nDiagnostic : recouvrement moyen HNSW / exacte sans filtre = {np.mean(overlaps):.3f}")
+
+
+def cmd_evaluer(args) -> None:
+    from RAG.src.utils.config import load_search_config
+
+    questions, relevant, loaded = _load_field(OUT / "runs")
+    scored = {n: _scores_of(r, questions, relevant) for n, r in loaded.items()}
+    full = {n.split("__")[0]: r for n, r in loaded.items() if n.endswith("__full")}
+    check_complete_field(set(full), set(load_search_config().profiles))
+
+    if _print_part2(full, scored, questions):
         raise SystemExit("critère partie 2 non atteint : bug à corriger avant toute décision")
 
     costs = {p: sum(r["results"][q["id"]]["analysis"]["cost_usd"] for q in questions) for p, r in full.items()}
@@ -357,29 +425,44 @@ def cmd_evaluer(args) -> None:
     print(f"\nDécision : **{choice}** (meilleur : {details['best']} ; indistinguables : {details['indistinguishable']})")
 
     print("\n## Apport de chaque ingrédient (profil retenu)\n")
-    print("| Version | P1-A | P1-B | P1-C | P2 | P3 |\n|---|---|---|---|---|---|")
-    v0 = load_v0_scores(E1_SCORES_PATH, questions)
-    if v0 is not None:
-        print("| V0 E1 (anglais) | " + " | ".join(f"{np.mean(v0[f]):.3f}" for f in "ABC") + " | — | — |")
-    else:
-        print("| V0 E1 (anglais) | (scores E1 absents) |||||")
-    for label, mode in (("V1 similarité", "similarity"), ("V2 + filtres", "filters"), ("V3 complète", "full")):
-        s = scored.get(f"{choice}__{mode}")
-        if not s:
-            print(f"| {label} | (mesure absente) |||||")
-            continue
-        groups = [[s[q["id"]] for q in questions if q["part"] == 1 and q["family"] == fam] for fam in "ABC"]
-        groups += [[s[q["id"]] for q in questions if q["part"] == part] for part in (2, 3)]
-        print(f"| {label} | " + " | ".join(f"{np.mean(g):.3f}" for g in groups) + " |")
-    print("\nV0 = questions anglaises, recherche exacte sur tout le corpus, présélection filter_gene en "
-          "famille B (protocole E1) ; l'écart V0→V1 n'isole donc pas le seul effet du français et de l'analyse.")
+    _print_ablation(choice, scored, loaded, questions)
 
-    exact_run = loaded.get(f"{choice}__similarity__exact")
-    approx_run = loaded.get(f"{choice}__similarity")
-    if exact_run and approx_run:
-        overlaps = [len(set(exact_run["results"][q["id"]]["doc_ids"]) & set(approx_run["results"][q["id"]]["doc_ids"]))
-                    / max(1, len(exact_run["results"][q["id"]]["doc_ids"])) for q in questions]
-        print(f"\nDiagnostic : recouvrement moyen HNSW / exacte sans filtre = {np.mean(overlaps):.3f}")
+
+def cmd_evaluer_essai(args) -> None:
+    """Mêmes contrôles et scores que `evaluer`, sur les séries d'essai, sans choix de modèle.
+    Le critère de la partie 2 est affiché ; s'il échoue, tout est affiché puis la commande
+    sort en erreur."""
+    from RAG.src.utils.config import load_search_config
+
+    print("# Essai de validation de la chaîne — ne sert pas au choix du modèle\n")
+    questions, relevant, loaded = _load_field(OUT_ESSAI / "runs")
+    check_trial_field({r["manifest"]["profile"] for r in loaded.values()},
+                      set(load_search_config().trial_profiles))
+    scored = {n: _scores_of(r, questions, relevant) for n, r in loaded.items()}
+    full = {n.split("__")[0]: r for n, r in loaded.items() if n.endswith("__full")}
+    if not full:
+        raise SystemExit("aucune série « full » dans data/experiments/e2a-essai/runs")
+
+    failed = _print_part2(full, scored, questions)
+
+    print("\n## Scores par partie et famille (série « full »)\n")
+    print("| Profil | Score moyen | P1-A | P1-B | P1-C | P2 | P3 | Exactitude signification | "
+          "Latence médiane (ms) |\n|---|---|---|---|---|---|---|---|---|")
+    for p, run in full.items():
+        s = scored[f"{p}__full"]
+        analyses = {qid: res["analysis"] for qid, res in run["results"].items()}
+        print(f"| {p} | {np.mean(list(s.values())):.3f} | "
+              + " | ".join(f"{np.mean(g):.3f}" for g in _groups(s, questions))
+              + f" | {significance_accuracy(questions, analyses):.3f} | {_median_latency(run):.0f} |")
+    print("\nLatence : celle de l'appel d'origine ; un rejeu depuis le cache la conserve. "
+          "Coût : nul (offre gratuite).")
+
+    for p in full:
+        print(f"\n## Apport de chaque ingrédient (profil d'essai {p})\n")
+        _print_ablation(p, scored, loaded, questions)
+
+    if failed:
+        raise SystemExit("critère partie 2 non atteint pendant l'essai : bug à corriger avant la mesure officielle")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -391,7 +474,10 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--mode", choices=("similarity", "filters", "full"), required=True)
     p.add_argument("--exact", action="store_true", help="force la recherche exacte (diagnostic HNSW)")
     p.set_defaults(func=cmd_mesurer)
-    sub.add_parser("evaluer").set_defaults(func=cmd_evaluer)
+    p = sub.add_parser("evaluer")
+    p.add_argument("--essai", action="store_true",
+                   help="évalue les séries de l'essai gratuit (data/experiments/e2a-essai), sans choix de modèle")
+    p.set_defaults(func=lambda a: (cmd_evaluer_essai if a.essai else cmd_evaluer)(a))
     args = parser.parse_args(argv)
     args.func(args)
 
