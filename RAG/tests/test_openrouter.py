@@ -82,8 +82,72 @@ def test_provider_mismatch_is_rejected():
         _call(_client())
 
 
+@responses.activate
+@pytest.mark.parametrize("status", [401, 402, 403, 404])
+def test_refusals_are_permanent_and_never_echo_the_key(status):
+    """Le corps d'erreur peut citer la clé ou la question (donnée de santé) : seuls le
+    statut, le profil et un code court passent dans le message."""
+    responses.add(responses.POST, CHAT, status=status, json={"error": {
+        "message": "clé sk-or-secret refusée pour : usr", "code": status, "metadata": {"raw": "sk-or-secret"}}})
+
+    with pytest.raises(LlmPermanentError) as excinfo:
+        _call(_client())
+    message = str(excinfo.value)
+    assert "sk-or-secret" not in message and "usr" not in message and "refusée" not in message
+    assert str(status) in message and CLAUDE.name in message
 
 
+@responses.activate
+@pytest.mark.parametrize("status", [429, 500, 503])
+def test_throttling_and_server_errors_are_transient(status):
+    responses.add(responses.POST, CHAT, status=status)
+
+    with pytest.raises(LlmUnavailableError):
+        _call(_client())
+
+
+@responses.activate
+def test_unreachable_service_is_transient_and_never_echoes_the_key():
+    responses.add(responses.POST, CHAT, body=requests.ConnectionError("refusé"))
+
+    with pytest.raises(LlmUnavailableError) as excinfo:
+        _call(_client())
+    assert "sk-or-secret" not in str(excinfo.value)
+
+
+@responses.activate
+def test_non_json_content_is_unavailable():
+    _chat_ok(content="pas du json")
+
+    with pytest.raises(LlmUnavailableError, match="JSON"):
+        _call(_client())
+
+
+def test_an_empty_key_is_refused_upfront():
+    with pytest.raises(LlmPermanentError):
+        OpenRouterClient("  ")
+
+
+@responses.activate
+def test_a_refusal_keeps_a_short_error_code_but_never_a_long_one():
+    responses.add(responses.POST, CHAT, status=400, json={"error": {"code": "invalid_schema", "message": "usr"}})
+    with pytest.raises(LlmPermanentError, match="invalid_schema") as excinfo:
+        _call(_client())
+    assert "usr" not in str(excinfo.value)
+
+    responses.add(responses.POST, CHAT, status=400, json={"error": {"code": "usr " * 30}})
+    with pytest.raises(LlmPermanentError) as excinfo:
+        _call(_client())
+    assert "usr" not in str(excinfo.value)
+
+
+@responses.activate
+def test_a_non_json_refusal_body_is_never_echoed():
+    responses.add(responses.POST, CHAT, status=401, body="<html>sk-or-secret usr</html>")
+
+    with pytest.raises(LlmPermanentError) as excinfo:
+        _call(_client())
+    assert "sk-or-secret" not in str(excinfo.value) and "usr" not in str(excinfo.value)
 
 
 @responses.activate
@@ -91,8 +155,6 @@ def test_a_zero_cost_is_accepted():
     _chat_ok(cost=0)
 
     assert _call(_client()).cost_usd == 0.0
-
-
 
 
 @responses.activate
@@ -114,7 +176,6 @@ def test_an_empty_answer_is_treated_as_truncated(content):
     with pytest.raises(LlmTruncatedError) as excinfo:
         _call(_client())
     assert excinfo.value.cost_usd == 0.0021
-
 
 
 @responses.activate
@@ -160,9 +221,10 @@ def test_a_truncated_answer_with_an_invalid_cost_has_an_unknown_cost(cost):
 
 
 @responses.activate
-def test_a_truncated_answer_stays_truncated_whatever_the_provider():
-    """Une coupure est permanente : elle prime sur un fournisseur absent."""
-    _chat_ok(content='{"a": ', finish_reason="length", provider=_ABSENT, cost=0.03)
+@pytest.mark.parametrize("provider", [_ABSENT, "Amazon Bedrock"])
+def test_a_truncated_answer_stays_truncated_whatever_the_provider(provider):
+    """Une coupure est permanente : elle prime sur un fournisseur absent ou différent."""
+    _chat_ok(content='{"a": ', finish_reason="length", provider=provider, cost=0.03)
 
     with pytest.raises(LlmTruncatedError) as excinfo:
         _call(_client())
