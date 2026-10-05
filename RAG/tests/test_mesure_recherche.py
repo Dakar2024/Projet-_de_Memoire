@@ -256,3 +256,181 @@ def test_config_sha256_ignores_trial_profiles():
 
     assert config_sha256(with_trial) == config_sha256(raw)
     assert "trial_profiles" in with_trial["llm"]
+
+
+# --- Essai gratuit (Groq) : séparé de la mesure officielle ------------------------------
+
+TRIAL_PROFILE = "essai-groq-gpt-oss-120b"
+
+
+def _dirs(tmp_path, monkeypatch):
+    import RAG.experiments.mesure_recherche as m
+
+    monkeypatch.setattr(m, "OUT", tmp_path / "e2a")
+    monkeypatch.setattr(m, "OUT_ESSAI", tmp_path / "e2a-essai")
+    monkeypatch.setattr(m, "E1_SCORES_PATH", tmp_path / "absent.json")
+    return m
+
+
+def test_output_dir_separates_trial_and_official_runs(tmp_path, monkeypatch):
+    from RAG.src.utils.config import load_search_config
+
+    m = _dirs(tmp_path, monkeypatch)
+
+    assert m.output_dir(load_search_config(profile=TRIAL_PROFILE)) == tmp_path / "e2a-essai"
+    assert m.output_dir(load_search_config(profile="gpt-oss-120b")) == tmp_path / "e2a"
+
+
+class _FakeSearcher:
+    instances: list = []
+
+    def __init__(self, *, profile_name, cache_path):
+        from RAG.src.utils.config import load_search_config
+
+        self.config = load_search_config(profile=profile_name)
+        self.cache_path = cache_path
+        _FakeSearcher.instances.append(self)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return None
+
+    def index_doc_ids_sha256(self):
+        return "h"
+
+    def search(self, question, mode, force_exact):
+        class Result:
+            def as_dict(self):
+                return {"documents": [{"doc_id": "d", "stage": "similarity"}],
+                        "trace": {"flags": [], "identifiers": {}, "timings_ms": {},
+                                  "analysis": {"available": True, "error": None}}}
+        return Result()
+
+
+@pytest.mark.parametrize("profile, folder", [(TRIAL_PROFILE, "e2a-essai"), ("gpt-oss-120b", "e2a")])
+def test_mesurer_writes_trial_runs_apart_from_official_ones(tmp_path, monkeypatch, profile, folder):
+    import argparse
+
+    import RAG.src.retrieval.retriever as retriever
+
+    m = _dirs(tmp_path, monkeypatch)
+    monkeypatch.setattr(retriever, "Searcher", _FakeSearcher)
+    _FakeSearcher.instances.clear()
+
+    m.cmd_mesurer(argparse.Namespace(profile=profile, mode="full", exact=False))
+
+    assert _FakeSearcher.instances[0].cache_path == tmp_path / folder / "cache_analyses.json"
+    assert [p.name for p in (tmp_path / folder / "runs").iterdir()] == [f"{profile}__full.json"]
+    other = "e2a" if folder == "e2a-essai" else "e2a-essai"
+    assert not (tmp_path / other).exists()
+
+
+def _perfect_run(profile, mode, questions, *, broken_part2=False):
+    from RAG.src.prompts.analysis import PROMPT_SHA, PROMPT_VERSION
+
+    results = {}
+    for q in questions:
+        part3 = q["part"] == 3
+        stages = ["exact"] if q["part"] == 2 else ["similarity"]
+        if broken_part2 and q["part"] == 2:
+            stages = ["similarity"]
+        results[q["id"]] = {
+            "doc_ids": [] if part3 else [f"d-{q['id']}"], "stages": stages,
+            "flags": list(q.get("expected_flags", [])) if part3 else [],
+            "identifiers": dict(q.get("expected_identifiers", {})) if part3 else {},
+            "analysis": {"significance": q["expected_significance"], "latency_ms": 12.0, "cost_usd": 0.0},
+            "timings_ms": {}}
+    manifest = {"questions_sha256": m_sha(), "profile": profile, "model": "openai/gpt-oss-120b",
+                "provider_tag": "groq", "prompt_version": PROMPT_VERSION, "prompt_sha256": PROMPT_SHA,
+                "mode": mode, "exact": False, "k": 10, "embedding_fingerprint": "f", "config_sha256": "c",
+                "index_doc_ids_sha256": "h"}
+    return {"manifest": manifest, "results": results}
+
+
+def m_sha():
+    from RAG.experiments.mesure_recherche import QUESTIONS_PATH, _sha256
+
+    return _sha256(QUESTIONS_PATH)
+
+
+def _write_trial_field(tmp_path, *, profile=TRIAL_PROFILE, broken_part2=False):
+    import json
+
+    from RAG.experiments.mesure_recherche import _load_questions
+
+    questions = _load_questions()
+    truth = {"manifest": {"questions_sha256": m_sha(), "gold_doc_ids_sha256": "h"},
+             "relevant": {q["id"]: ([] if q["part"] == 3 else [f"d-{q['id']}"]) for q in questions}}
+    (tmp_path / "e2a").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "e2a" / "verite_terrain.json").write_text(json.dumps(truth), encoding="utf-8")
+    runs = tmp_path / "e2a-essai" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    for mode in ("similarity", "filters", "full"):
+        run = _perfect_run(profile, mode, questions, broken_part2=broken_part2 and mode == "full")
+        (runs / f"{profile}__{mode}.json").write_text(json.dumps(run), encoding="utf-8")
+
+
+def test_evaluer_essai_reports_without_choosing_a_model(tmp_path, monkeypatch, capsys):
+    import argparse
+    import re
+
+    m = _dirs(tmp_path, monkeypatch)
+    _write_trial_field(tmp_path)
+    (tmp_path / "e2a" / "runs").mkdir()
+    (tmp_path / "e2a" / "runs" / "illisible.json").write_text("pas du json", encoding="utf-8")
+
+    m.cmd_evaluer_essai(argparse.Namespace(essai=True))
+
+    out = capsys.readouterr().out
+    assert "Essai de validation de la chaîne — ne sert pas au choix du modèle" in out
+    assert "Décision" not in out and "Choix du modèle" not in out
+    assert re.search(rf"- {TRIAL_PROFILE} : (\d+)/\1 OK", out)
+    assert "V3 complète" in out and "V1 similarité" in out
+    assert "1.000" in out
+
+
+def test_evaluer_essai_shows_everything_then_fails_on_part2(tmp_path, monkeypatch, capsys):
+    import argparse
+
+    m = _dirs(tmp_path, monkeypatch)
+    _write_trial_field(tmp_path, broken_part2=True)
+
+    with pytest.raises(SystemExit, match="partie 2"):
+        m.cmd_evaluer_essai(argparse.Namespace(essai=True))
+    out = capsys.readouterr().out
+    assert "ÉCHEC" in out and "V3 complète" in out and "Décision" not in out
+
+
+def test_evaluer_essai_refuses_an_official_profile_among_trial_runs(tmp_path, monkeypatch):
+    import argparse
+
+    m = _dirs(tmp_path, monkeypatch)
+    _write_trial_field(tmp_path, profile="gpt-oss-120b")
+
+    with pytest.raises(SystemExit, match="gpt-oss-120b"):
+        m.cmd_evaluer_essai(argparse.Namespace(essai=True))
+
+
+def test_official_evaluer_ignores_trial_runs(tmp_path, monkeypatch):
+    import argparse
+
+    m = _dirs(tmp_path, monkeypatch)
+    _write_trial_field(tmp_path)
+
+    with pytest.raises(SystemExit, match="aucune mesure dans data/experiments/e2a/runs"):
+        m.cmd_evaluer(argparse.Namespace(essai=False))
+
+
+def test_evaluer_dispatches_on_the_essai_flag(monkeypatch):
+    import RAG.experiments.mesure_recherche as m
+
+    calls = []
+    monkeypatch.setattr(m, "cmd_evaluer", lambda args: calls.append("officiel"))
+    monkeypatch.setattr(m, "cmd_evaluer_essai", lambda args: calls.append("essai"))
+
+    m.main(["evaluer"])
+    m.main(["evaluer", "--essai"])
+
+    assert calls == ["officiel", "essai"]
