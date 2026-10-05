@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import time
 from collections.abc import Callable, Mapping
@@ -99,8 +100,10 @@ class AnalysisCache:
         os.replace(tmp, self._path)
 
 
-def _valid_entry(entry: object) -> bool:
-    """Une entrée de cache éditée à la main ne doit jamais atteindre la recherche."""
+def _valid_entry(entry: object, profile: LlmProfile) -> bool:
+    """Une entrée de cache éditée à la main ne doit jamais atteindre la recherche, ni une
+    entrée servie par un autre fournisseur que celui du profil (elle aurait été rejetée à
+    l'appel), ni un coût ou une latence qui fausseraient les totaux de la mesure."""
     if not isinstance(entry, dict):
         return False
     try:
@@ -108,8 +111,9 @@ def _valid_entry(entry: object) -> bool:
     except (KeyError, ValueError, TypeError):
         return False
     numbers = (entry.get("cost_usd"), entry.get("latency_ms"))
-    return (isinstance(entry.get("provider_name"), str)
-            and all(isinstance(n, (int, float)) and not isinstance(n, bool) and n >= 0 for n in numbers))
+    return (entry.get("provider_name") == profile.provider_name
+            and all(isinstance(n, (int, float)) and not isinstance(n, bool) and math.isfinite(n) and n >= 0
+                    for n in numbers))
 
 
 def analyze(question: str, *, client, profile: LlmProfile, max_tokens: int,
@@ -119,7 +123,7 @@ def analyze(question: str, *, client, profile: LlmProfile, max_tokens: int,
     fournisseur, le coût reste 0,0 (l'exception ne porte pas l'appel) ; une réponse payée
     mais invalide conserve en revanche son coût et son fournisseur."""
     cached = cache.get(question, profile) if cache is not None else None
-    if cached is not None and _valid_entry(cached):
+    if cached is not None and _valid_entry(cached, profile):
         stored = {k: cached[k] for k in (*_KEYS, "provider_name", "cost_usd", "latency_ms")}
         return QueryAnalysis(available=True, profile=profile.name, from_cache=True, **stored)
     start = clock()
