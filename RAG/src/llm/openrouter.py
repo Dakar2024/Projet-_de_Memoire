@@ -21,12 +21,18 @@ d'erreur court y figurent.
 
 from __future__ import annotations
 
-import json
-import math
-from dataclasses import dataclass
-
 import requests
 
+from RAG.src.llm.common import (
+    PERMANENT_STATUSES,
+    LlmCall,
+    chat_messages,
+    error_code,
+    is_cost,
+    json_object,
+    json_schema_format,
+    read_chat_reply,
+)
 from RAG.src.utils.config import LlmProfile
 from RAG.src.utils.errors import (
     LlmPermanentError,
@@ -35,39 +41,10 @@ from RAG.src.utils.errors import (
     LlmUnavailableError,
 )
 
+__all__ = ["OPENROUTER_BASE_URL", "LlmCall", "OpenRouterClient", "build_payload"]
+
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-_PERMANENT = (400, 401, 402, 403, 404)
-_TRANSIENT = (408, 429, 500, 502, 503, 504)
-_MAX_CODE_CHARS = 40
-
-
-def _error_code(response: requests.Response) -> str:
-    """Code d'erreur d'OpenRouter, s'il est un entier ou une chaîne courte. Jamais
-    `error.message` ni le reste du corps : ils peuvent citer la question."""
-    try:
-        code = response.json()["error"]["code"]
-    except (ValueError, KeyError, TypeError):
-        return ""
-    if isinstance(code, int) and not isinstance(code, bool):
-        return f", code {code}"
-    if isinstance(code, str) and 0 < len(code) <= _MAX_CODE_CHARS and code.replace("_", "").replace("-", "").isalnum():
-        return f", code {code}"
-    return ""
-
-
-def _is_cost(value: object) -> bool:
-    return (isinstance(value, (int, float)) and not isinstance(value, bool)
-            and math.isfinite(value) and value >= 0)
-
-
-@dataclass(frozen=True)
-class LlmCall:
-    content: dict
-    generation_id: str
-    provider_name: str
-    cost_usd: float
-    prompt_tokens: int
-    completion_tokens: int
+_SERVICE = "OpenRouter"
 
 
 def build_payload(profile: LlmProfile, *, system: str, user: str, schema_name: str,
@@ -84,9 +61,8 @@ def build_payload(profile: LlmProfile, *, system: str, user: str, schema_name: s
         provider["quantizations"] = [profile.quantization]
     return {
         "model": profile.model,
-        "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-        "response_format": {"type": "json_schema",
-                            "json_schema": {"name": schema_name, "strict": True, "schema": schema}},
+        "messages": chat_messages(system, user),
+        "response_format": json_schema_format(schema_name, schema),
         "provider": provider,
         "reasoning": {"effort": "low"},
         "max_tokens": max_tokens,
@@ -118,43 +94,25 @@ class OpenRouterClient:
         payload = build_payload(profile, system=system, user=user, schema_name=schema_name,
                                 schema=schema, max_tokens=max_tokens)
         response = self._send("POST", "/chat/completions", json=payload)
-        if response.status_code in _PERMANENT:
+        if response.status_code in PERMANENT_STATUSES:
             raise LlmPermanentError(
                 f"OpenRouter refuse la requête ({response.status_code}) pour {profile.name}"
-                f"{_error_code(response)}"
+                f"{error_code(response)}"
             )
-        if response.status_code in _TRANSIENT or response.status_code >= 400:
+        if response.status_code >= 400:
             raise LlmUnavailableError(f"OpenRouter indisponible ({response.status_code}) pour {profile.name}")
-        try:
-            data = response.json()
-            generation_id = str(data["id"])
-            choice = data["choices"][0]
-            raw_content = choice["message"]["content"]
-            finish_reason = choice.get("finish_reason")
-            usage = data.get("usage") or {}
-            if not isinstance(usage, dict):
-                raise TypeError("usage n'est pas un objet")
-            prompt_tokens = int(usage.get("prompt_tokens") or 0)
-            completion_tokens = int(usage.get("completion_tokens") or 0)
-            # Lus avant le contrôle de coupure : une réponse coupée reste facturée.
-            served = data.get("provider")
-            cost = usage.get("cost")
-        except (ValueError, KeyError, IndexError, TypeError, AttributeError) as exc:
-            raise LlmUnavailableError(f"réponse OpenRouter non JSON ou incomplète : {type(exc).__name__}") from exc
+        reply = read_chat_reply(response, _SERVICE)
+        # Lus avant le contrôle de coupure : une réponse coupée reste facturée.
+        served = reply.data.get("provider")
+        cost = reply.usage.get("cost")
         # Une coupure est permanente : elle prime sur un fournisseur ou un coût invérifiable.
-        if finish_reason == "length" or raw_content is None or (isinstance(raw_content, str)
-                                                                  and not raw_content.strip()):
+        if reply.truncated:
             raise LlmTruncatedError(
-                f"réponse coupée ou vide pour {profile.name} (finish_reason={finish_reason!r}) : "
+                f"réponse coupée ou vide pour {profile.name} (finish_reason={reply.finish_reason!r}) : "
                 "augmenter llm.max_tokens dans RAG/config.yaml",
-                cost_usd=float(cost) if _is_cost(cost) else None,
+                cost_usd=float(cost) if is_cost(cost) else None,
             )
-        try:
-            content = json.loads(raw_content)
-        except (ValueError, TypeError) as exc:
-            raise LlmUnavailableError(f"réponse OpenRouter non JSON ou incomplète : {type(exc).__name__}") from exc
-        if not isinstance(content, dict):
-            raise LlmUnavailableError("réponse OpenRouter : le JSON attendu est un objet")
+        content = json_object(reply.raw_content, _SERVICE)
         # Jamais d'acceptation silencieuse : sans `provider`, le point d'accès est improuvable.
         # La valeur invalide n'est pas recopiée dans le message (elle vient du corps).
         if not (isinstance(served, str) and served.strip()):
@@ -165,7 +123,8 @@ class OpenRouterClient:
             raise LlmProviderMismatchError(
                 f"servi par « {served} » au lieu de « {profile.provider_name} » ({profile.name})"
             )
-        if not _is_cost(cost):
+        if not is_cost(cost):
             raise LlmUnavailableError(f"coût réel absent ou invalide dans la réponse pour {profile.name}")
-        return LlmCall(content=content, generation_id=generation_id, provider_name=served,
-                       cost_usd=float(cost), prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
+        return LlmCall(content=content, generation_id=reply.generation_id, provider_name=served,
+                       cost_usd=float(cost), prompt_tokens=reply.prompt_tokens,
+                       completion_tokens=reply.completion_tokens)
