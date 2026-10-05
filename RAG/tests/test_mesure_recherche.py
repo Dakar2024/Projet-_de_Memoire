@@ -392,6 +392,35 @@ def test_evaluer_essai_reports_without_choosing_a_model(tmp_path, monkeypatch, c
     assert "1.000" in out
 
 
+def test_check_run_manifest_refuses_old_format_and_missing_keys_cleanly():
+    ok = dict(questions_sha="q", prompt_version="p1", prompt_sha="s1", k=10)
+    old = _manifest()
+    old["exact"] = old.pop("approx")
+    with pytest.raises(SystemExit, match=r"a__full.*ancien format \(champ exact\)"):
+        check_run_manifest("a__full", old, **ok)
+    incomplete = _manifest()
+    del incomplete["embedding_fingerprint"]
+    with pytest.raises(SystemExit, match="a__full.*embedding_fingerprint"):
+        check_run_manifest("a__full", incomplete, **ok)
+
+
+def test_recall_diagnostic_is_not_computable_without_any_exact_result(tmp_path, monkeypatch, capsys):
+    import json
+
+    m = _dirs(tmp_path, monkeypatch)
+    _write_trial_field(tmp_path)
+    runs = tmp_path / "e2a-essai" / "runs"
+    run = json.loads((runs / f"{TRIAL_PROFILE}__similarity.json").read_text(encoding="utf-8"))
+    for r in run["results"].values():
+        r["doc_ids"] = []
+    questions = m._load_questions()
+    loaded = {f"{TRIAL_PROFILE}__similarity": run, f"{TRIAL_PROFILE}__similarity__approx": run}
+
+    m._print_ablation(TRIAL_PROFILE, {}, loaded, questions)
+
+    assert "= non calculable" in capsys.readouterr().out
+
+
 @pytest.mark.parametrize("approx_doc, expected", [(None, "1.000"), ("zzz", "0.000")])
 def test_evaluer_essai_prints_the_hnsw_recall_against_exact_search(tmp_path, monkeypatch, capsys, approx_doc, expected):
     import argparse

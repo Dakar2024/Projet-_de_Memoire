@@ -187,6 +187,12 @@ def check_run_manifest(name: str, manifest: dict, *, questions_sha: str, prompt_
                        k: int) -> None:
     """Refuse une mesure incohérente avec les questions, le prompt (version et empreinte), k
     ou son propre nom de fichier."""
+    if "approx" not in manifest and "exact" in manifest:
+        raise SystemExit(f"{name} : manifeste à l'ancien format (champ exact) : supprimer ou remesurer cette série")
+    for key in ("questions_sha256", "prompt_version", "k", "profile", "mode", "approx",
+                "embedding_fingerprint", "model", "provider_tag"):
+        if key not in manifest:
+            raise SystemExit(f"{name} : champ « {key} » absent du manifeste : supprimer ou remesurer cette série")
     profile, _, rest = name.partition("__")
     mode, _, suffix = rest.partition("__")
     if manifest["questions_sha256"] != questions_sha:
@@ -402,8 +408,9 @@ def _print_ablation(profile: str, scored: dict, loaded: dict, questions: list[di
         recalls = [len(set(exact_run["results"][q["id"]]["doc_ids"]) & set(approx_run["results"][q["id"]]["doc_ids"]))
                    / len(exact_run["results"][q["id"]]["doc_ids"]) for q in questions
                    if exact_run["results"][q["id"]]["doc_ids"]]
+        mean = f"{np.mean(recalls):.3f}" if recalls else "non calculable"
         print(f"\nDiagnostic : rappel moyen de l'index HNSW (ef_search 40) par rapport à la recherche "
-              f"exacte = {np.mean(recalls):.3f}")
+              f"exacte = {mean}")
 
 
 def cmd_evaluer(args) -> None:
