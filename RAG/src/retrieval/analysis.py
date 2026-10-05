@@ -16,7 +16,8 @@ from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from RAG.src.prompts.analysis import ANALYSIS_SCHEMA, PROMPT_VERSION, SCHEMA_NAME, SYSTEM_PROMPT, user_message
+from RAG.src.prompts import analysis as prompts
+from RAG.src.prompts.analysis import ANALYSIS_SCHEMA, SCHEMA_NAME, SYSTEM_PROMPT, user_message
 from RAG.src.retrieval.significance import SIGNIFICANCE_VALUES
 from RAG.src.utils.config import LlmProfile
 from RAG.src.utils.errors import LlmProviderMismatchError, LlmUnavailableError, RagConfigurationError
@@ -59,8 +60,8 @@ def validate_analysis(content: Mapping) -> tuple[str, str, str | None]:
 
 
 class AnalysisCache:
-    """Analyses réussies, sur disque. Clé : version du prompt, modèle, point d'accès et
-    texte exact de la question. Un rejeu redonne exactement la même analyse.
+    """Analyses réussies, sur disque. Clé : version et empreinte du prompt, modèle, point
+    d'accès et texte exact de la question. Un rejeu redonne exactement la même analyse.
 
     Une entrée relue conserve le coût, la latence et le fournisseur de l'appel d'origine :
     la mesure compare le coût unitaire d'analyse par modèle, et une reprise doit donner le
@@ -82,7 +83,9 @@ class AnalysisCache:
 
     @staticmethod
     def key(question: str, profile: LlmProfile) -> str:
-        raw = "\0".join((PROMPT_VERSION, profile.model, profile.provider_tag, question))
+        # Empreinte relue à chaque appel : elle suit le prompt réellement en vigueur.
+        raw = "\0".join((prompts.PROMPT_VERSION, prompts.prompt_sha256(), profile.model,
+                         profile.provider_tag, question))
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
     def get(self, question: str, profile: LlmProfile) -> dict | None:

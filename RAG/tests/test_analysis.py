@@ -125,3 +125,29 @@ def test_a_hand_edited_cache_entry_is_a_miss(tmp_path):
 
     assert client.calls == 1 and result.available and not result.from_cache
     assert result.significance == "none"
+
+
+def test_prompt_sha_covers_the_system_prompt_the_schema_and_the_user_template():
+    import hashlib
+
+    from RAG.src.prompts import analysis as prompts
+
+    raw = prompts.SYSTEM_PROMPT + json.dumps(prompts.ANALYSIS_SCHEMA, sort_keys=True) + prompts.user_message("{q}")
+    assert prompts.PROMPT_SHA == hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    assert prompts.prompt_sha256() == prompts.PROMPT_SHA
+
+
+@pytest.mark.parametrize("attribute,value", [
+    ("SYSTEM_PROMPT", "autre consigne"),
+    ("ANALYSIS_SCHEMA", {"type": "object"}),
+    ("user_message", lambda question: f"<q>{question}</q>"),
+])
+def test_cache_key_changes_when_the_prompt_changes_even_without_a_new_version(monkeypatch, attribute, value):
+    """Oublier d'incrémenter PROMPT_VERSION ne doit pas rejouer des analyses obtenues
+    avec un autre prompt."""
+    from RAG.src.prompts import analysis as prompts
+
+    before = AnalysisCache.key("question", PROFILE)
+    monkeypatch.setattr(prompts, attribute, value)
+
+    assert AnalysisCache.key("question", PROFILE) != before
