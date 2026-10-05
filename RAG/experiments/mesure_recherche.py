@@ -42,7 +42,10 @@ def _load_questions() -> list[dict]:
 # --- Fonctions pures, testées -----------------------------------------------------------
 
 def score_question(question: dict, doc_ids: list[str], flags: list[str], identifiers: dict,
-                   relevant: set[str], k: int = K) -> float:
+                   relevant: set[str], k: int = K, stages: list[str] | None = None) -> float:
+    """Score d'une question. Partie 2 : le premier document doit être pertinent ET venir de
+    la correspondance exacte (`stages[0] == "exact"` quand les étapes sont connues), sans
+    `identifier_not_found` : un document trouvé par similarité ne compte pas."""
     part = question["part"]
     if part == 1 and question["family"] == "A":
         for rank, doc_id in enumerate(doc_ids[:k], start=1):
@@ -52,7 +55,9 @@ def score_question(question: dict, doc_ids: list[str], flags: list[str], identif
     if part == 1:
         return sum(1 for doc_id in doc_ids[:k] if doc_id in relevant) / k
     if part == 2:
-        return 1.0 if doc_ids and doc_ids[0] in relevant else 0.0
+        found_exactly = stages is None or (bool(stages) and stages[0] == "exact")
+        return 1.0 if (doc_ids and doc_ids[0] in relevant and "identifier_not_found" not in flags
+                       and found_exactly) else 0.0
     expected = question["expected_identifiers"]
     same_ids = all(sorted(identifiers.get(key, [])) == sorted(expected.get(key, [])) for key in _ID_KEYS)
     return 1.0 if same_ids and set(question["expected_flags"]) <= set(flags) else 0.0
@@ -206,7 +211,8 @@ def cmd_mesurer(args) -> None:
             r = searcher.search(q["question"], mode=args.mode, force_exact=True if args.exact else None).as_dict()
             if not r["trace"]["analysis"]["available"]:
                 failures.append(f"{q['id']} : {r['trace']['analysis']['error']}")
-            results[q["id"]] = {"doc_ids": [d["doc_id"] for d in r["documents"]], "flags": r["trace"]["flags"],
+            results[q["id"]] = {"doc_ids": [d["doc_id"] for d in r["documents"]],
+                                "stages": [d["stage"] for d in r["documents"]], "flags": r["trace"]["flags"],
                                 "identifiers": r["trace"]["identifiers"], "analysis": r["trace"]["analysis"],
                                 "timings_ms": r["trace"]["timings_ms"]}
         if searcher.index_doc_ids_sha256() != index_sha:
@@ -260,7 +266,8 @@ def cmd_evaluer(args) -> None:
 
     def scores_of(run: dict) -> dict[str, float]:
         return {q["id"]: score_question(q, run["results"][q["id"]]["doc_ids"], run["results"][q["id"]]["flags"],
-                                        run["results"][q["id"]]["identifiers"], relevant[q["id"]], K)
+                                        run["results"][q["id"]]["identifiers"], relevant[q["id"]], K,
+                                        stages=run["results"][q["id"]].get("stages"))
                 for q in questions}
 
     scored = {n: scores_of(r) for n, r in loaded.items()}
