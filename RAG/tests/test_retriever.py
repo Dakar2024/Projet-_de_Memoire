@@ -2,8 +2,8 @@ import numpy as np
 import pytest
 
 from RAG.src.retrieval.analysis import QueryAnalysis
-from RAG.src.retrieval.retriever import RetrievedDocument, SearchSettings, search
-from RAG.src.utils.errors import QuestionRejectedError
+from RAG.src.retrieval.retriever import PgSearchStore, RetrievedDocument, SearchSettings, check_index_models, search
+from RAG.src.utils.errors import QuestionRejectedError, RagConfigurationError
 
 SETTINGS = SearchSettings(k=10, min_filtered=3, max_question_chars=1000)
 KNOWN = ("Pathogenic", "Likely pathogenic", "Pathogenic/Likely pathogenic", "Benign", "Uncertain significance")
@@ -180,3 +180,26 @@ def test_trace_is_json_ready():
     assert data["documents"][0]["doc_id"] == "clinvar:1"
     assert data["trace"]["identifiers"]["rs"] == [1]
     assert set(data["trace"]["timings_ms"]) == {"analysis", "embedding", "database"}
+
+
+def test_connection_disables_prepared_plans(monkeypatch):
+    captured = {}
+
+    class Boom(Exception):
+        pass
+
+    def fake_connect(conninfo, **kwargs):
+        captured.update(kwargs)
+        raise Boom
+
+    monkeypatch.setattr("RAG.src.retrieval.retriever.psycopg.connect", fake_connect)
+    with pytest.raises(Boom):
+        PgSearchStore("postgresql://x").__enter__()
+    assert captured["prepare_threshold"] is None
+
+
+def test_check_index_models():
+    check_index_models(("fp",), "fp")
+    for bad in ((), ("fp", "autre"), ("autre",)):
+        with pytest.raises(RagConfigurationError):
+            check_index_models(bad, "fp")

@@ -35,7 +35,7 @@ from RAG.src.utils.config import (
     load_service_settings,
     served_fingerprint,
 )
-from RAG.src.utils.errors import QuestionRejectedError
+from RAG.src.utils.errors import QuestionRejectedError, RagConfigurationError
 
 MODES = ("similarity", "filters", "full")
 PANELS = tuple(PANEL_GENES)
@@ -161,6 +161,20 @@ def search(question: str, *, settings: SearchSettings, analyze: Callable[[str], 
     return SearchResult(question=text, documents=tuple(documents), trace=trace)
 
 
+def _resorted(sql: str) -> str:
+    """`relaxed_order` peut rendre des lignes légèrement désordonnées : on retrie le
+    résultat (colonne `similarity`, en dernier, donc `_documents` reste valable)."""
+    return f"WITH r AS MATERIALIZED ({sql}) SELECT * FROM r ORDER BY similarity DESC"
+
+
+def check_index_models(models: Sequence[str], expected: str) -> None:
+    """L'index doit avoir été construit par un seul modèle : celui que sert le service."""
+    if tuple(models) != (expected,):
+        raise RagConfigurationError(
+            f"modèles présents dans l'index : {list(models)} ; empreinte attendue : {expected}. "
+            "Réindexer ou corriger la configuration avant toute recherche.")
+
+
 class PgSearchStore:
     """Lecture seule (`rag_reader`). Délais bornés : connexion 10 s, requête 30 s.
     Avec un filtre, la recherche est exacte (pgvector filtre après le parcours de son
@@ -173,7 +187,11 @@ class PgSearchStore:
         self._known: tuple[str, ...] | None = None
 
     def __enter__(self) -> PgSearchStore:
-        conn = psycopg.connect(self._conninfo, autocommit=True, connect_timeout=10)
+        # prepare_threshold=None : psycopg prépare sinon une requête après 5 exécutions, et
+        # PostgreSQL peut alors réutiliser un plan générique bâti sous un autre réglage
+        # `enable_indexscan` ; une recherche filtrée « exacte » redeviendrait silencieusement
+        # un parcours HNSW filtré après coup.
+        conn = psycopg.connect(self._conninfo, autocommit=True, connect_timeout=10, prepare_threshold=None)
         try:
             register_vector(conn)
         except Exception:
@@ -203,6 +221,12 @@ class PgSearchStore:
                 self._db.execute("SELECT set_config('hnsw.ef_search', %s, true)", (str(max(40, 4 * limit)),))
             return self._db.execute(sql, params).fetchall()
 
+    def _timed(self, sql: str, params: tuple) -> list[tuple]:
+        """Requête simple de lecture, avec le même délai de 30 s que les recherches."""
+        with self._db.transaction():
+            self._db.execute("SELECT set_config('statement_timeout', '30s', true)")
+            return self._db.execute(sql, params).fetchall()
+
     @staticmethod
     def _documents(rows: list[tuple], stage: str) -> list[RetrievedDocument]:
         return [RetrievedDocument(**dict(zip(_COLUMNS, row[:-1], strict=True)), similarity=float(row[-1]),
@@ -210,12 +234,17 @@ class PgSearchStore:
 
     def known_significances(self) -> tuple[str, ...]:
         if self._known is None:
-            rows = self._db.execute(
+            rows = self._timed(
                 "SELECT DISTINCT clinical_significance FROM rag_documents "
                 "WHERE clinical_significance IS NOT NULL AND panel = ANY(%s::text[])", (list(PANELS),)
-            ).fetchall()
+            )
             self._known = tuple(sorted(row[0] for row in rows))
         return self._known
+
+    def index_models(self) -> tuple[str, ...]:
+        rows = self._timed("SELECT DISTINCT embedding_model FROM rag_documents "
+                           "WHERE panel = ANY(%s::text[])", (list(PANELS),))
+        return tuple(sorted(row[0] for row in rows))
 
     def exact_matches(self, *, rs, hgvs_c, hgvs_p, genes, query_vector, limit):
         sql = f"""
@@ -227,7 +256,7 @@ class PgSearchStore:
             ORDER BY embedding <=> %(q)s LIMIT %(limit)s"""
         params = {"q": query_vector.astype(np.float32), "panels": list(PANELS), "rs": list(rs),
                   "c": list(hgvs_c), "p": list(hgvs_p), "genes": list(genes), "limit": limit}
-        return self._documents(self._rows(sql, params, exact=True, limit=limit), "exact")
+        return self._documents(self._rows(_resorted(sql), params, exact=True, limit=limit), "exact")
 
     def similar(self, *, query_vector, genes, significances, exclude_doc_ids, limit, exact):
         sql = f"""
@@ -241,7 +270,7 @@ class PgSearchStore:
         params = {"q": query_vector.astype(np.float32), "panels": list(PANELS), "genes": list(genes),
                   "sig": list(significances), "exclude": list(exclude_doc_ids), "limit": limit}
         stage = "filtered" if (genes or significances) else "similarity"
-        return self._documents(self._rows(sql, params, exact=exact, limit=limit), stage)
+        return self._documents(self._rows(_resorted(sql), params, exact=exact, limit=limit), stage)
 
 
 class Searcher:
@@ -256,6 +285,7 @@ class Searcher:
         check_served_model(rag.embedding.fingerprint, served_fingerprint(services.served_model_dir))
         self._embedder = EmbeddingClient(services.embeddings_url, services.embeddings_api_key,
                                          timeout_s=rag.embedding.request_timeout_s)
+        self._fingerprint = rag.embedding.fingerprint
         verify_canary(self._embedder, load_canary(rag.embedding.canary_path), rag.embedding.fingerprint,
                       rag.embedding.canary_min_cosine)
         self._llm = OpenRouterClient(load_openrouter_key(env), timeout_s=self.config.llm_timeout_s)
@@ -265,6 +295,11 @@ class Searcher:
 
     def __enter__(self) -> Searcher:
         self._store.__enter__()
+        try:
+            check_index_models(self._store.index_models(), self._fingerprint)
+        except BaseException:
+            self._store.__exit__(None, None, None)
+            raise
         return self
 
     def __exit__(self, *exc_info) -> None:
