@@ -466,6 +466,8 @@ services:
       # `:-` et non `:?` : une clé absente ne doit pas bloquer les commandes Compose
       # du pipeline ; le code refuse lui-même de chercher sans clé.
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      # Essai gratuit seulement (profils de llm.trial_profiles) ; même règle `:-`.
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
     working_dir: /opt/projet
     # Montages restreints : ni .env, ni le reste du dépôt dans ce conteneur relié à Internet.
     volumes:
@@ -476,9 +478,13 @@ services:
       # data/experiments (mesures de E1) n'est ni lu ni modifiable d'ici. Le dossier doit
       # exister sur l'hôte (mkdir -p data/experiments/e2a), sinon Docker le crée en root.
       - ./data/experiments/e2a:/opt/projet/data/experiments/e2a
-    # rag-network pour la base et l'embedding ; rag-egress pour joindre OpenRouter.
-    # rag-egress donne un accès Internet NON filtré : Docker ne filtre pas par domaine,
-    # seul le code se limite à OpenRouter (proxy filtrant prévu avant E2b, TODO.md §6).
+      # Séries de l'essai gratuit (Groq), à part des séries officielles ; la vérité
+      # terrain est lue dans e2a, déjà monté. À créer aussi sur l'hôte (mkdir -p).
+      - ./data/experiments/e2a-essai:/opt/projet/data/experiments/e2a-essai
+    # rag-network pour la base et l'embedding ; rag-egress pour joindre OpenRouter (et
+    # Groq pour l'essai). rag-egress donne un accès Internet NON filtré : Docker ne filtre
+    # pas par domaine, seul le code se limite à ces services (proxy filtrant prévu avant
+    # E2b, TODO.md §6).
     # Pas genomique-network : ni base d'Airflow, ni MinIO.
     networks:
       - rag-network
@@ -508,6 +514,6 @@ networks:
     internal: true
   # Sortie vers Internet du seul service de recherche. Accès non filtré : Docker ne
   # sait pas restreindre un réseau à un domaine ; seul le code de rag-search se limite
-  # à OpenRouter. Aucun autre service n'y est rattaché.
+  # à OpenRouter (et à Groq pour l'essai). Aucun autre service n'y est rattaché.
   rag-egress:
     driver: bridge
