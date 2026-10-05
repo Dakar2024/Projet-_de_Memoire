@@ -116,3 +116,20 @@ def test_exact_results_are_ordered_by_similarity_then_doc_id(store):
     for found in (exact, filtered):
         assert found
         assert found == sorted(found, key=lambda d: (-d.similarity, d.doc_id))
+
+
+def test_doc_ids_fingerprint_is_stable_and_ignores_test_rows(store):
+    first = store.doc_ids_sha256()
+    assert len(first) == 64 and store.doc_ids_sha256() == first
+    if not INDEXER:
+        pytest.skip("RAG_TEST_PG_CONNINFO absent")
+    row = {"doc_id": "clinvar:test-e2a-sha", "chunk_id": "h", "doc_type": "variant", "text": "test",
+           "gene_symbol": "HBB", "clinical_significance": None, "review_status": None,
+           "rs_dbsnp": None, "hgvs_c": None, "hgvs_p": None, "clinvar_variation_id": None,
+           "clinvar_url": None, "source_version": None, "collected_at": None}
+    with PgVectorStore(INDEXER) as writer:
+        writer.upsert("test_integration", [row], _vector()[None, :], "modele-test")
+        try:
+            assert store.doc_ids_sha256() == first
+        finally:
+            writer.delete("test_integration", ["clinvar:test-e2a-sha"])
