@@ -1,14 +1,18 @@
 """Client OpenRouter (E2a). Seul fichier du projet qui connaît OpenRouter.
 
 Chaque requête est figée sur un point d'accès précis (fournisseur, quantification),
-sans basculement, en zéro rétention, avec sortie JSON imposée. Après la réponse, le
-fournisseur réellement servi et le coût réel sont lus sur `GET /generation` : la
-réponse de chat ne les donne pas dans ses champs documentés (vérifié le 05/10/2026).
-Une réponse servie par un autre fournisseur est rejetée.
+sans basculement, en zéro rétention, avec sortie JSON imposée. Le fournisseur
+réellement servi et le coût réel sont lus dans la réponse de chat elle-même : le champ
+`provider` de premier niveau et `usage.cost` (en dollars). `usage.cost` est documenté ;
+`provider` ne l'est pas, il a été observé le 05/10/2026 avec et sans zéro rétention
+(« DeepInfra » pour `deepinfra/bf16`). `GET /generation`, prévu à l'origine pour cette
+preuve, répondait 404 pour toutes les générations de ce compte, même plusieurs minutes
+après : il n'est plus appelé. Une réponse sans `provider` exploitable est rejetée (on
+ne peut pas prouver le point d'accès) ; un autre fournisseur est rejeté aussi.
 
-Limite connue : `provider_name` prouve le fournisseur, pas la région ni le point
-d'accès exact (« Google » ne distingue pas Vertex Europe d'une autre région). La
-région est imposée par `only` dans la requête ; elle n'est pas revérifiée après coup.
+Limite connue : `provider` prouve le fournisseur, pas la région ni le point d'accès
+exact (« Google » ne distingue pas Vertex Europe d'une autre région). La région est
+imposée par `only` dans la requête ; elle n'est pas revérifiée après coup.
 
 Les messages d'erreur ne citent jamais le corps d'une réponse : il peut reprendre la
 question (donnée de santé) ou des en-têtes. Seuls le statut, le profil et un code
@@ -19,8 +23,6 @@ from __future__ import annotations
 
 import json
 import math
-import time
-from collections.abc import Callable
 from dataclasses import dataclass
 
 import requests
@@ -58,11 +60,6 @@ def _is_cost(value: object) -> bool:
             and math.isfinite(value) and value >= 0)
 
 
-def _generation_delay(attempt: int) -> float:
-    """Attente avant la tentative suivante : 0,5, 1, 2, puis 4 s."""
-    return min(0.5 * 2 ** attempt, 4.0)
-
-
 @dataclass(frozen=True)
 class LlmCall:
     content: dict
@@ -98,18 +95,15 @@ def build_payload(profile: LlmProfile, *, system: str, user: str, schema_name: s
 
 class OpenRouterClient:
     def __init__(self, api_key: str, *, timeout_s: float = 60.0, session: requests.Session | None = None,
-                 base_url: str = OPENROUTER_BASE_URL, generation_attempts: int = 8,
-                 sleep: Callable[[float], None] = time.sleep) -> None:
+                 base_url: str = OPENROUTER_BASE_URL) -> None:
         if not api_key or not api_key.strip():
             raise LlmPermanentError("clé OpenRouter vide (OPENROUTER_API_KEY)")
         self._headers = {"Authorization": f"Bearer {api_key.strip()}"}
         self._timeout = timeout_s
         # Session sans relance automatique : relancer un POST payant pourrait facturer
-        # deux fois la même analyse. La lecture de /generation a sa propre boucle.
+        # deux fois la même analyse.
         self._session = session or requests.Session()
         self._base = base_url.rstrip("/")
-        self._attempts = generation_attempts
-        self._sleep = sleep
 
     def _send(self, method: str, path: str, **kwargs) -> requests.Response:
         try:
@@ -142,14 +136,18 @@ class OpenRouterClient:
                 raise TypeError("usage n'est pas un objet")
             prompt_tokens = int(usage.get("prompt_tokens") or 0)
             completion_tokens = int(usage.get("completion_tokens") or 0)
-        except (ValueError, KeyError, IndexError, TypeError) as exc:
+            # Lus avant le contrôle de coupure : une réponse coupée reste facturée.
+            served = data.get("provider")
+            cost = usage.get("cost")
+        except (ValueError, KeyError, IndexError, TypeError, AttributeError) as exc:
             raise LlmUnavailableError(f"réponse OpenRouter non JSON ou incomplète : {type(exc).__name__}") from exc
+        # Une coupure est permanente : elle prime sur un fournisseur ou un coût invérifiable.
         if finish_reason == "length" or raw_content is None or (isinstance(raw_content, str)
                                                                   and not raw_content.strip()):
             raise LlmTruncatedError(
                 f"réponse coupée ou vide pour {profile.name} (finish_reason={finish_reason!r}) : "
                 "augmenter llm.max_tokens dans RAG/config.yaml",
-                cost_usd=self._cost_if_available(generation_id),
+                cost_usd=float(cost) if _is_cost(cost) else None,
             )
         try:
             content = json.loads(raw_content)
@@ -157,43 +155,17 @@ class OpenRouterClient:
             raise LlmUnavailableError(f"réponse OpenRouter non JSON ou incomplète : {type(exc).__name__}") from exc
         if not isinstance(content, dict):
             raise LlmUnavailableError("réponse OpenRouter : le JSON attendu est un objet")
-        provider_name, cost = self._generation_stats(generation_id)
-        if provider_name != profile.provider_name:
-            raise LlmProviderMismatchError(
-                f"servi par « {provider_name} » au lieu de « {profile.provider_name} » ({profile.name})"
+        # Jamais d'acceptation silencieuse : sans `provider`, le point d'accès est improuvable.
+        # La valeur invalide n'est pas recopiée dans le message (elle vient du corps).
+        if not (isinstance(served, str) and served.strip()):
+            raise LlmUnavailableError(
+                f"fournisseur servi improuvable pour {profile.name} : champ provider absent ou invalide dans la réponse"
             )
-        return LlmCall(content=content, generation_id=generation_id, provider_name=provider_name,
-                       cost_usd=cost, prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
-
-    def _cost_if_available(self, generation_id: str) -> float | None:
-        """Coût d'une réponse inexploitable mais facturée ; `None` s'il reste inconnu."""
-        try:
-            return self._generation_stats(generation_id)[1]
-        except LlmUnavailableError:
-            return None
-
-    def _generation_stats(self, generation_id: str) -> tuple[str, float]:
-        """Fournisseur réellement servi et coût réel. Sans eux, la réponse est
-        rejetée : on ne peut pas prouver qu'elle respecte le point d'accès figé.
-
-        Les statistiques arrivent avec un léger retard : une réponse en erreur, une
-        coupure réseau, un fournisseur absent ou vide, un coût absent, négatif ou non
-        fini signifient « pas encore prêtes », et on réessaie avec une attente croissante."""
-        for attempt in range(self._attempts):
-            try:
-                response = self._send("GET", "/generation", params={"id": generation_id})
-            except LlmUnavailableError:
-                response = None
-            if response is not None and response.status_code == 200:
-                try:
-                    stats = response.json()["data"]
-                    provider_name, cost = stats["provider_name"], stats["total_cost"]
-                except (ValueError, KeyError, TypeError, IndexError):
-                    provider_name, cost = None, None
-                if isinstance(provider_name, str) and provider_name.strip() and _is_cost(cost):
-                    return provider_name, float(cost)
-            if attempt + 1 < self._attempts:
-                self._sleep(_generation_delay(attempt))
-        raise LlmUnavailableError(
-            f"fournisseur de la génération {generation_id} invérifiable : statistiques indisponibles"
-        )
+        if served != profile.provider_name:
+            raise LlmProviderMismatchError(
+                f"servi par « {served} » au lieu de « {profile.provider_name} » ({profile.name})"
+            )
+        if not _is_cost(cost):
+            raise LlmUnavailableError(f"coût réel absent ou invalide dans la réponse pour {profile.name}")
+        return LlmCall(content=content, generation_id=generation_id, provider_name=served,
+                       cost_usd=float(cost), prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
