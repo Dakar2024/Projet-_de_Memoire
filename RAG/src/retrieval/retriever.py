@@ -163,8 +163,17 @@ def search(question: str, *, settings: SearchSettings, analyze: Callable[[str], 
 
 def _resorted(sql: str) -> str:
     """`relaxed_order` peut rendre des lignes légèrement désordonnées : on retrie le
-    résultat (colonne `similarity`, en dernier, donc `_documents` reste valable)."""
-    return f"WITH r AS MATERIALIZED ({sql}) SELECT * FROM r ORDER BY similarity DESC"
+    résultat (colonne `similarity`, en dernier, donc `_documents` reste valable). Les
+    égalités sont départagées par `doc_id` : une mesure rejouée garde le même ordre."""
+    return f"WITH r AS MATERIALIZED ({sql}) SELECT * FROM r ORDER BY similarity DESC, doc_id"
+
+
+def _inner_order(exact: bool) -> str:
+    """Tri de la requête interne. En recherche exacte, `doc_id` départage les égalités
+    de distance (sinon le choix des `limit` premiers dépend du plan). En recherche
+    approchée, un second critère empêcherait PostgreSQL d'utiliser l'index HNSW : les
+    égalités à la frontière de `limit` y restent non déterministes (limite connue)."""
+    return "ORDER BY embedding <=> %(q)s, doc_id" if exact else "ORDER BY embedding <=> %(q)s"
 
 
 def check_index_models(models: Sequence[str], expected: str) -> None:
@@ -253,7 +262,7 @@ class PgSearchStore:
             WHERE panel = ANY(%(panels)s::text[]) AND doc_type = 'variant'
               AND (rs_dbsnp = ANY(%(rs)s::bigint[]) OR hgvs_c = ANY(%(c)s::text[]) OR hgvs_p = ANY(%(p)s::text[]))
               AND (cardinality(%(genes)s::text[]) = 0 OR gene_symbol = ANY(%(genes)s::text[]))
-            ORDER BY embedding <=> %(q)s LIMIT %(limit)s"""
+            {_inner_order(True)} LIMIT %(limit)s"""
         params = {"q": query_vector.astype(np.float32), "panels": list(PANELS), "rs": list(rs),
                   "c": list(hgvs_c), "p": list(hgvs_p), "genes": list(genes), "limit": limit}
         return self._documents(self._rows(_resorted(sql), params, exact=True, limit=limit), "exact")
@@ -266,7 +275,7 @@ class PgSearchStore:
               AND (cardinality(%(genes)s::text[]) = 0 OR gene_symbol = ANY(%(genes)s::text[]))
               AND (cardinality(%(sig)s::text[]) = 0 OR clinical_significance = ANY(%(sig)s::text[]))
               AND NOT (doc_id = ANY(%(exclude)s::text[]))
-            ORDER BY embedding <=> %(q)s LIMIT %(limit)s"""
+            {_inner_order(exact)} LIMIT %(limit)s"""
         params = {"q": query_vector.astype(np.float32), "panels": list(PANELS), "genes": list(genes),
                   "sig": list(significances), "exclude": list(exclude_doc_ids), "limit": limit}
         stage = "filtered" if (genes or significances) else "similarity"

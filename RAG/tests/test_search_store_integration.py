@@ -103,3 +103,16 @@ def test_exact_search_stays_stable_after_many_executions(store):
 
 def test_index_has_a_single_model(store):
     assert len(store.index_models()) == 1
+
+
+def test_exact_results_are_ordered_by_similarity_then_doc_id(store):
+    """Égalités de distance départagées par doc_id, en correspondance exacte comme en
+    recherche filtrée exacte."""
+    q = _vector()
+    exact = store.exact_matches(rs=[334], hgvs_c=[], hgvs_p=[], genes=[], query_vector=q, limit=10)
+    filtered = store.similar(query_vector=q, genes=["BRCA2"], significances=["Pathogenic"], exclude_doc_ids=[],
+                             limit=50, exact=True)
+
+    for found in (exact, filtered):
+        assert found
+        assert found == sorted(found, key=lambda d: (-d.similarity, d.doc_id))

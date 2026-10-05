@@ -203,3 +203,41 @@ def test_check_index_models():
     for bad in ((), ("fp", "autre"), ("autre",)):
         with pytest.raises(RagConfigurationError):
             check_index_models(bad, "fp")
+
+
+def _captured_sql(monkeypatch):
+    store, captured = PgSearchStore("postgresql://x"), []
+
+    def fake_rows(sql, params, *, exact, limit):
+        captured.append((" ".join(sql.split()), exact))
+        return []
+
+    monkeypatch.setattr(store, "_rows", fake_rows)
+    return store, captured
+
+
+def test_ties_are_broken_by_doc_id_in_exact_searches(monkeypatch):
+    """Deux documents à égale distance doivent toujours sortir dans le même ordre : sinon
+    une mesure rejouée ne donne pas le même score."""
+    store, captured = _captured_sql(monkeypatch)
+    q = np.zeros(768, dtype=np.float32)
+
+    store.exact_matches(rs=[1], hgvs_c=[], hgvs_p=[], genes=[], query_vector=q, limit=10)
+    store.similar(query_vector=q, genes=["BRCA1"], significances=[], exclude_doc_ids=[], limit=10, exact=True)
+
+    for sql, exact in captured:
+        assert exact
+        assert "ORDER BY embedding <=> %(q)s, doc_id LIMIT" in sql
+        assert sql.endswith("ORDER BY similarity DESC, doc_id")
+
+
+def test_the_approximate_search_keeps_a_single_order_key_for_the_hnsw_index(monkeypatch):
+    store, captured = _captured_sql(monkeypatch)
+
+    store.similar(query_vector=np.zeros(768, dtype=np.float32), genes=[], significances=[], exclude_doc_ids=[],
+                  limit=10, exact=False)
+
+    (sql, exact), = captured
+    assert not exact
+    assert "ORDER BY embedding <=> %(q)s LIMIT" in sql
+    assert sql.endswith("ORDER BY similarity DESC, doc_id")
