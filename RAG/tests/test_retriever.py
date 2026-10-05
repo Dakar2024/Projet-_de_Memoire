@@ -241,3 +241,29 @@ def test_the_approximate_search_keeps_a_single_order_key_for_the_hnsw_index(monk
     assert not exact
     assert "ORDER BY embedding <=> %(q)s LIMIT" in sql
     assert sql.endswith("ORDER BY similarity DESC, doc_id")
+
+
+def test_doc_ids_sha256_sorts_in_python_before_hashing():
+    import hashlib
+
+    from RAG.src.retrieval.retriever import doc_ids_sha256
+
+    expected = hashlib.sha256("clinvar:1\nclinvar:2\ngene:BRCA1".encode()).hexdigest()
+    assert doc_ids_sha256(["gene:BRCA1", "clinvar:2", "clinvar:1"]) == expected
+    assert doc_ids_sha256(iter(["clinvar:2", "gene:BRCA1", "clinvar:1"])) == expected
+
+
+def test_store_hashes_the_doc_ids_of_the_measured_panels_only(monkeypatch):
+    from RAG.src.retrieval.retriever import PANELS, doc_ids_sha256
+
+    store, captured = PgSearchStore("postgresql://x"), []
+
+    def fake_timed(sql, params):
+        captured.append((sql, params))
+        return [("clinvar:2",), ("clinvar:1",)]
+
+    monkeypatch.setattr(store, "_timed", fake_timed)
+
+    assert store.doc_ids_sha256() == doc_ids_sha256(["clinvar:1", "clinvar:2"])
+    (sql, params), = captured
+    assert "panel = ANY(%s::text[])" in sql and params == (list(PANELS),)

@@ -134,3 +134,17 @@ def test_check_complete_field():
     check_complete_field({"a", "b"}, {"a", "b"})
     with pytest.raises(SystemExit, match="b"):
         check_complete_field({"a"}, {"a", "b"})
+
+
+def test_check_index_matches_truth():
+    from RAG.experiments.mesure_recherche import check_index_matches_truth
+
+    check_index_matches_truth({"a__full": _manifest(index_doc_ids_sha256="h"),
+                               "a__filters": _manifest(index_doc_ids_sha256="h")}, "h")
+    with pytest.raises(SystemExit, match="entre les mesures"):
+        check_index_matches_truth({"a__full": _manifest(index_doc_ids_sha256="h"),
+                                   "a__filters": _manifest(index_doc_ids_sha256="g")}, "h")
+    with pytest.raises(SystemExit, match="vérité terrain"):
+        check_index_matches_truth({"a__full": _manifest(index_doc_ids_sha256="g")}, "h")
+    with pytest.raises(SystemExit, match="a__full"):
+        check_index_matches_truth({"a__full": _manifest()}, "h")

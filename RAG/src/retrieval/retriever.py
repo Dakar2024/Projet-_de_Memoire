@@ -8,8 +8,9 @@ l'index (empreinte, puis canari).
 
 from __future__ import annotations
 
+import hashlib
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Protocol
@@ -176,6 +177,13 @@ def _inner_order(exact: bool) -> str:
     return "ORDER BY embedding <=> %(q)s, doc_id" if exact else "ORDER BY embedding <=> %(q)s"
 
 
+def doc_ids_sha256(doc_ids: Iterable[str]) -> str:
+    """Empreinte d'un ensemble de documents : `doc_id` triés en Python (pas par la base ni
+    par Polars, dont l'ordre des chaînes pourrait différer), joints par des retours à la
+    ligne. Calculée de la même façon sur le Gold (vérité terrain) et sur l'index (mesure)."""
+    return hashlib.sha256("\n".join(sorted(doc_ids)).encode("utf-8")).hexdigest()
+
+
 def check_index_models(models: Sequence[str], expected: str) -> None:
     """L'index doit avoir été construit par un seul modèle : celui que sert le service."""
     if tuple(models) != (expected,):
@@ -255,6 +263,11 @@ class PgSearchStore:
                            "WHERE panel = ANY(%s::text[])", (list(PANELS),))
         return tuple(sorted(row[0] for row in rows))
 
+    def doc_ids_sha256(self) -> str:
+        """Empreinte des documents indexés pour les panels mesurés (panel de test exclu)."""
+        rows = self._timed("SELECT doc_id FROM rag_documents WHERE panel = ANY(%s::text[])", (list(PANELS),))
+        return doc_ids_sha256(row[0] for row in rows)
+
     def exact_matches(self, *, rs, hgvs_c, hgvs_p, genes, query_vector, limit):
         sql = f"""
             SELECT {', '.join(_COLUMNS)}, 1 - (embedding <=> %(q)s) AS similarity
@@ -313,6 +326,10 @@ class Searcher:
 
     def __exit__(self, *exc_info) -> None:
         self._store.__exit__(*exc_info)
+
+    def index_doc_ids_sha256(self) -> str:
+        """Empreinte des documents de l'index, à comparer à celle de la vérité terrain."""
+        return self._store.doc_ids_sha256()
 
     def search(self, question: str, mode: str = "full", force_exact: bool | None = None) -> SearchResult:
         profile = self.config.analysis_profile

@@ -140,6 +140,19 @@ def check_runs_consistency(manifests: dict[str, dict]) -> None:
             raise SystemExit(f"{name} : modèle ou fournisseur différent des autres mesures du profil {m['profile']}")
 
 
+def check_index_matches_truth(manifests: dict[str, dict], truth_sha: str) -> None:
+    """Les mesures doivent porter sur le corpus de la vérité terrain : même ensemble de
+    `doc_id` dans l'index (au moment de chaque mesure) que dans le Gold lu par verite-terrain."""
+    missing = sorted(name for name, m in manifests.items() if not m.get("index_doc_ids_sha256"))
+    if missing:
+        raise SystemExit(f"{missing} : empreinte de l'index absente du manifeste, remesurer")
+    if len({m["index_doc_ids_sha256"] for m in manifests.values()}) > 1:
+        raise SystemExit("index différent entre les mesures (réindexation entre deux séries) : remesurer")
+    if next(iter(manifests.values()))["index_doc_ids_sha256"] != truth_sha:
+        raise SystemExit("l'index mesuré ne contient pas les documents de la vérité terrain : "
+                         "relancer verite-terrain sur le Gold indexé, ou réindexer")
+
+
 def check_complete_field(full_profiles: set[str], configured: set[str]) -> None:
     missing = sorted(configured - full_profiles)
     if missing:
@@ -151,6 +164,7 @@ def check_complete_field(full_profiles: set[str], configured: set[str]) -> None:
 def cmd_verite_terrain(args) -> None:
     from RAG.experiments.comparaison_embeddings import _all_documents, _diseases_by_doc, _relevance
     from RAG.src.retrieval.identifiers import extract_identifiers
+    from RAG.src.retrieval.retriever import doc_ids_sha256
 
     questions = _load_questions()
     documents, diseases = _all_documents(), _diseases_by_doc()
@@ -174,7 +188,7 @@ def cmd_verite_terrain(args) -> None:
             relevant[q["id"]] = []
     OUT.mkdir(parents=True, exist_ok=True)
     manifest = {"questions_sha256": _sha256(QUESTIONS_PATH),
-                "gold_doc_ids_sha256": hashlib.sha256("\n".join(doc_ids).encode()).hexdigest()}
+                "gold_doc_ids_sha256": doc_ids_sha256(doc_ids)}
     (OUT / "verite_terrain.json").write_text(json.dumps({"manifest": manifest, "relevant": relevant}),
                                              encoding="utf-8")
     print(f"vérité terrain : {len(relevant)} questions")
@@ -187,6 +201,7 @@ def cmd_mesurer(args) -> None:
     results, failures = {}, []
     with Searcher(profile_name=args.profile, cache_path=OUT / "cache_analyses.json") as searcher:
         profile = searcher.config.analysis_profile
+        index_sha = searcher.index_doc_ids_sha256()
         for q in questions:
             r = searcher.search(q["question"], mode=args.mode, force_exact=True if args.exact else None).as_dict()
             if not r["trace"]["analysis"]["available"]:
@@ -194,6 +209,8 @@ def cmd_mesurer(args) -> None:
             results[q["id"]] = {"doc_ids": [d["doc_id"] for d in r["documents"]], "flags": r["trace"]["flags"],
                                 "identifiers": r["trace"]["identifiers"], "analysis": r["trace"]["analysis"],
                                 "timings_ms": r["trace"]["timings_ms"]}
+        if searcher.index_doc_ids_sha256() != index_sha:
+            raise SystemExit("index modifié pendant la mesure (indexation concurrente) : remesurer")
     if failures:
         raise SystemExit("analyses indisponibles, mesure non enregistrée (relancer ; le cache garde les "
                          "réussites) :\n" + "\n".join(failures))
@@ -203,7 +220,8 @@ def cmd_mesurer(args) -> None:
                 "provider_tag": profile.provider_tag, "prompt_version": PROMPT_VERSION,
                 "prompt_sha256": PROMPT_SHA, "mode": args.mode,
                 "exact": bool(args.exact), "k": searcher.config.k,
-                "embedding_fingerprint": load_config().embedding.fingerprint}
+                "embedding_fingerprint": load_config().embedding.fingerprint,
+                "index_doc_ids_sha256": index_sha}
     name = f"{profile.name}__{args.mode}{'__exact' if args.exact else ''}.json"
     (OUT / "runs").mkdir(parents=True, exist_ok=True)
     (OUT / "runs" / name).write_text(json.dumps({"manifest": manifest, "results": results}, ensure_ascii=False),
@@ -235,6 +253,8 @@ def cmd_evaluer(args) -> None:
     if not loaded:
         raise SystemExit("aucune mesure dans data/experiments/e2a/runs")
     check_runs_consistency({n: r["manifest"] for n, r in loaded.items()})
+    check_index_matches_truth({n: r["manifest"] for n, r in loaded.items()},
+                              truth["manifest"]["gold_doc_ids_sha256"])
     print(f"Vérité terrain : Gold {truth['manifest']['gold_doc_ids_sha256'][:12]}, "
           f"questions {questions_sha[:12]}\n")
 
