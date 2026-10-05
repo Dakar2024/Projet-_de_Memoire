@@ -85,3 +85,21 @@ def test_test_rows_never_surface(store):
             assert "clinvar:test-e2a" not in {d.doc_id for d in found}
         finally:
             writer.delete("test_integration", ["clinvar:test-e2a"])
+
+
+def test_exact_search_stays_stable_after_many_executions(store):
+    """Au-delà de 5 exécutions, un plan préparé ne doit pas changer le résultat exact."""
+    q = _vector()
+    kwargs = dict(query_vector=q, genes=["BRCA2"], significances=["Pathogenic"], exclude_doc_ids=[], limit=10)
+    reference = None
+    for _ in range(12):
+        found = store.similar(exact=True, **kwargs)
+        ids = [d.doc_id for d in found]
+        assert all(d.gene_symbol == "BRCA2" and d.clinical_significance == "Pathogenic" for d in found)
+        assert reference is None or ids == reference
+        reference = ids
+        store.similar(exact=False, **kwargs)
+
+
+def test_index_has_a_single_model(store):
+    assert len(store.index_models()) == 1
