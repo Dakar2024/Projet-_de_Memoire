@@ -59,3 +59,13 @@ class LlmUnavailableError(Exception):
 
 class LlmProviderMismatchError(Exception):
     """La requête a été servie par un autre fournisseur que celui qui était figé."""
+
+
+class LlmTruncatedError(LlmPermanentError):
+    """Réponse coupée par le plafond de jetons, ou vide : relancer donnerait la même
+    coupure, et la réponse a pourtant été facturée. `cost_usd` porte ce coût quand
+    OpenRouter a pu le donner, `None` sinon."""
+
+    def __init__(self, message: str, *, cost_usd: float | None = None) -> None:
+        super().__init__(message)
+        self.cost_usd = cost_usd
