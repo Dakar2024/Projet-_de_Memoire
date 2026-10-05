@@ -20,18 +20,18 @@ _PANEL = {gene.upper(): gene for gene in ALL_GENES}
 _AA3 = {
     "A": "Ala", "R": "Arg", "N": "Asn", "D": "Asp", "C": "Cys", "Q": "Gln", "E": "Glu",
     "G": "Gly", "H": "His", "I": "Ile", "L": "Leu", "K": "Lys", "M": "Met", "F": "Phe",
-    "P": "Pro", "S": "Ser", "T": "Thr", "W": "Trp", "Y": "Tyr", "V": "Val", "*": "Ter",
+    "P": "Pro", "S": "Ser", "T": "Thr", "W": "Trp", "Y": "Tyr", "V": "Val", "*": "Ter", "X": "Ter",
 }
 
-_END = r"(?=[\s,;:.?!)]|$)"
+_END = r"(?=[\s,;:.?!)/]|$)"
 _RS = re.compile(r"\brs\s?(\d{1,10})\b", re.IGNORECASE)
 _HGVS_C = re.compile(
     r"(?:N[MRG]_\d+(?:\.\d+)?(?:\([A-Za-z0-9-]+\))?:)?"
     r"(c\.[0-9_+\-*]+(?:[ACGT]>[ACGT]|delins[ACGT]+|del[ACGT]*|dup[ACGT]*|ins[ACGT]+))" + _END,
     re.IGNORECASE,
 )
-_HGVS_P3 = re.compile(r"\bp\.\(?([A-Z][a-z]{2}\d+(?:[A-Z][a-z]{2}\w*|fs\w*|=|\*))\)?" + _END)
-_HGVS_P1 = re.compile(r"\bp\.\(?([ARNDCQEGHILKMFPSTWYV])(\d+)([ARNDCQEGHILKMFPSTWYV*])\)?" + _END)
+_HGVS_P3 = re.compile(r"\bp\.\(?([A-Z][a-z]{2}\d+(?:[A-Z][a-z]{2}(?:fs[\w*]*|\w*)|fs[\w*]*|=|\*|X))\)?" + _END)
+_HGVS_P1 = re.compile(r"\bp\.\(?([ARNDCQEGHILKMFPSTWYV])(\d+)([ARNDCQEGHILKMFPSTWYV*X])\)?" + _END)
 _TOKEN = re.compile(r"\b[A-Za-z][A-Za-z0-9]{1,9}\b")
 _AFTER_GENE_WORD = re.compile(r"\b[gG][eèEÈ]nes?\s+([A-Za-z][A-Za-z0-9]{1,9})\b")
 _GENE_LIKE = re.compile(r"^[A-Z][A-Z0-9]{1,9}$")
@@ -77,7 +77,8 @@ def _normalize_c(raw: str) -> str:
 def _normalize_p3(raw: str) -> str:
     # ClinVar stocke un décalage du cadre de lecture tronqué après « fs », sans l'acide
     # aminé substitué : p.Glu23ValfsTer17 devient p.Glu23fs.
-    return "p." + re.sub(r"(?:[A-Z][a-z]{2})?fs\w*$", "fs", raw)
+    raw = re.sub(r"(?:[A-Z][a-z]{2})?fs[\w*]*$", "fs", raw)
+    return "p." + re.sub(r"(\d+)(?:\*|X)$", r"\1Ter", raw)
 
 
 def extract_identifiers(question: str) -> Identifiers:
