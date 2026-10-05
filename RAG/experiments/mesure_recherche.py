@@ -2,7 +2,8 @@
 
 Trois étapes, chacune avec son lieu d'exécution :
   verite-terrain  sur l'hôte (lit le Silver dans MinIO) : documents pertinents par question
-  mesurer         dans rag-search : lance la recherche pour un profil et un mode
+  mesurer         dans rag-search : lance la recherche (exacte) pour un profil et un mode ;
+                  `--approx` rejoue la recherche par l'index HNSW (série `__approx`, diagnostic)
   evaluer         n'importe où : scores, critère d'acceptation, apport des ingrédients,
                   choix du modèle selon la règle fixée d'avance
 
@@ -196,8 +197,8 @@ def check_run_manifest(name: str, manifest: dict, *, questions_sha: str, prompt_
         raise SystemExit(f"{name} : prompt modifié depuis la mesure (empreinte différente), remesurer")
     if manifest["k"] != k:
         raise SystemExit(f"{name} : k = {manifest['k']} au lieu de {k}")
-    if (manifest["profile"], manifest["mode"], bool(manifest["exact"])) != (profile, mode, suffix == "exact"):
-        raise SystemExit(f"{name} : le manifeste (profil, mode, exact) ne correspond pas au nom du fichier")
+    if (manifest["profile"], manifest["mode"], bool(manifest["approx"])) != (profile, mode, suffix == "approx"):
+        raise SystemExit(f"{name} : le manifeste (profil, mode, approx) ne correspond pas au nom du fichier")
 
 
 def check_runs_consistency(manifests: dict[str, dict]) -> None:
@@ -289,7 +290,7 @@ def cmd_mesurer(args) -> None:
             index_sha = searcher.index_doc_ids_sha256()
             for q in questions:
                 r = searcher.search(q["question"], mode=args.mode,
-                                    force_exact=True if args.exact else None).as_dict()
+                                    force_exact=False if args.approx else None).as_dict()
                 analysis = r["trace"]["analysis"]
                 check_analysis_failure(q["id"], analysis, profile.name)
                 if not analysis["available"]:
@@ -310,11 +311,11 @@ def cmd_mesurer(args) -> None:
     manifest = {"questions_sha256": _sha256(QUESTIONS_PATH), "profile": profile.name, "model": profile.model,
                 "provider_tag": profile.provider_tag, "prompt_version": PROMPT_VERSION,
                 "prompt_sha256": PROMPT_SHA, "mode": args.mode,
-                "exact": bool(args.exact), "k": searcher.config.k,
+                "approx": bool(args.approx), "k": searcher.config.k,
                 "embedding_fingerprint": load_config().embedding.fingerprint,
                 "config_sha256": config_sha256(yaml.safe_load(DEFAULT_CONFIG_PATH.read_text(encoding="utf-8"))),
                 "index_doc_ids_sha256": index_sha}
-    name = f"{profile.name}__{args.mode}{'__exact' if args.exact else ''}.json"
+    name = f"{profile.name}__{args.mode}{'__approx' if args.approx else ''}.json"
     (out / "runs").mkdir(parents=True, exist_ok=True)
     (out / "runs" / name).write_text(json.dumps({"manifest": manifest, "results": results}, ensure_ascii=False),
                                      encoding="utf-8")
@@ -395,12 +396,14 @@ def _print_ablation(profile: str, scored: dict, loaded: dict, questions: list[di
     print("\nV0 = questions anglaises, recherche exacte sur tout le corpus, présélection filter_gene en "
           "famille B (protocole E1) ; l'écart V0→V1 n'isole donc pas le seul effet du français et de l'analyse.")
 
-    exact_run = loaded.get(f"{profile}__similarity__exact")
-    approx_run = loaded.get(f"{profile}__similarity")
+    exact_run = loaded.get(f"{profile}__similarity")
+    approx_run = loaded.get(f"{profile}__similarity__approx")
     if exact_run and approx_run:
-        overlaps = [len(set(exact_run["results"][q["id"]]["doc_ids"]) & set(approx_run["results"][q["id"]]["doc_ids"]))
-                    / max(1, len(exact_run["results"][q["id"]]["doc_ids"])) for q in questions]
-        print(f"\nDiagnostic : recouvrement moyen HNSW / exacte sans filtre = {np.mean(overlaps):.3f}")
+        recalls = [len(set(exact_run["results"][q["id"]]["doc_ids"]) & set(approx_run["results"][q["id"]]["doc_ids"]))
+                   / len(exact_run["results"][q["id"]]["doc_ids"]) for q in questions
+                   if exact_run["results"][q["id"]]["doc_ids"]]
+        print(f"\nDiagnostic : rappel moyen de l'index HNSW (ef_search 40) par rapport à la recherche "
+              f"exacte = {np.mean(recalls):.3f}")
 
 
 def cmd_evaluer(args) -> None:
@@ -476,7 +479,8 @@ def main(argv: list[str] | None = None) -> None:
     p = sub.add_parser("mesurer")
     p.add_argument("--profile", required=True)
     p.add_argument("--mode", choices=("similarity", "filters", "full"), required=True)
-    p.add_argument("--exact", action="store_true", help="force la recherche exacte (diagnostic HNSW)")
+    p.add_argument("--approx", action="store_true",
+                   help="force la recherche approchée par l'index HNSW (diagnostic, la recherche est exacte par défaut)")
     p.set_defaults(func=cmd_mesurer)
     p = sub.add_parser("evaluer")
     p.add_argument("--essai", action="store_true",

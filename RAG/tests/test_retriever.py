@@ -108,12 +108,33 @@ def test_gene_and_significance_filters_use_exact_search():
     assert similar_call["exact"] is True and result.trace.exact_search is True
 
 
-def test_without_filters_the_approximate_index_is_used():
+def test_search_is_exact_by_default_without_any_filter():
     store = FakeStore(similar=[doc(f"clinvar:{i}") for i in range(10)])
 
-    _search("maladies du sang", store)
+    result = _search("maladies du sang", store)
 
-    assert next(kwargs for kind, kwargs in store.calls if kind == "similar")["exact"] is False
+    assert next(kwargs for kind, kwargs in store.calls if kind == "similar")["exact"] is True
+    assert result.trace.exact_search is True
+
+
+@pytest.mark.parametrize("mode", ["similarity", "filters", "full"])
+def test_search_is_exact_by_default_in_every_mode(mode):
+    store = FakeStore(similar=[doc(f"clinvar:{i}") for i in range(10)])
+
+    _search("variants pathogènes de BRCA1", store, analysis("pathogenic"), mode=mode)
+
+    assert all(kwargs["exact"] is True for kind, kwargs in store.calls if kind == "similar")
+
+
+def test_search_stays_exact_after_the_significance_relaxation():
+    store = FakeStore(similar=[doc("clinvar:1")], similar_unfiltered=[doc(f"clinvar:{i}") for i in range(10)])
+
+    result = _search("variants pathogènes de BRCA1", store, analysis("pathogenic"))
+
+    similar_calls = [kwargs for kind, kwargs in store.calls if kind == "similar"]
+    assert "significance_relaxed" in result.trace.flags
+    assert len(similar_calls) == 2 and all(c["exact"] is True for c in similar_calls)
+    assert result.trace.exact_search is True
 
 
 def test_similarity_mode_uses_neither_filters_nor_exact_matches():
@@ -134,12 +155,14 @@ def test_filters_mode_filters_but_skips_exact_matches():
     assert store.calls[0][1]["genes"] == ("BRCA1",)
 
 
-def test_force_exact_overrides_the_choice():
-    store = FakeStore(similar=[doc(f"clinvar:{i}") for i in range(10)])
+def test_force_exact_false_is_honoured_for_the_diagnostic():
+    store = FakeStore(similar=[doc("clinvar:1")], similar_unfiltered=[doc(f"clinvar:{i}") for i in range(10)])
 
-    _search("maladies du sang", store, force_exact=True)
+    result = _search("variants pathogènes de BRCA1", store, analysis("pathogenic"), force_exact=False)
 
-    assert next(kwargs for kind, kwargs in store.calls if kind == "similar")["exact"] is True
+    similar_calls = [kwargs for kind, kwargs in store.calls if kind == "similar"]
+    assert len(similar_calls) == 2 and all(c["exact"] is False for c in similar_calls)
+    assert result.trace.exact_search is False
 
 
 def test_out_of_panel_gene_and_unavailable_analysis_are_flagged():
