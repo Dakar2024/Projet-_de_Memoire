@@ -67,6 +67,30 @@ class ServiceSettings:
     served_model_dir: Path
 
 
+@dataclass(frozen=True)
+class LlmProfile:
+    """Un modèle figé sur un point d'accès précis d'OpenRouter : le tag désigne le
+    point d'accès dans la requête, le nom est celui que renvoie OpenRouter pour
+    dire qui a réellement servi la requête."""
+
+    name: str
+    model: str
+    provider_tag: str
+    provider_name: str
+    quantization: str | None
+
+
+@dataclass(frozen=True)
+class SearchConfig:
+    k: int
+    min_filtered: int
+    max_question_chars: int
+    analysis_profile: LlmProfile
+    profiles: dict[str, LlmProfile]
+    llm_timeout_s: float
+    llm_max_tokens: int
+
+
 def load_config(path: Path = DEFAULT_CONFIG_PATH) -> RagConfig:
     """Lit et valide `config.yaml`. Toute anomalie est une `RagConfigurationError` :
     une configuration fausse ne se corrige pas en relançant."""
@@ -151,3 +175,57 @@ def check_served_model(config_fingerprint: str, served: str) -> None:
             f"config.yaml attend « {config_fingerprint} » : aligner .env et config.yaml "
             "(RAG/README.md, « Changer de modèle »)"
         )
+
+
+def _profile(name: str, raw: Mapping) -> LlmProfile:
+    fields = {key: raw.get(key) for key in ("model", "provider_tag", "provider_name")}
+    if not all(isinstance(value, str) and value.strip() for value in fields.values()):
+        raise RagConfigurationError(f"profil LLM « {name} » incomplet : model, provider_tag, provider_name")
+    quantization = raw.get("quantization")
+    if quantization is not None and not (isinstance(quantization, str) and quantization.strip()):
+        raise RagConfigurationError(f"profil LLM « {name} » : quantization invalide")
+    return LlmProfile(name=name, quantization=quantization, **{k: v.strip() for k, v in fields.items()})
+
+
+def load_search_config(path: Path = DEFAULT_CONFIG_PATH, profile: str | None = None) -> SearchConfig:
+    """Réglages de la recherche (E2a). `profile` remplace le profil d'analyse par
+    défaut : la mesure compare ainsi plusieurs modèles sans toucher au fichier."""
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        search, llm = raw["search"], raw["llm"]
+        profiles = {name: _profile(name, value) for name, value in llm["profiles"].items()}
+        k = int(search["k"])
+        min_filtered = int(search["min_filtered"])
+        max_chars = int(search["max_question_chars"])
+        chosen = profile if profile is not None else str(llm["analysis_profile"])
+        timeout = float(llm["request_timeout_s"])
+        max_tokens = int(llm["max_tokens"])
+    except (OSError, KeyError, TypeError, ValueError, AttributeError, yaml.YAMLError) as exc:
+        raise RagConfigurationError(f"{path} : sections search/llm illisibles ou incomplètes : {exc!r}") from exc
+    if not profiles:
+        raise RagConfigurationError(f"{path} : aucun profil LLM")
+    if chosen not in profiles:
+        raise RagConfigurationError(f"{path} : profil d'analyse « {chosen} » absent de llm.profiles")
+    if not 1 <= k <= 50:
+        raise RagConfigurationError(f"{path} : search.k doit être entre 1 et 50")
+    if not 1 <= min_filtered <= k:
+        raise RagConfigurationError(f"{path} : search.min_filtered doit être entre 1 et k")
+    if not 10 <= max_chars <= 10_000:
+        raise RagConfigurationError(f"{path} : search.max_question_chars hors de [10, 10000]")
+    if timeout <= 0 or max_tokens < 256:
+        raise RagConfigurationError(f"{path} : llm.request_timeout_s > 0 et llm.max_tokens ≥ 256 requis")
+    return SearchConfig(
+        k=k, min_filtered=min_filtered, max_question_chars=max_chars,
+        analysis_profile=profiles[chosen], profiles=profiles,
+        llm_timeout_s=timeout, llm_max_tokens=max_tokens,
+    )
+
+
+def load_openrouter_key(env: Mapping[str, str] | None = None) -> str:
+    """Clé OpenRouter, lue dans l'environnement. Le message d'erreur nomme la variable,
+    jamais sa valeur."""
+    env = os.environ if env is None else env
+    key = (env.get("OPENROUTER_API_KEY") or "").strip()
+    if not key:
+        raise RagConfigurationError("OPENROUTER_API_KEY absente ou vide (.env)")
+    return key
