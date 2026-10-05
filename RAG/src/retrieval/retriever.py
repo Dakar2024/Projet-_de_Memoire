@@ -138,8 +138,13 @@ def search(question: str, *, settings: SearchSettings, analyze: Callable[[str], 
     start = clock()
     documents: list[RetrievedDocument] = []
     if mode == "full" and ids.has_variant_identifier:
-        documents = store.exact_matches(rs=ids.rs, hgvs_c=ids.hgvs_c, hgvs_p=ids.hgvs_p, genes=ids.genes,
-                                        query_vector=vector, limit=settings.k)
+        # Une position HGVS est relative à un gène : sans gène du panneau cité (seulement un gène
+        # hors panneau), elle correspondrait à d'autres gènes. On ne cherche alors que le `rs`.
+        hgvs_searchable = not (ids.out_of_panel and not ids.genes)
+        hgvs_c, hgvs_p = (ids.hgvs_c, ids.hgvs_p) if hgvs_searchable else ((), ())
+        if ids.rs or hgvs_c or hgvs_p:
+            documents = store.exact_matches(rs=ids.rs, hgvs_c=hgvs_c, hgvs_p=hgvs_p, genes=ids.genes,
+                                            query_vector=vector, limit=settings.k)
         if not documents:
             trace.flags.append("identifier_not_found")
 

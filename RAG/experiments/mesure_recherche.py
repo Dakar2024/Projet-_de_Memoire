@@ -92,9 +92,12 @@ def significance_accuracy(questions: list[dict], analyses: dict[str, dict]) -> f
 
 def exact_doc_ids(documents: pl.DataFrame, identifiers) -> set[str]:
     """Documents de variant que la correspondance exacte doit retrouver (même sémantique que
-    PgSearchStore.exact_matches : rs OU HGVS c. OU HGVS p., restreint aux gènes cités)."""
-    match = (pl.col("rs_dbsnp").is_in(list(identifiers.rs)) | pl.col("hgvs_c").is_in(list(identifiers.hgvs_c))
-             | pl.col("hgvs_p").is_in(list(identifiers.hgvs_p)))
+    PgSearchStore.exact_matches : rs OU HGVS c. OU HGVS p., restreint aux gènes cités ; si seul un
+    gène hors panneau est cité, les HGVS sont ignorés et seul le rs compte)."""
+    hgvs_searchable = not (identifiers.out_of_panel and not identifiers.genes)
+    hgvs_c, hgvs_p = (identifiers.hgvs_c, identifiers.hgvs_p) if hgvs_searchable else ((), ())
+    match = (pl.col("rs_dbsnp").is_in(list(identifiers.rs)) | pl.col("hgvs_c").is_in(list(hgvs_c))
+             | pl.col("hgvs_p").is_in(list(hgvs_p)))
     selected = documents.filter((pl.col("doc_type") == "variant") & match)
     if identifiers.genes:
         selected = selected.filter(pl.col("gene_symbol").is_in(list(identifiers.genes)))
