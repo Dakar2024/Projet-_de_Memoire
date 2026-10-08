@@ -3,6 +3,24 @@
 name: genomique
 
 #----------------------------------
+# Variables du RAG pour la tâche index_rag_documents : réservées au scheduler, seul
+# service Airflow qui exécute des tâches (LocalExecutor). Compte rag_indexer, sans
+# droit sur le schéma.
+#----------------------------------
+x-rag-indexer-env: &rag-indexer-env
+  RAG_EMBEDDINGS_URL: http://rag-embeddings:8080
+  RAG_EMBEDDINGS_API_KEY: ${RAG_EMBEDDINGS_API_KEY:?RAG_EMBEDDINGS_API_KEY obligatoire, à renseigner}
+  RAG_PG_HOST: rag-postgres
+  RAG_PG_PORT: "5432"
+  RAG_PG_DB: rag
+  RAG_PG_USER: rag_indexer
+  RAG_PG_PASSWORD: ${RAG_INDEXER_PASSWORD:?RAG_INDEXER_PASSWORD obligatoire, à renseigner}
+  # Même variable que celle qui choisit le dossier servi par rag-embeddings : l'indexation
+  # et le canari lisent l'empreinte dans son export.json et refusent de tourner si elle
+  # diffère de celle de RAG/config.yaml.
+  RAG_EMBEDDING_MODEL: ${RAG_EMBEDDING_MODEL:?RAG_EMBEDDING_MODEL obligatoire, à renseigner}
+
+#----------------------------------
 # Ancre : configuration commune à tous les services Airflow
 #----------------------------------
 x-airflow-common: &airflow-common
@@ -19,7 +37,7 @@ x-airflow-common: &airflow-common
   # postgres et mc ci-dessous) a besoin de CHOWN/FOWNER pour préparer ses fichiers.
   security_opt:
     - no-new-privileges:true
-  environment:
+  environment: &airflow-env
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
     # Plafond de tâches simultanées : avec LocalExecutor chaque tâche est un processus du
@@ -66,19 +84,7 @@ x-airflow-common: &airflow-common
     AIRFLOW__SMTP__SMTP_PASSWORD: ${SMTP_PASSWORD:-}
     AIRFLOW__SMTP__SMTP_MAIL_FROM: ${ALERT_FROM:-}
     ALERT_EMAIL: ${ALERT_EMAIL:-}
-    # RAG (sous-projet E1) : la tâche index_rag_documents écrit avec le compte
-    # rag_indexer, sans droit sur le schéma.
-    RAG_EMBEDDINGS_URL: http://rag-embeddings:8080
-    RAG_EMBEDDINGS_API_KEY: ${RAG_EMBEDDINGS_API_KEY:?RAG_EMBEDDINGS_API_KEY obligatoire, à renseigner}
-    RAG_PG_HOST: rag-postgres
-    RAG_PG_PORT: "5432"
-    RAG_PG_DB: rag
-    RAG_PG_USER: rag_indexer
-    RAG_PG_PASSWORD: ${RAG_INDEXER_PASSWORD:?RAG_INDEXER_PASSWORD obligatoire, à renseigner}
-    # Même variable que celle qui choisit le dossier servi par rag-embeddings : l'indexation
-    # et le canari lisent l'empreinte dans son export.json et refusent de tourner si elle
-    # diffère de celle de RAG/config.yaml.
-    RAG_EMBEDDING_MODEL: ${RAG_EMBEDDING_MODEL:?RAG_EMBEDDING_MODEL obligatoire, à renseigner}
+    # Variables du RAG (index_rag_documents) : ajoutées au seul scheduler (x-rag-indexer-env).
   volumes:
     # Code monté en lecture seule : une exécution arbitraire dans une tâche ne doit
     # pas pouvoir réécrire le dépôt de l'hôte. Python n'a pas besoin d'y écrire — il
@@ -86,14 +92,15 @@ x-airflow-common: &airflow-common
     - .:/opt/projet:ro
     # Seule exception au read-only : reçoit les téléchargements de sources.
     - ./data:/opt/projet/data
+    # Les modèles servis ne doivent pas pouvoir être réécrits par une tâche.
+    - ./data/models:/opt/projet/data/models:ro
     # Les journaux de tâches vivaient dans le conteneur : un `--build` les effaçait
     # tous, rendant impossible le diagnostic d'un incident passé.
     - airflow-logs:/opt/airflow/logs
   working_dir: /opt/projet
+  # rag-network est ajouté au seul scheduler (il exécute index_rag_documents).
   networks:
     - genomique-network
-    # Réseau interne du RAG : Airflow y joint rag-postgres et rag-embeddings.
-    - rag-network
   depends_on:
     postgres:
       condition: service_healthy
@@ -308,6 +315,14 @@ services:
     depends_on: *airflow-after-init
     command: scheduler
     restart: unless-stopped
+    # Seul service Airflow à recevoir les secrets du RAG et à joindre rag-network :
+    # avec LocalExecutor, c'est lui qui exécute index_rag_documents.
+    environment:
+      <<: [*airflow-env, *rag-indexer-env]
+    networks:
+      - genomique-network
+      # Réseau interne du RAG : la tâche y joint rag-postgres et rag-embeddings.
+      - rag-network
     healthcheck:
       test: ["CMD-SHELL", 'airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"']
       interval: 30s
@@ -414,12 +429,10 @@ services:
       PGPASSWORD: ${RAG_OWNER_PASSWORD:?RAG_OWNER_PASSWORD obligatoire, à renseigner}
       RAG_INDEXER_PASSWORD: ${RAG_INDEXER_PASSWORD:?RAG_INDEXER_PASSWORD obligatoire, à renseigner}
       RAG_READER_PASSWORD: ${RAG_READER_PASSWORD:?RAG_READER_PASSWORD obligatoire, à renseigner}
-    # Les mots de passe passent par des variables psql (-v) : ils ne sont jamais
-    # écrits dans le script SQL, et psql les cite lui-même (:'variable').
-    entrypoint:
-      - /bin/sh
-      - -c
-      - psql -q -v indexer_password="$$RAG_INDEXER_PASSWORD" -v reader_password="$$RAG_READER_PASSWORD" -f /sql/001_schema.sql
+    # Mots de passe lus par \getenv dans le script (pas d'argument -v visible dans la
+    # liste des processus) ; jamais écrits dans le script SQL, et psql les cite lui-même
+    # (:'variable').
+    entrypoint: ["psql", "-q", "-f", "/sql/001_schema.sql"]
     volumes:
       - ./RAG/sql:/sql:ro
     networks:
@@ -478,10 +491,15 @@ services:
       HF_HOME: /tmp/hf
     volumes:
       - ./data/models:/models
-    # Seul service du RAG à sortir sur Internet : il télécharge le modèle épinglé.
+    # Réseau dédié rag-export : il télécharge le modèle épinglé, sans voir MinIO ni la
+    # base d'Airflow (genomique-network).
     networks:
-      - genomique-network
+      - rag-export
     restart: "no"
+    deploy:
+      resources:
+        limits:
+          memory: 4g
 
 #----------------------------------
 # RAG — API locale (E2b) : questions en français, réponses vérifiées
@@ -567,7 +585,9 @@ services:
       context: .
       dockerfile: docker/rag-api/Dockerfile.test
     # Clé de l'API locale seulement (les tests appellent rag-api) ; aucune clé LLM :
-    # aucun test d'intégration n'appelle le LLM directement.
+    # aucun test d'intégration n'appelle le LLM directement. Les tests de base
+    # (RAG_TEST_PG_READER_CONNINFO) reçoivent le mot de passe par `-e RAG_READER_PASSWORD`
+    # au lancement et construisent la chaîne de connexion dans la commande (RAG/README.md).
     environment:
       <<: *rag-app-env
       RAG_API_KEY: ${RAG_API_KEY:-}
@@ -649,4 +669,7 @@ networks:
         - subnet: 172.31.250.0/24
   # Sortie vers Internet du seul proxy rag-proxy, qui filtre par domaine (OpenRouter, Groq).
   rag-egress:
+    driver: bridge
+  # Téléchargement des modèles épinglés (rag-model-export), aucun autre service.
+  rag-export:
     driver: bridge

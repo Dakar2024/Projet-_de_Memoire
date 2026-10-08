@@ -124,27 +124,32 @@ développement où seul Airflow joint la base vectorielle.
 
 ### Sécurité — avant que `rag_reader` serve l'API (E2)
 
-- [ ] **Retirer le droit de tables temporaires** : `REVOKE TEMPORARY ON DATABASE rag FROM PUBLIC`.
-      Reporté : aucun client autre qu'Airflow ne se connecte avant E2.
-- [ ] **Faire converger les attributs des rôles** à chaque amorçage :
+- [x] **Retirer le droit de tables temporaires** : `REVOKE TEMPORARY ON DATABASE rag FROM PUBLIC`.
+      Reporté : aucun client autre qu'Airflow ne se connecte avant E2. Fait en E2b
+      (`REVOKE TEMPORARY, CREATE ON DATABASE rag FROM PUBLIC`, vérifié par
+      `RAG/tests/test_hardening_integration.py`).
+- [x] **Faire converger les attributs des rôles** à chaque amorçage :
       `ALTER ROLE … NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS`, et
       `REVOKE ALL … FROM rag_indexer, rag_reader` avant les `GRANT`. Reporté : les rôles sont
       créés par le script et personne d'autre ne les modifie ; à faire avant d'ouvrir
-      `rag_reader` à l'API.
-- [ ] **Passer les mots de passe à psql par `\getenv`** plutôt que par `-v` : ils apparaissent
+      `rag_reader` à l'API. Fait en E2b (`NOREPLICATION LOGIN` en plus).
+- [x] **Passer les mots de passe à psql par `\getenv`** plutôt que par `-v` : ils apparaissent
       brièvement dans la liste des processus et, si un `CREATE`/`ALTER ROLE` échoue, dans le
       journal du serveur. Reporté : conteneur éphémère sur une machine mono-utilisateur ; à
-      faire avec la convergence des rôles ci-dessus.
-- [ ] **Réserver les secrets `RAG_*` et `rag-network` au scheduler**, seul à exécuter la tâche
+      faire avec la convergence des rôles ci-dessus. Fait en E2b : `psql -q -f`, variable
+      absente → erreur SQL et code de sortie 3.
+- [x] **Réserver les secrets `RAG_*` et `rag-network` au scheduler**, seul à exécuter la tâche
       d'indexation ; ils sont aujourd'hui sur tous les services Airflow, apiserver compris.
       Reporté : demande de sortir ces clés de l'ancre `x-airflow-common` ; à faire avant
-      d'exposer l'apiserver hors de la machine.
-- [ ] **Isoler `rag-model-export`** sur un réseau d'export dédié, avec un plafond mémoire : il
+      d'exposer l'apiserver hors de la machine. Fait en E2b (ancre `x-rag-indexer-env`).
+- [x] **Isoler `rag-model-export`** sur un réseau d'export dédié, avec un plafond mémoire : il
       est aujourd'hui sur `genomique-network`, qui atteint `postgres` et `minio`. Reporté :
-      outil lancé à la main, rarement ; à faire avant E2.
-- [ ] **Monter `./data/models` en lecture seule dans les services Airflow** : ils y ont
+      outil lancé à la main, rarement ; à faire avant E2. Fait en E2b (réseau `rag-export`,
+      4 Gio).
+- [x] **Monter `./data/models` en lecture seule dans les services Airflow** : ils y ont
       aujourd'hui l'écriture (via `./data`), donc une tâche compromise pourrait empoisonner le
       modèle servi. Reporté : demande de redécouper le montage de `./data` ; à faire avant E2.
+      Fait en E2b (montage `:ro` superposé à `./data`).
 
 - [x] **Proxy sortant filtrant (squid/tinyproxy, `openrouter.ai:443` seulement) sur
       `rag-egress`**, `rag-search` sur réseau interne + `HTTPS_PROXY` — avant E2b.

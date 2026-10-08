@@ -1,7 +1,23 @@
 -- Schéma de la base vectorielle du RAG (sous-projet E1). Idempotent : exécuté par
--- rag-postgres-init à chaque démarrage de la stack. Les mots de passe arrivent par
--- des variables psql (-v), jamais écrites dans ce fichier.
+-- rag-postgres-init à chaque démarrage de la stack. Les mots de passe sont lus dans
+-- l'environnement par `\getenv` (PostgreSQL ≥ 15) : ils n'apparaissent ni dans la ligne
+-- de commande ni dans ce fichier.
 \set ON_ERROR_STOP on
+
+\getenv indexer_password RAG_INDEXER_PASSWORD
+\getenv reader_password RAG_READER_PASSWORD
+-- Variable absente : on échoue par une erreur SQL (ON_ERROR_STOP → code de sortie 3).
+-- `\quit` n'accepte pas de code de sortie et terminerait psql en succès.
+\if :{?indexer_password}
+\else
+  \echo 'RAG_INDEXER_PASSWORD absente'
+  DO $$ BEGIN RAISE EXCEPTION 'RAG_INDEXER_PASSWORD absente'; END $$;
+\endif
+\if :{?reader_password}
+\else
+  \echo 'RAG_READER_PASSWORD absente'
+  DO $$ BEGIN RAISE EXCEPTION 'RAG_READER_PASSWORD absente'; END $$;
+\endif
 
 CREATE EXTENSION IF NOT EXISTS vector;
 
@@ -13,6 +29,14 @@ SELECT format('CREATE ROLE rag_reader LOGIN PASSWORD %L', :'reader_password')
 WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'rag_reader') \gexec
 ALTER ROLE rag_indexer PASSWORD :'indexer_password';
 ALTER ROLE rag_reader PASSWORD :'reader_password';
+
+-- Attributs convergents à chaque démarrage : un rôle modifié à la main redevient
+-- un simple compte de connexion, sans privilège d'administration.
+ALTER ROLE rag_indexer NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOREPLICATION LOGIN;
+ALTER ROLE rag_reader  NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOREPLICATION LOGIN;
+
+-- Ni tables temporaires ni création d'objets pour quiconque n'en a pas besoin.
+REVOKE TEMPORARY, CREATE ON DATABASE rag FROM PUBLIC;
 
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO rag_indexer, rag_reader;
@@ -47,6 +71,6 @@ CREATE INDEX IF NOT EXISTS rag_documents_rs_dbsnp ON rag_documents (rs_dbsnp);
 CREATE INDEX IF NOT EXISTS rag_documents_hgvs_c ON rag_documents (hgvs_c);
 CREATE INDEX IF NOT EXISTS rag_documents_hgvs_p ON rag_documents (hgvs_p);
 
-REVOKE ALL ON rag_documents FROM PUBLIC;
+REVOKE ALL ON rag_documents FROM PUBLIC, rag_indexer, rag_reader;
 GRANT SELECT, INSERT, UPDATE, DELETE ON rag_documents TO rag_indexer;
 GRANT SELECT ON rag_documents TO rag_reader;
