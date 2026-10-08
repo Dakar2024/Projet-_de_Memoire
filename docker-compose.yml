@@ -139,7 +139,28 @@ x-rag-app: &rag-app
     - rag-proxy-net
   depends_on:
     rag-proxy:
-      condition: service_started
+      condition: service_healthy
+
+#----------------------------------
+# RAG — environnement commun, sans aucune clé d'API LLM ni clé de l'API locale :
+# chaque service n'ajoute que les clés dont il a besoin (moindre privilège).
+#----------------------------------
+x-rag-app-env: &rag-app-env
+  PYTHONPATH: /opt/projet:/opt/projet/src
+  # requests suit HTTPS_PROXY : tout appel sortant passe par le proxy filtrant, sauf
+  # les services internes listés dans NO_PROXY (base, embedding, API elle-même).
+  HTTPS_PROXY: http://rag-proxy:3128
+  HTTP_PROXY: http://rag-proxy:3128
+  NO_PROXY: rag-postgres,rag-embeddings,rag-api,localhost,127.0.0.1
+  RAG_EMBEDDINGS_URL: http://rag-embeddings:8080
+  RAG_EMBEDDINGS_API_KEY: ${RAG_EMBEDDINGS_API_KEY:?RAG_EMBEDDINGS_API_KEY obligatoire, à renseigner}
+  RAG_EMBEDDING_MODEL: ${RAG_EMBEDDING_MODEL:?RAG_EMBEDDING_MODEL obligatoire, à renseigner}
+  RAG_PG_HOST: rag-postgres
+  RAG_PG_PORT: "5432"
+  RAG_PG_DB: rag
+  # Lecture seule : ni la recherche ni l'API n'écrivent dans la base.
+  RAG_PG_USER: rag_reader
+  RAG_PG_PASSWORD: ${RAG_READER_PASSWORD:?RAG_READER_PASSWORD obligatoire, à renseigner}
 
 services:
 #----------------------------------
@@ -469,22 +490,8 @@ services:
     <<: *rag-app
     container_name: genomique-rag-api
     restart: unless-stopped
-    environment: &rag-app-env
-      PYTHONPATH: /opt/projet:/opt/projet/src
-      # requests suit HTTPS_PROXY : tout appel sortant passe par le proxy filtrant, sauf
-      # les services internes listés dans NO_PROXY (base, embedding, API elle-même).
-      HTTPS_PROXY: http://rag-proxy:3128
-      HTTP_PROXY: http://rag-proxy:3128
-      NO_PROXY: rag-postgres,rag-embeddings,rag-api,localhost,127.0.0.1
-      RAG_EMBEDDINGS_URL: http://rag-embeddings:8080
-      RAG_EMBEDDINGS_API_KEY: ${RAG_EMBEDDINGS_API_KEY:?RAG_EMBEDDINGS_API_KEY obligatoire, à renseigner}
-      RAG_EMBEDDING_MODEL: ${RAG_EMBEDDING_MODEL:?RAG_EMBEDDING_MODEL obligatoire, à renseigner}
-      RAG_PG_HOST: rag-postgres
-      RAG_PG_PORT: "5432"
-      RAG_PG_DB: rag
-      # Lecture seule : ni la recherche ni l'API n'écrivent dans la base.
-      RAG_PG_USER: rag_reader
-      RAG_PG_PASSWORD: ${RAG_READER_PASSWORD:?RAG_READER_PASSWORD obligatoire, à renseigner}
+    environment:
+      <<: *rag-app-env
       # `:-` et non `:?` : une clé absente ne doit pas bloquer les commandes Compose
       # du pipeline ; le code refuse lui-même d'appeler le LLM sans clé.
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
@@ -504,7 +511,7 @@ services:
       - "127.0.0.1:${RAG_API_PORT:-8090}:8000"
     depends_on:
       rag-proxy:
-        condition: service_started
+        condition: service_healthy
       rag-embeddings:
         condition: service_healthy
       rag-postgres-init:
@@ -526,7 +533,11 @@ services:
   rag-search:
     <<: *rag-app
     profiles: ["outils"]
-    environment: *rag-app-env
+    # Clés LLM pour les mesures ; pas RAG_API_KEY, inutile à l'outil de mesure.
+    environment:
+      <<: *rag-app-env
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
     volumes:
       - ./RAG:/opt/projet/RAG:ro
       - ./src:/opt/projet/src:ro
@@ -555,6 +566,8 @@ services:
     build:
       context: .
       dockerfile: docker/rag-api/Dockerfile.test
+    # Clé de l'API locale seulement (les tests appellent rag-api) ; aucune clé LLM :
+    # aucun test d'intégration n'appelle le LLM directement.
     environment:
       <<: *rag-app-env
       RAG_API_KEY: ${RAG_API_KEY:-}
@@ -585,6 +598,13 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    # Ni curl ni squidclient dans l'image : bash ouvre une connexion TCP sur 3128.
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/3128"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     # Squid appelé directement : l'entrypoint de l'image tente de régénérer un
     # certificat dans /etc/ssl (racine en lecture seule) et suit des fichiers journaux
     # que cette configuration n'écrit pas (journaux sur stdout/stderr).
@@ -619,9 +639,14 @@ networks:
     driver: bridge
     internal: true
   # Réseau interne entre rag-api / rag-search et le proxy : aucun accès direct à Internet.
+  # Sous-réseau fixé : squid.conf n'admet que ces clients (acl rag_clients). Vérifié
+  # libre le 08/10/2026 (docker network inspect : réseaux de l'hôte en 172.17–172.27/16).
   rag-proxy-net:
     driver: bridge
     internal: true
+    ipam:
+      config:
+        - subnet: 172.31.250.0/24
   # Sortie vers Internet du seul proxy rag-proxy, qui filtre par domaine (OpenRouter, Groq).
   rag-egress:
     driver: bridge
