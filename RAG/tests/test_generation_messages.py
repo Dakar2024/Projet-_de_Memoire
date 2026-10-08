@@ -76,3 +76,12 @@ def test_question_cannot_open_or_close_blocks():
 def test_counting_message_does_not_expose_internal_architecture():
     assert "couche" not in messages.OUT_OF_SCOPE["counting"]
     assert "analyse dédiée de ClinVar" in messages.OUT_OF_SCOPE["counting"]
+
+
+def test_question_keeps_gt_and_identifiers_intact():
+    message = prompt.user_message("c.68A>G & rs334", "ctx", [])
+    assert "c.68A>G &amp; rs334" in message
+
+
+def test_prompt_version_is_v2_and_sha_covers_escaping():
+    assert prompt.GENERATION_PROMPT_VERSION == "generation-v2"

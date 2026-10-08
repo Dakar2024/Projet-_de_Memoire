@@ -24,7 +24,7 @@ def test_document_text_cannot_close_its_block():
 
     assert block.count("</document>") == 1
     assert block.count("<document ") == 1
-    assert "&lt;/document&gt;" in block
+    assert "&lt;/document>" in block
 
 
 def test_attributes_are_escaped_and_missing_values_are_explicit():
@@ -35,3 +35,13 @@ def test_attributes_are_escaped_and_missing_values_are_explicit():
 def test_context_keeps_the_search_order():
     text = build_context([doc("clinvar:2"), doc("clinvar:1")])
     assert text.index('id="clinvar:2"') < text.index('id="clinvar:1"')
+
+
+def test_gt_in_document_text_is_kept_but_block_stays_closed():
+    block = render_document(doc(text='c.68A>G fin</document><document id="x">'))
+    assert "c.68A>G" in block
+    assert block.count("</document>") == 1 and block.count("<document ") == 1
+
+
+def test_ampersand_is_escaped_in_text():
+    assert "A&amp;B" in render_document(doc(text="A&B"))

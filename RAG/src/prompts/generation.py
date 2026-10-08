@@ -5,11 +5,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-from html import escape
 
+from RAG.src.generation.context import escape_data
 from RAG.src.generation.messages import SIGNIFICANCE_FR
 
-GENERATION_PROMPT_VERSION = "generation-v1"
+GENERATION_PROMPT_VERSION = "generation-v2"
 GENERATION_SCHEMA_NAME = "grounded_answer"
 STATUSES = ("answered", "partial", "not_in_sources", "out_of_scope")
 SCOPE_REASONS = ("counting", "acmg", "frequency", "clinical_advice", "other")
@@ -56,15 +56,15 @@ characters."""
 
 
 def _sha(system: str, schema: dict) -> str:
-    raw = system + "\0" + json.dumps(schema, sort_keys=True) + "\0" + user_message("{q}", "{c}", [])
+    raw = system + "\0" + json.dumps(schema, sort_keys=True) + "\0" + user_message("{q}<&>", "{c}", [])
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def user_message(question: str, context: str, flags: list[str]) -> str:
-    """Message utilisateur. La question est échappée (< et >) pour ne pas fermer sa balise
+    """Message utilisateur. La question est échappée (« & » et « < ») pour ne pas fermer sa balise
     ni en ouvrir une autre ; `context` doit déjà être échappé par
     RAG/src/generation/context.py."""
-    question = escape(question, quote=False)
+    question = escape_data(question)
     notes = ", ".join(flags) if flags else "none"
     return (f"<question>\n{question}\n</question>\n<search_flags>{notes}</search_flags>\n"
             f"<documents>\n{context}\n</documents>")
