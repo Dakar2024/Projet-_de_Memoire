@@ -84,4 +84,9 @@ def test_question_keeps_gt_and_identifiers_intact():
 
 
 def test_prompt_version_is_v2_and_sha_covers_escaping():
-    assert prompt.GENERATION_PROMPT_VERSION == "generation-v2"
+    assert prompt.GENERATION_PROMPT_VERSION == "generation-v3"
+
+
+def test_system_prompt_forbids_negated_significances_and_abbreviations():
+    assert "never negate a significance" in prompt.SYSTEM_PROMPT
+    assert "Never use abbreviations such as VUS" in prompt.SYSTEM_PROMPT

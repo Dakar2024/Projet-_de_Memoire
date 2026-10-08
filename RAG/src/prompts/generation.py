@@ -9,7 +9,7 @@ import json
 from RAG.src.generation.context import escape_data
 from RAG.src.generation.messages import SIGNIFICANCE_FR
 
-GENERATION_PROMPT_VERSION = "generation-v2"
+GENERATION_PROMPT_VERSION = "generation-v3"
 GENERATION_SCHEMA_NAME = "grounded_answer"
 STATUSES = ("answered", "partial", "not_in_sources", "out_of_scope")
 SCOPE_REASONS = ("counting", "acmg", "frequency", "clinical_advice", "other")
@@ -51,7 +51,10 @@ sources: "out_of_scope", "frequency".
 7. If the documents do not answer the question: status "not_in_sources".
 8. List in "citations" the id of every document a statement comes from. Cite only ids present \
 in the documents. "answered" and "partial" require at least one citation.
-9. scope_reason is null unless status is "out_of_scope". Keep "answer" under {MAX_ANSWER_CHARS} \
+9. State each clinical significance positively, exactly as in the table; never negate a \
+significance (do not write 'not benign', 'n'est pas pathogène'). Never use abbreviations such as \
+VUS; write the table term.
+10. scope_reason is null unless status is "out_of_scope". Keep "answer" under {MAX_ANSWER_CHARS} \
 characters."""
 
 
