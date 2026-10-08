@@ -99,6 +99,24 @@ class SearchConfig:
     trial_profiles: dict[str, LlmProfile] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class GenerationConfig:
+    profile: LlmProfile
+    max_tokens: int
+    timeout_s: float
+
+
+@dataclass(frozen=True)
+class ApiConfig:
+    max_concurrency: int
+    request_timeout_s: float
+    max_body_bytes: int
+    openapi: bool
+
+
+MIN_API_KEY_CHARS = 32
+
+
 def load_config(path: Path = DEFAULT_CONFIG_PATH) -> RagConfig:
     """Lit et valide `config.yaml`. Toute anomalie est une `RagConfigurationError` :
     une configuration fausse ne se corrige pas en relançant."""
@@ -262,4 +280,50 @@ def load_groq_key(env: Mapping[str, str] | None = None) -> str:
     key = (env.get("GROQ_API_KEY") or "").strip()
     if not key:
         raise RagConfigurationError("GROQ_API_KEY absente ou vide (.env)")
+    return key
+
+
+def load_generation_config(path: Path = DEFAULT_CONFIG_PATH) -> GenerationConfig:
+    """Profil de génération (E2b), cherché parmi les profils officiels puis d'essai."""
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        llm = raw["llm"]
+        profiles = {name: _profile(name, value) for name, value in llm["profiles"].items()}
+        trials = {name: _profile(name, value) for name, value in (llm.get("trial_profiles") or {}).items()}
+        chosen = str(llm["generation_profile"])
+        max_tokens = int(llm["generation_max_tokens"])
+        timeout = float(llm["request_timeout_s"])
+    except (OSError, KeyError, TypeError, ValueError, AttributeError, yaml.YAMLError) as exc:
+        raise RagConfigurationError(f"{path} : llm.generation_profile / generation_max_tokens illisibles : {exc!r}") from exc
+    profile = profiles.get(chosen) or trials.get(chosen)
+    if profile is None:
+        raise RagConfigurationError(f"{path} : llm.generation_profile « {chosen} » absent des profils")
+    if max_tokens < 1024 or timeout <= 0:
+        raise RagConfigurationError(f"{path} : llm.generation_max_tokens ≥ 1024 et request_timeout_s > 0 requis")
+    return GenerationConfig(profile=profile, max_tokens=max_tokens, timeout_s=timeout)
+
+
+def load_api_config(path: Path = DEFAULT_CONFIG_PATH) -> ApiConfig:
+    try:
+        api = yaml.safe_load(path.read_text(encoding="utf-8"))["api"]
+        config = ApiConfig(max_concurrency=int(api["max_concurrency"]),
+                           request_timeout_s=float(api["request_timeout_s"]),
+                           max_body_bytes=int(api["max_body_bytes"]), openapi=bool(api["openapi"]))
+    except (OSError, KeyError, TypeError, ValueError, yaml.YAMLError) as exc:
+        raise RagConfigurationError(f"{path} : section api illisible ou incomplète : {exc!r}") from exc
+    if not 1 <= config.max_concurrency <= 16:
+        raise RagConfigurationError(f"{path} : api.max_concurrency doit être entre 1 et 16")
+    if not 10 <= config.request_timeout_s <= 600:
+        raise RagConfigurationError(f"{path} : api.request_timeout_s doit être entre 10 et 600")
+    if not 1024 <= config.max_body_bytes <= 65536:
+        raise RagConfigurationError(f"{path} : api.max_body_bytes doit être entre 1024 et 65536")
+    return config
+
+
+def load_api_key(env: Mapping[str, str] | None = None) -> str:
+    """Clé de l'API (RAG_API_KEY). Le message d'erreur nomme la variable, jamais sa valeur."""
+    env = os.environ if env is None else env
+    key = (env.get("RAG_API_KEY") or "").strip()
+    if len(key) < MIN_API_KEY_CHARS:
+        raise RagConfigurationError(f"RAG_API_KEY absente ou trop courte (≥ {MIN_API_KEY_CHARS} caractères, .env)")
     return key

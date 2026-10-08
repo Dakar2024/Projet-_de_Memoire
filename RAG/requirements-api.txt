@@ -1,0 +1,4 @@
+# Dépendances de l'API du RAG (E2b), image rag-api seulement (pas l'image Airflow).
+# Versions vérifiées sur PyPI le 08/10/2026.
+litestar==2.24.0
+uvicorn==0.54.0
