@@ -76,3 +76,100 @@ def test_plural_and_feminine_forms_are_recognised():
     benign = doc(text="Clinical significance: Benign.", sig="Benign")
     check_significances("Ces variants sont bénins.", [benign])
     assert _reason(check_significances, "Ces variants sont pathogènes.", [benign]) == "significance_not_in_sources"
+
+
+# --- tour de correction 1 ---
+
+def _doc_text(text, sig="Pathogenic", gene="BRCA1", doc_id="clinvar:1"):
+    return RetrievedDocument(doc_id=doc_id, doc_type="variant", text=text, gene_symbol=gene,
+                             clinical_significance=sig, review_status=None, rs_dbsnp=None,
+                             hgvs_c="c.68A>G", hgvs_p=None, clinvar_variation_id="17677",
+                             clinvar_url=None, source_version="2026-09", similarity=0.9, stage="exact")
+
+
+def test_escaped_gt_in_answer_is_unescaped_before_checking():
+    d = _doc_text("Variant c.68A>G. Clinical significance: Pathogenic.")
+    check_identifiers("Le variant c.68A&gt;G est décrit.", [d])
+    assert _reason(check_identifiers, "Le variant c.69A&gt;G est décrit.", [d]) == "identifier_not_in_sources"
+
+
+HISTORY_TEXT = ("Variant c.5266dup.\nClinical significance: Pathogenic.\n"
+                "Classification history: previously Uncertain significance until 2015-01.")
+
+
+@pytest.mark.parametrize("answer", [
+    "Ce variant est de signification incertaine.",
+    "Ce variant est un VUS.",
+    "Ce variant est neutre.",
+    "Ce variant est non pathogène.",
+    "Ce variant n'est pas pathogène.",
+    "Sa signification est indéterminée.",
+    "Il est à risque.",
+    "Il est délétère.",
+    "Classé Benign.",
+    "Classé Likely benign.",
+    "C'est un facteur de risque.",
+    "Il est pathogénique.",
+    "Il est vraisemblablement pathogène.",
+    "Les interprétations sont contradictoires.",
+    "Ce variant n'a jamais été pathogène.",
+])
+def test_off_table_or_wrong_significances_are_rejected(answer):
+    assert _reason(check_significances, answer, [_doc_text(HISTORY_TEXT)]) == "significance_not_in_sources"
+
+
+def test_double_space_probably_pathogenic_is_not_pathogenic():
+    likely = _doc_text("Clinical significance: Likely pathogenic.", sig="Likely pathogenic")
+    check_significances("Il est probablement  pathogène.", [likely])
+    assert _reason(check_significances, "Il est pathogène.", [likely]) == "significance_not_in_sources"
+
+
+def test_history_label_allowed_only_in_a_history_sentence():
+    d = _doc_text(HISTORY_TEXT)
+    check_significances("Il est pathogène. Il était auparavant de signification incertaine.", [d])
+    check_significances("Il a été reclassé : signification incertaine jusqu'en 2015.", [d])
+
+
+def test_labels_elsewhere_in_text_are_not_allowed():
+    d = _doc_text("Gene summary mentions Benign variants.\nClinical significance: Pathogenic.")
+    assert _reason(check_significances, "Ce variant est bénin.", [d]) == "significance_not_in_sources"
+
+
+def test_english_label_matching_the_document_passes():
+    check_significances("Classé Pathogenic.", [_doc_text(HISTORY_TEXT)])
+
+
+def test_conflicting_interpretations_pass_when_documented():
+    d = _doc_text("Clinical significance: Conflicting classifications of pathogenicity.",
+                  sig="Conflicting classifications of pathogenicity")
+    check_significances("Les interprétations sont contradictoires.", [d])
+
+
+@pytest.mark.parametrize("answer", ["ClinVar ID 17678", "Fiche ClinVar n° 17678", "Variation 17678",
+                                    "https://www.ncbi.nlm.nih.gov/clinvar/variation/17678/"])
+def test_invented_variation_ids_in_other_forms_are_rejected(answer):
+    assert _reason(check_identifiers, answer, [_doc_text(HISTORY_TEXT)]) == "identifier_not_in_sources"
+
+
+@pytest.mark.parametrize("answer", ["Selon ClinVar 2026, c'est décrit.", "ClinVar : 45 soumetteurs.",
+                                    "Données ClinVar 2016-10-20.", "Variation ID 17677 et ClinVar ID 17677."])
+def test_years_counts_and_dates_are_not_variation_ids(answer):
+    check_identifiers(answer, [_doc_text(HISTORY_TEXT)])
+
+
+@pytest.mark.parametrize("answer", ["Voir «c.5267dup» ici.", "Voir c.5267dup’ ici.", "Voir c.5267dup… ici.",
+                                    "Voir c.5267dup ici.", "Voir « c.5267dup ».", "Voir « c.5267dup »."])
+def test_french_typography_does_not_hide_invented_identifiers(answer):
+    assert _reason(check_identifiers, answer, [_doc_text(HISTORY_TEXT)]) == "identifier_not_in_sources"
+
+
+def test_gene_must_belong_to_a_transmitted_document():
+    d = _doc_text(HISTORY_TEXT, gene="BRCA1")
+    check_identifiers("Le gène BRCA1 est concerné.", [d])
+    assert _reason(check_identifiers, "Le gène BRCA2 est concerné.", [d]) == "identifier_not_in_sources"
+
+
+def test_out_of_panel_gene_rejected_when_answered_only():
+    d = _doc_text(HISTORY_TEXT)
+    assert _reason(check_identifiers, "Le gène MLH1 est concerné.", [d], "answered") == "identifier_not_in_sources"
+    check_identifiers("Le gène MLH1 est hors panel.", [d], "not_in_sources")
