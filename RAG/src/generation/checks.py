@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import html
 import re
+import unicodedata
 from collections.abc import Sequence
 
 from RAG.src.generation.messages import SIGNIFICANCE_FR, significance_terms_fr, translate_significance
@@ -27,8 +28,10 @@ _PANEL_STATUSES = ("answered", "partial")
 
 
 def _clean(answer: str) -> str:
-    """Réponse remise sous forme comparable : entités HTML décodées (c.69A&gt;G)."""
-    return html.unescape(answer)
+    """Réponse remise sous forme comparable : entités HTML décodées (c.69A&gt;G), Unicode
+    normalisé (NFC) et caractères de largeur nulle retirés (ils casseraient « rs12345 »)."""
+    text = unicodedata.normalize("NFC", html.unescape(answer))
+    return re.sub("[\u200b\u200c\u200d\ufeff]", "", text)
 
 
 def check_citations(citations: Sequence[str], documents: Sequence[RetrievedDocument], status: str) -> None:
@@ -66,7 +69,13 @@ def check_identifiers(answer: str, documents: Sequence[RetrievedDocument], statu
             or set(_VARIATION_ID.findall(answer)) - allowed_vid):
         raise GenerationRejectedError("identifier_not_in_sources")
     if status in _PANEL_STATUSES:
-        if found.out_of_panel or set(found.genes) - {d.gene_symbol for d in documents if d.gene_symbol}:
+        # Symboles autorisés : ceux que les textes transmis contiennent (« group D1 », RAD51,
+        # CD4 recopiés fidèlement) et les gènes des documents.
+        allowed_genes = {d.gene_symbol for d in documents if d.gene_symbol}
+        for d in documents:
+            ids = extract_identifiers(d.text)
+            allowed_genes |= set(ids.genes) | set(ids.out_of_panel)
+        if (set(found.genes) | set(found.out_of_panel)) - allowed_genes:
             raise GenerationRejectedError("identifier_not_in_sources")
 
 
@@ -86,14 +95,13 @@ def _french_pattern(term: str) -> str:
 
 _FEMININE_PLURAL = {"bénin": r"b[ée]nin(?:e|s|es)?|b[ée]nigne(?:s)?",
                     "pathogène": r"pathog[èe]ne(?:s)?",
-                    "signification incertaine": r"signification(?:s)?\s+incertaine(?:s)?",
+                    "signification incertaine": r"signification(?:s)?\s+(?:\S+\s+){0,2}?incertaine(?:s)?",
                     "interprétations contradictoires":
                         r"interpr[ée]tation(?:s)?\s+(?:\S+\s+){0,3}?contradictoire(?:s)?"}
 
 # Termes de signification reconnus dans une réponse : (clé française, motif), en français et
 # avec le libellé ClinVar anglais, du plus long au plus court pour que « probablement
 # pathogène » masque le « pathogène » qu'il contient.
-_EXTRA_FR = {"Risk factor": "facteur de risque", "Low penetrance": "faible pénétrance"}
 
 
 def _build_terms() -> list[tuple[str, re.Pattern]]:
@@ -118,7 +126,11 @@ _OFF_TABLE = re.compile(
     re.IGNORECASE,
 )
 _NEGATIONS = {"pas", "non", "ni", "jamais", "plus", "aucun", "aucune"}
-_HISTORY_MARKER = re.compile(r"auparavant|pr[ée]c[ée]demment|jusqu|historique|anciennement|reclass", re.IGNORECASE)
+_HISTORY_MARKER = re.compile(
+    r"auparavant|pr[ée]c[ée]demment|jusqu|historique|reclass|\bavant\b|\bd['’]abord\b|"
+    r"\binitialement\b|\bautrefois\b|\bancien(?:ne)?(?:ment)?\b", re.IGNORECASE)
+_TRAILING_MARKER = re.compile(r"\bjusqu", re.IGNORECASE)
+_HISTORY_REACH = 6  # mots au plus entre le marqueur et le terme
 _SENTENCES = re.compile(r"(?<=[.!?;])\s+")
 
 
@@ -127,17 +139,37 @@ def _negated(text: str, start: int) -> bool:
     return any(word in _NEGATIONS for word in words)
 
 
-def _terms_in(sentence: str) -> set[str]:
-    """Termes de signification d'une phrase, sans double compte. Une négation dans les trois
-    mots qui précèdent un terme rend la phrase invérifiable (conservateur)."""
-    found, remaining = set(), sentence
+def _terms_in(sentence: str) -> dict[str, int]:
+    """Termes de signification d'une phrase avec leur première position, sans double
+    compte. Une négation dans les trois mots qui précèdent un terme rend la phrase
+    invérifiable (conservateur)."""
+    found: dict[str, int] = {}
+    remaining = sentence
     for term, pattern in _TERMS:
         for match in pattern.finditer(remaining):
             if _negated(sentence, match.start()):
                 raise GenerationRejectedError("significance_not_in_sources")
-            found.add(term)
+            found[term] = min(found.get(term, match.start()), match.start())
         remaining = pattern.sub(lambda m: " " * len(m.group()), remaining)
     return found
+
+
+def _after_marker(sentence: str, position: int) -> bool:
+    """Le terme situé à `position` suit un marqueur d'historique de la même phrase, à six mots
+    au plus et sans virgule entre les deux. Conservateur : un terme placé AVANT le marqueur
+    (« incertaine avant 2019 ») n'est pas accepté."""
+    for marker in _HISTORY_MARKER.finditer(sentence[:position]):
+        between = sentence[marker.end():position]
+        if "," not in between and len(re.findall(r"\w+", between)) <= _HISTORY_REACH:
+            return True
+    # « jusqu'en 2015 » s'écrit après le libellé (« incertaine jusqu'en 2015 ») : seul marqueur
+    # accepté en suite, avec les mêmes limites.
+    follow = sentence[position:]
+    for marker in _TRAILING_MARKER.finditer(follow):
+        between = follow[:marker.start()]
+        if "," not in between and len(re.findall(r"\w+", between)) <= _HISTORY_REACH + 3:
+            return True
+    return False
 
 
 def _labels_in(text: str) -> set[str]:
@@ -182,6 +214,9 @@ def check_significances(answer: str, cited: Sequence[RetrievedDocument]) -> None
     if _OFF_TABLE.search(text):
         raise GenerationRejectedError("significance_not_in_sources")
     for sentence in _SENTENCES.split(text):
-        allowed = current | history if _HISTORY_MARKER.search(sentence) else current
-        if _terms_in(sentence) - allowed:
+        for term, position in _terms_in(sentence).items():
+            if term in current:
+                continue
+            if term in history and _after_marker(sentence, position):
+                continue
             raise GenerationRejectedError("significance_not_in_sources")

@@ -173,3 +173,59 @@ def test_out_of_panel_gene_rejected_when_answered_only():
     d = _doc_text(HISTORY_TEXT)
     assert _reason(check_identifiers, "Le gène MLH1 est concerné.", [d], "answered") == "identifier_not_in_sources"
     check_identifiers("Le gène MLH1 est hors panel.", [d], "not_in_sources")
+
+
+# --- tour de correction 2 ---
+
+def _gene_doc(text, gene, doc_id="clinvar:7"):
+    return _doc_text(text, gene=gene, doc_id=doc_id)
+
+
+@pytest.mark.parametrize("text, gene, answer", [
+    ("Condition: Fanconi anemia, complementation group D1.", "BRCA2",
+     "La maladie est Fanconi anemia, complementation group D1."),
+    ("Gene summary: the protein binds RAD51 and PALB2.", "BRCA2",
+     "Le gène BRCA2 se lie à RAD51 et à PALB2."),
+    ("Phenotype: Decreased CD4+ T cell count.", "BRCA1",
+     "Phénotype : Decreased CD4+ T cell count."),
+])
+def test_genes_copied_from_documents_pass(text, gene, answer):
+    check_identifiers(answer, [_gene_doc(text, gene)])
+
+
+def test_gene_absent_from_documents_is_rejected():
+    d = _gene_doc("Variant on BRCA1.", "BRCA1")
+    assert _reason(check_identifiers, "Le gène BRCA2 est concerné.", [d]) == "identifier_not_in_sources"
+    assert _reason(check_identifiers, "Le gène MLH1 est concerné.", [d]) == "identifier_not_in_sources"
+
+
+H = _doc_text(HISTORY_TEXT)
+
+
+@pytest.mark.parametrize("answer", [
+    "Ce variant est de signification incertaine, sans reclassement.",
+    "Il était auparavant pathogène, il est maintenant de signification incertaine.",
+    "Classé de signification incertaine avant 2019. Il est aujourd'hui pathogène.",
+])
+def test_history_label_needs_a_marker_before_it_in_the_same_clause(answer):
+    assert _reason(check_significances, answer, [H]) == "significance_not_in_sources"
+
+
+@pytest.mark.parametrize("answer", [
+    "Il a d'abord été classé de signification incertaine, puis pathogène.",
+    "Il était initialement de signification incertaine.",
+])
+def test_history_label_after_a_marker_passes(answer):
+    check_significances(answer, [H])
+
+
+@pytest.mark.parametrize("answer", ["Sa signification reste incertaine.", "Signification : incertaine."])
+def test_uncertain_wordings_are_recognised(answer):
+    assert _reason(check_significances, answer, [H]) == "significance_not_in_sources"
+    uncertain = _doc_text("Clinical significance: Uncertain significance.", sig="Uncertain significance")
+    check_significances(answer, [uncertain])
+
+
+def test_zero_width_and_decomposed_text_cannot_hide_anything():
+    assert _reason(check_identifiers, "Voir rs​12345.", [H]) == "identifier_not_in_sources"
+    assert _reason(check_significances, "Il est bénin.", [H]) == "significance_not_in_sources"
