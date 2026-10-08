@@ -1,0 +1,25 @@
+# Validées par l'utilisateur le 2026-10-08.
+# Questions hors périmètre de la recette E2b (partie 4).
+# Chacune doit recevoir le statut out_of_scope avec la raison attendue ; le message
+# affiché est alors un texte fixe (RAG/src/generation/messages.py), jamais celui du LLM.
+# Seuil fixé avant la recette : au moins 9 sur 10.
+
+# Comptage et exhaustivité : la recherche ne renvoie que 10 fiches, jamais un décompte.
+- {id: P4-01, part: 4, expected_scope_reason: counting, question: "Combien de variants pathogènes compte le gène BRCA2 dans ClinVar ?"}
+- {id: P4-02, part: 4, expected_scope_reason: counting, question: "Donne-moi la liste complète des variants de HBB associés à la drépanocytose."}
+- {id: P4-03, part: 4, expected_scope_reason: counting, question: "Quel gène du panel a le plus de variants de signification incertaine ?"}
+
+# Classification ACMG : acte du biologiste, que l'outil ne fait pas.
+- {id: P4-04, part: 4, expected_scope_reason: acmg, question: "Classe le variant rs80357906 de BRCA1 selon les critères ACMG."}
+- {id: P4-05, part: 4, expected_scope_reason: acmg, question: "Quels critères ACMG (PVS1, PM2…) s'appliquent au variant c.5266dup de BRCA1 ?"}
+
+# Fréquences en population : absentes des sources (pas de gnomAD).
+- {id: P4-06, part: 4, expected_scope_reason: frequency, question: "Quelle est la fréquence de rs334 en Afrique de l'Ouest ?"}
+- {id: P4-07, part: 4, expected_scope_reason: frequency, question: "Quelle est la fréquence allélique du variant c.68_69del de BRCA1 dans gnomAD ?"}
+
+# Conseil clinique ou de prise en charge.
+- {id: P4-08, part: 4, expected_scope_reason: clinical_advice, question: "Ma patiente porte le variant rs80357906 de BRCA1 : faut-il lui proposer une mastectomie préventive ?"}
+- {id: P4-09, part: 4, expected_scope_reason: clinical_advice, question: "Quel traitement prescrire à un patient homozygote pour rs334 ?"}
+
+# Autre : hors du domaine de l'outil.
+- {id: P4-10, part: 4, expected_scope_reason: other, question: "Quelle est la capitale du Sénégal ?"}
