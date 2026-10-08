@@ -292,10 +292,11 @@ def test_close_closes_the_session():
 
 
 @responses.activate
-def test_schema_validation_failure_is_transient_and_never_echoes_the_body():
+@pytest.mark.parametrize("code", ["json_validate_failed", "output_parse_failed"])
+def test_schema_validation_failure_is_transient_and_never_echoes_the_body(code):
     responses.add(responses.POST, CHAT, status=400, json={"error": {
         "message": "Failed to validate JSON : usr", "type": "invalid_request_error",
-        "code": "json_validate_failed", "failed_generation": "texte de la question usr"}})
+        "code": code, "failed_generation": "texte de la question usr"}})
 
     with pytest.raises(LlmUnavailableError) as excinfo:
         _call(_client())
