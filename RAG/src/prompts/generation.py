@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from html import escape
 
 from RAG.src.generation.messages import SIGNIFICANCE_FR
 
@@ -60,6 +61,10 @@ def _sha(system: str, schema: dict) -> str:
 
 
 def user_message(question: str, context: str, flags: list[str]) -> str:
+    """Message utilisateur. La question est échappée (< et >) pour ne pas fermer sa balise
+    ni en ouvrir une autre ; `context` doit déjà être échappé par
+    RAG/src/generation/context.py."""
+    question = escape(question, quote=False)
     notes = ", ".join(flags) if flags else "none"
     return (f"<question>\n{question}\n</question>\n<search_flags>{notes}</search_flags>\n"
             f"<documents>\n{context}\n</documents>")

@@ -559,7 +559,8 @@ def test_config_sha256_ignores_generation_and_api_settings():
 
     base = DEFAULT_CONFIG_PATH.read_text(encoding="utf-8")
     other = (base.replace("generation_max_tokens: 3000", "generation_max_tokens: 4000")
-                 .replace("max_concurrency: 4", "max_concurrency: 2"))
+                 .replace("max_concurrency: 4", "max_concurrency: 2")
+                 .replace("generation_profile: essai-groq-gpt-oss-120b", "generation_profile: x"))
     assert other != base
 
     assert config_sha256(yaml.safe_load(base)) == config_sha256(yaml.safe_load(other))
