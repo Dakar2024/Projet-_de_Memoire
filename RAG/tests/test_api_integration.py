@@ -1,6 +1,6 @@
-"""Dans le conteneur rag-api-test (image rag-api + pytest, mêmes réseaux que rag-api),
-contre la vraie pile. Exclus de la passe rapide. Les tests du proxy sortent sur Internet
-(OpenRouter)."""
+"""Dans le conteneur rag-api-test (image rag-api + pytest, mêmes réseaux que rag-api, y
+compris rag-gateway-net pour joindre la passerelle), contre la vraie pile. Exclus de la
+passe rapide. Les tests du proxy sortent sur Internet (OpenRouter)."""
 
 import os
 
@@ -62,3 +62,21 @@ def test_api_answers_end_to_end():
 def test_api_rejects_a_wrong_key():
     assert requests.post("http://rag-api:8000/v1/questions", headers={"X-API-Key": "faux"},
                          json={"question": "q ?"}, timeout=30).status_code == 401
+
+
+# Passerelle d'entrée (rag-gateway) : jointe par rag-gateway-net, sans proxy (NO_PROXY).
+GATEWAY = "http://rag-gateway:8080"
+
+
+def test_gateway_relays_health():
+    assert requests.get(f"{GATEWAY}/health", timeout=15).status_code == 200
+
+
+def test_gateway_does_not_relay_other_paths():
+    # /schema n'est pas relayé : 404 de la passerelle, même avec une clé valable.
+    r = requests.get(f"{GATEWAY}/schema", headers={"X-API-Key": os.environ["RAG_API_KEY"]}, timeout=15)
+    assert r.status_code == 404
+
+
+def test_gateway_relays_questions_and_the_api_checks_the_key():
+    assert requests.post(f"{GATEWAY}/v1/questions", json={"question": "q ?"}, timeout=30).status_code == 401
