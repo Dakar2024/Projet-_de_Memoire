@@ -158,7 +158,7 @@ x-rag-app-env: &rag-app-env
   # les services internes listés dans NO_PROXY (base, embedding, API elle-même).
   HTTPS_PROXY: http://rag-proxy:3128
   HTTP_PROXY: http://rag-proxy:3128
-  NO_PROXY: rag-postgres,rag-embeddings,rag-api,localhost,127.0.0.1
+  NO_PROXY: rag-postgres,rag-embeddings,rag-api,rag-gateway,localhost,127.0.0.1
   RAG_EMBEDDINGS_URL: http://rag-embeddings:8080
   RAG_EMBEDDINGS_API_KEY: ${RAG_EMBEDDINGS_API_KEY:?RAG_EMBEDDINGS_API_KEY obligatoire, à renseigner}
   RAG_EMBEDDING_MODEL: ${RAG_EMBEDDING_MODEL:?RAG_EMBEDDING_MODEL obligatoire, à renseigner}
@@ -524,9 +524,13 @@ services:
       - ./data/models:/opt/projet/data/models:ro
     command: ["uvicorn", "RAG.src.api.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000",
               "--workers", "1", "--no-server-header", "--log-level", "info"]
-    ports:
-      # Boucle locale seulement : l'API n'est pas exposée au réseau (pas de TLS).
-      - "127.0.0.1:${RAG_API_PORT:-8090}:8000"
+    # Aucun port publié : Docker n'en publie pas pour un conteneur relié seulement à
+    # des réseaux internes. L'entrée passe par rag-gateway (rag-gateway-net) ; l'API
+    # reste sans sortie directe (Internet uniquement par rag-proxy).
+    networks:
+      - rag-network
+      - rag-proxy-net
+      - rag-gateway-net
     depends_on:
       rag-proxy:
         condition: service_healthy
@@ -591,11 +595,66 @@ services:
     environment:
       <<: *rag-app-env
       RAG_API_KEY: ${RAG_API_KEY:-}
+    # rag-gateway-net en plus : les tests vérifient aussi le filtrage de la passerelle.
+    networks:
+      - rag-network
+      - rag-proxy-net
+      - rag-gateway-net
     volumes:
       - ./RAG:/opt/projet/RAG:ro
       - ./src:/opt/projet/src:ro
       - ./data/models:/opt/projet/data/models:ro
     entrypoint: ["python", "-m", "pytest", "-p", "no:cacheprovider"]
+
+#----------------------------------
+# RAG — passerelle d'entrée (nginx) : seul point d'accès à l'API depuis l'hôte
+#----------------------------------
+  rag-gateway:
+    image: nginxinc/nginx-unprivileged:1.30-alpine@sha256:15c994d10d6d78658721c3bcafff14cb281fba2a4bdf9d5ba92c416a472516e3
+    container_name: genomique-rag-gateway
+    restart: unless-stopped
+    # Pourquoi une passerelle : rag-api n'est relié qu'à des réseaux internes (sa seule
+    # sortie Internet est rag-proxy) et Docker ne publie aucun port pour un tel
+    # conteneur. La passerelle publie le port sur la boucle locale et ne relaie que
+    # GET /health, GET /ready et POST /v1/questions (docker/rag-gateway/nginx.conf).
+    # Elle ne détient aucun secret : la clé X-API-Key est vérifiée par l'API.
+    # Vérifié le 08/10/2026 (nginx 1.30.5) : utilisateur nginx (101) de l'image, racine
+    # en lecture seule, aucune capacité ; seul /tmp est écrit (PID, fichiers temporaires).
+    user: "101:101"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # nginx lancé directement : les scripts de /docker-entrypoint.d réécrivent la
+    # configuration (IPv6, modèles, résolveurs), inutile avec une configuration montée.
+    entrypoint: ["nginx"]
+    command: ["-g", "daemon off;"]
+    volumes:
+      - ./docker/rag-gateway/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      # Boucle locale seulement : l'API n'est pas exposée au réseau (pas de TLS).
+      - "127.0.0.1:${RAG_API_PORT:-8090}:8080"
+    # rag-api-ingress (non interne) ne porte que la publication du port ; la passerelle
+    # joint rag-api par rag-gateway-net (interne).
+    networks:
+      - rag-api-ingress
+      - rag-gateway-net
+    depends_on:
+      rag-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 64m
 
 #----------------------------------
 # RAG — proxy sortant filtrant (Squid) : seule sortie Internet du RAG
@@ -667,6 +726,14 @@ networks:
     ipam:
       config:
         - subnet: 172.31.250.0/24
+  # Entrée de l'API : seul membre rag-gateway, qui y publie le port sur 127.0.0.1.
+  # Non interne, sans quoi Docker ne publierait pas le port.
+  rag-api-ingress:
+    driver: bridge
+  # Réseau interne entre la passerelle et rag-api (et rag-api-test pour ses tests).
+  rag-gateway-net:
+    driver: bridge
+    internal: true
   # Sortie vers Internet du seul proxy rag-proxy, qui filtre par domaine (OpenRouter, Groq).
   rag-egress:
     driver: bridge
