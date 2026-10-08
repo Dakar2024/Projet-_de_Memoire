@@ -169,3 +169,38 @@ def test_identifier_check_receives_the_real_status(monkeypatch):
 def test_as_dict_serialises_sources_and_history():
     data = _generate(StubClient(ok()), result(docs=[doc(text=HISTORY_TEXT)])).as_dict()
     assert data["sources"][0]["previous_until"] == "2015-01" and len(data["history"]) == 1
+
+
+@pytest.mark.parametrize("text", [
+    "rs​12345 n est pas documenté.",
+    "c.68‑2A>G absent.",
+    "Le variant VCV000017677 n est pas dans les fiches.",
+    "Aucune fiche, mais ce variant est généralement pathogène.",
+    "Il était auparavant classé bénin jusqu en 2015.",
+    "   ",
+])
+def test_not_in_sources_text_goes_through_the_same_checks(text):
+    answer = _generate(StubClient(ok(status="not_in_sources", answer=text, citations=())))
+
+    assert (answer.status, answer.answer) == ("not_in_sources", messages.NO_DOCUMENT)
+    assert answer.rejected
+
+
+def test_neutral_not_in_sources_text_is_kept():
+    text = "Les fiches transmises ne répondent pas à cette question."
+    answer = _generate(StubClient(ok(status="not_in_sources", answer=text, citations=())))
+    assert (answer.status, answer.answer, answer.rejected) == ("not_in_sources", text, None)
+
+
+@pytest.mark.parametrize("status", ["answered", "partial"])
+def test_an_empty_answer_is_unverifiable(status):
+    answer = _generate(StubClient(ok(status=status, answer="  \n ")))
+    assert (answer.status, answer.answer, answer.rejected) == ("unverifiable", messages.UNVERIFIABLE, "empty_answer")
+
+
+def test_an_out_of_panel_gene_with_a_variant_identifier_still_asks_the_llm():
+    client = StubClient(ok())
+    q = "rs80357906 est-il dans MLH1 ?"
+    answer = generate_answer(q, result(question=q, flags=["gene_out_of_panel"]), client=client, profile=PROFILE,
+                             max_tokens=3000)
+    assert client.calls == 1 and answer.status == "answered"

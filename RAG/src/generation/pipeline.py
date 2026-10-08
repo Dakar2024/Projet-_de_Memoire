@@ -8,6 +8,7 @@ deux transactions de fils différents : un emplacement n'est jamais partagé."""
 from __future__ import annotations
 
 import queue
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -19,6 +20,14 @@ import requests
 from RAG.src.generation.answer import Answer, generate_answer
 from RAG.src.retrieval.retriever import SearchResult, Searcher, build_llm_client
 from RAG.src.utils.config import DEFAULT_CONFIG_PATH, load_generation_config, load_service_settings
+
+
+def _quietly(close: Callable[[], object]) -> None:
+    """Nettoyage sur un chemin d'erreur : son propre échec est ignoré, l'erreur d'origine prime."""
+    try:
+        close()
+    except Exception:  # noqa: BLE001 - l'erreur d'origine est relevée par l'appelant
+        pass
 
 
 @dataclass(frozen=True)
@@ -69,27 +78,38 @@ class QuestionPipeline:
 
     def __init__(self, slots: int, *, config_path: Path = DEFAULT_CONFIG_PATH, env=None,
                  analysis_cache_path: Path | None = None) -> None:
+        if analysis_cache_path is not None and slots > 1:
+            # Le cache d'analyse n'admet qu'un écrivain à la fois.
+            raise ValueError("le cache d'analyse exige un seul emplacement")
         self._n = slots
         self._config_path, self._env, self._cache_path = config_path, env, analysis_cache_path
         self._generation = load_generation_config(config_path)
         self._free: queue.Queue[Slot] = queue.Queue()
         self._all: list[Slot] = []
+        self._busy: set[int] = set()
+        self._lock = threading.Lock()
 
     def __enter__(self) -> QuestionPipeline:
         try:
             for _ in range(self._n):
                 searcher = Searcher(config_path=self._config_path, env=self._env, cache_path=self._cache_path)
-                searcher.__enter__()
+                try:
+                    searcher.__enter__()
+                except BaseException:
+                    # Base non ouverte : fermer quand même les sessions HTTP de __init__.
+                    _quietly(searcher.close)
+                    raise
                 try:
                     generator = build_llm_client(self._generation.profile, self._env, self._generation.timeout_s)
                 except BaseException:
-                    searcher.__exit__(None, None, None)
+                    _quietly(lambda: searcher.__exit__(None, None, None))
                     raise
                 slot = Slot(searcher, generator)
                 self._all.append(slot)
                 self._free.put(slot)
         except BaseException:
-            self.__exit__(None, None, None)
+            # Une erreur de fermeture ne doit pas masquer l'erreur d'ouverture.
+            _quietly(lambda: self.__exit__(None, None, None))
             raise
         return self
 
@@ -103,17 +123,27 @@ class QuestionPipeline:
                 except Exception as exc:  # noqa: BLE001 - on ferme tout avant de relever
                     first = first or exc
         self._all.clear()
+        self._busy.clear()
         self._free = queue.Queue()
         if first is not None:
             raise first
 
     def acquire(self) -> Slot | None:
         try:
-            return self._free.get_nowait()
+            slot = self._free.get_nowait()
         except queue.Empty:
             return None
+        with self._lock:
+            self._busy.add(id(slot))
+        return slot
 
     def release(self, slot: Slot) -> None:
+        """Rend un emplacement acquis ; le rendre deux fois le mettrait deux fois en file,
+        et deux questions partageraient alors une connexion."""
+        with self._lock:
+            if id(slot) not in self._busy:
+                raise RuntimeError("emplacement non acquis ou déjà rendu")
+            self._busy.remove(id(slot))
         self._free.put(slot)
 
     def ask(self, slot: Slot, question: str) -> PipelineResult:
