@@ -31,9 +31,11 @@ _VARIATION_ID = re.compile(
 )
 _LABELS = sorted(SIGNIFICANCE_FR, key=len, reverse=True)
 _TYPOGRAPHY = str.maketrans({c: " " for c in "«»’‘“”…\u00a0\u202f"})
-# Tirets Unicode (U+2010 à U+2015, signe moins U+2212) ramenés à « - » : « c.68‑2A>G »
-# écrit avec un trait d'union insécable reste un HGVS intronique contrôlé.
-_DASHES = str.maketrans({c: "-" for c in "\u2010\u2011\u2012\u2013\u2014\u2015\u2212"})
+# Tirets Unicode (U+2010 à U+2015, signe moins U+2212, tirets doubles et triples U+2E3A/U+2E3B,
+# signe moins modificateur U+02D7, moins épais U+2796, petit tiret cadratin U+FE58) ramenés à
+# « - » : « c.68‑2A>G » écrit avec un trait d'union insécable reste un HGVS intronique contrôlé.
+_DASHES = str.maketrans({c: "-" for c in
+                         "\u2010\u2011\u2012\u2013\u2014\u2015\u2212\u2e3a\u2e3b\u02d7\u2796\ufe58"})
 _PANEL_STATUSES = ("answered", "partial")
 
 
@@ -210,3 +212,19 @@ def check_significances(answer: str, cited: Sequence[RetrievedDocument]) -> None
     for sentence in _SENTENCES.split(text):
         if _terms_in(sentence) - current:
             raise GenerationRejectedError("significance_not_in_sources")
+
+
+# Marqueurs d'un historique raconté. Volontairement large : « comme indiqué précédemment »
+# est rejeté aussi (faux positif accepté, la réponse devient « non vérifiable »).
+_HISTORY_NARRATION = re.compile(
+    r"\b(?:auparavant|pr[ée]c[ée]demment|initialement|anciennement|ant[ée]rieur\w*|reclass\w*)"
+    r"|\bjusqu['’]\s*(?:en|au|à|a)\s+\S*\s*(?:19|20)\d\d",
+    re.IGNORECASE,
+)
+
+
+def check_no_history_narration(answer: str) -> None:
+    """La réponse ne raconte pas l'historique de classification : le code le restitue
+    à partir de la ligne Gold « Classification history » (voir answer.py)."""
+    if _HISTORY_NARRATION.search(_clean(answer)):
+        raise GenerationRejectedError("history_narrated")
