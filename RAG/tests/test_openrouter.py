@@ -18,6 +18,7 @@ _ABSENT = object()
 
 
 def _client(**kwargs) -> OpenRouterClient:
+    kwargs.setdefault("sleep", lambda seconds: None)
     return OpenRouterClient("sk-or-secret", session=requests.Session(), **kwargs)
 
 
@@ -247,5 +248,38 @@ def test_rejections_never_echo_the_key_or_the_question(provider, cost):
 def test_the_client_no_longer_accepts_a_generation_retry_schedule():
     with pytest.raises(TypeError):
         OpenRouterClient("sk-or-secret", generation_attempts=8)
-    with pytest.raises(TypeError):
-        OpenRouterClient("sk-or-secret", sleep=lambda s: None)
+
+
+@responses.activate
+def test_received_503_is_retried_once_then_succeeds():
+    waits = []
+    responses.add(responses.POST, CHAT, status=503)
+    _chat_ok()
+
+    result = _call(_client(sleep=waits.append))
+
+    assert result.content == {"a": 1}
+    assert waits == [1.0] and len(responses.calls) == 2
+
+
+@responses.activate
+def test_connection_error_is_not_retried():
+    waits = []
+    responses.add(responses.POST, CHAT, body=requests.ConnectionError("coupé"))
+
+    with pytest.raises(LlmUnavailableError):
+        _call(_client(sleep=waits.append))
+
+    assert len(responses.calls) == 1 and waits == []
+
+
+def test_close_closes_the_session():
+    closed = []
+
+    class Session:
+        def close(self):
+            closed.append(1)
+
+    OpenRouterClient("sk-or-secret", session=Session()).close()
+
+    assert closed == [1]

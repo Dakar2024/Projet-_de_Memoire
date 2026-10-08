@@ -60,6 +60,9 @@ class EmbeddingClient:
         self._timeout = timeout_s
         self._session = session or build_session()
 
+    def close(self) -> None:
+        self._session.close()
+
     def _request(self, method: str, path: str, payload: dict | None = None):
         try:
             response = self._session.request(

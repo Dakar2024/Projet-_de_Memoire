@@ -213,14 +213,14 @@ def test_refusals_are_permanent_and_never_echo_the_key_or_the_body(status):
 
 
 @responses.activate
-@pytest.mark.parametrize("status", [500, 503])
-def test_server_errors_are_transient_and_not_retried(status):
+@pytest.mark.parametrize("status, calls", [(500, 1), (503, 3)])
+def test_server_errors_are_transient_and_only_502_503_are_retried(status, calls):
     responses.add(responses.POST, CHAT, status=status, body="gsk_secret usr")
 
     with pytest.raises(LlmUnavailableError) as excinfo:
         _call(_client())
     assert "gsk_secret" not in str(excinfo.value) and "usr" not in str(excinfo.value)
-    assert len(responses.calls) == 1
+    assert len(responses.calls) == calls
 
 
 @responses.activate
@@ -254,3 +254,38 @@ def test_non_json_or_non_object_content_is_unavailable(content):
 def test_an_empty_key_is_refused_upfront():
     with pytest.raises(LlmPermanentError, match="GROQ_API_KEY"):
         GroqClient("  ")
+
+
+@responses.activate
+def test_received_503_is_retried_once_then_succeeds():
+    sleep = FakeSleep()
+    responses.add(responses.POST, CHAT, status=503)
+    _chat_ok()
+
+    result = _call(_client(sleep=sleep))
+
+    assert result.content == {"a": 1}
+    assert sleep.waits == [1.0] and len(responses.calls) == 2
+
+
+@responses.activate
+def test_connection_error_is_not_retried():
+    sleep = FakeSleep()
+    responses.add(responses.POST, CHAT, body=requests.ConnectionError("coupé"))
+
+    with pytest.raises(LlmUnavailableError):
+        _call(_client(sleep=sleep))
+
+    assert len(responses.calls) == 1 and sleep.waits == []
+
+
+def test_close_closes_the_session():
+    closed = []
+
+    class Session:
+        def close(self):
+            closed.append(1)
+
+    GroqClient("gsk_secret", session=Session()).close()
+
+    assert closed == [1]
