@@ -51,6 +51,8 @@ from RAG.src.utils.errors import (
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 GROQ_PROVIDER_NAME = "Groq"
 _SERVICE = "Groq"
+# Code d'un 400 dû à la sortie du modèle, non à la requête.
+SCHEMA_FAILURE_CODE = "json_validate_failed"
 # Attente après un 429 : bornée, avec une valeur par défaut si les en-têtes sont illisibles.
 MAX_RATE_LIMIT_WAIT_S = 60.0
 DEFAULT_RATE_LIMIT_WAIT_S = 10.0
@@ -181,6 +183,11 @@ class GroqClient:
             raise LlmPermanentError(
                 f"Groq refuse la requête (413) pour {profile.name} : elle dépasse la limite de jetons "
                 "par minute de l'offre gratuite, réduire llm.max_tokens ou le prompt")
+        if response.status_code == 400 and error_code(response) == f", code {SCHEMA_FAILURE_CODE}":
+            # Sortie du modèle non conforme au schéma (souvent coupée ou trop longue) : un autre
+            # tirage peut réussir, ce n'est pas une requête invalide. Ni corps ni question cités.
+            raise LlmUnavailableError(
+                f"Groq : sortie du modèle non conforme au schéma (400) pour {profile.name}")
         if response.status_code in PERMANENT_STATUSES:
             raise LlmPermanentError(
                 f"Groq refuse la requête ({response.status_code}) pour {profile.name}{error_code(response)}")
