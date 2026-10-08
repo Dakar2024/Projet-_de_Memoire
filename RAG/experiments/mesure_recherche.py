@@ -138,9 +138,12 @@ def load_v0_scores(path: Path, questions: list[dict]) -> dict[str, list[float]] 
 def config_sha256(raw_config: dict) -> str:
     """Empreinte des sections `search` et `llm` de RAG/config.yaml, sans
     `llm.analysis_profile` : ce choix change à la mise en service, pas les conditions de mesure ;
-    ni `llm.trial_profiles` : les séries officielles ne dépendent pas des essais."""
+    ni `llm.trial_profiles` : les séries officielles ne dépendent pas des essais. Sont aussi
+    exclus `llm.generation_profile`, `llm.generation_max_tokens` et toute la section `api` :
+    la mesure de la recherche ne dépend ni de la génération de la réponse ni de l'API."""
     llm = {key: value for key, value in (raw_config.get("llm") or {}).items()
-           if key not in ("analysis_profile", "trial_profiles")}
+           if key not in ("analysis_profile", "trial_profiles", "generation_profile",
+                          "generation_max_tokens")}
     sections = {"search": raw_config.get("search"), "llm": llm}
     return hashlib.sha256(json.dumps(sections, sort_keys=True).encode("utf-8")).hexdigest()
 

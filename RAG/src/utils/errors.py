@@ -61,6 +61,10 @@ class LlmQuotaExhaustedError(LlmUnavailableError):
     """Quota du fournisseur épuisé : inutile de réessayer avant sa réinitialisation. Une
     mesure s'arrête à la première occurrence au lieu d'attendre pour chaque question."""
 
+    def __init__(self, message: str, retry_after_s: float | None = None) -> None:
+        super().__init__(message)
+        self.retry_after_s = retry_after_s
+
 
 class LlmProviderMismatchError(Exception):
     """La requête a été servie par un autre fournisseur que celui qui était figé."""
@@ -74,3 +78,9 @@ class LlmTruncatedError(LlmPermanentError):
     def __init__(self, message: str, *, cost_usd: float | None = None) -> None:
         super().__init__(message)
         self.cost_usd = cost_usd
+
+
+class GenerationRejectedError(Exception):
+    """Réponse du LLM de génération refusée par un contrôle déterministe (citation ou
+    identifiant hors des documents transmis, signification non sourcée). Interne : la
+    réponse est remplacée par un message fixe, jamais livrée."""

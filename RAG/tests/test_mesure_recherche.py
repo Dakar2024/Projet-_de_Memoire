@@ -549,3 +549,17 @@ def test_mesurer_stops_at_the_first_exhausted_quota(tmp_path, monkeypatch):
         m.cmd_mesurer(argparse.Namespace(profile=TRIAL_PROFILE, mode="full", approx=False))
     assert QuotaSearcher.searched == 1
     assert not (tmp_path / "e2a-essai" / "runs").exists()
+
+
+def test_config_sha256_ignores_generation_and_api_settings():
+    import yaml
+
+    from RAG.experiments.mesure_recherche import config_sha256
+    from RAG.src.utils.config import DEFAULT_CONFIG_PATH
+
+    base = DEFAULT_CONFIG_PATH.read_text(encoding="utf-8")
+    other = (base.replace("generation_max_tokens: 3000", "generation_max_tokens: 4000")
+                 .replace("max_concurrency: 4", "max_concurrency: 2"))
+    assert other != base
+
+    assert config_sha256(yaml.safe_load(base)) == config_sha256(yaml.safe_load(other))

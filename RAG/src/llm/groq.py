@@ -160,10 +160,12 @@ class GroqClient:
             # Quota épuisé : attendre ne servirait à rien, ni pour cette question ni pour les suivantes.
             reason = quota_exhausted_reason(response.headers)
             if reason is not None:
-                raise LlmQuotaExhaustedError(f"quota Groq épuisé (429) pour {profile.name} : {reason}")
+                raise LlmQuotaExhaustedError(f"quota Groq épuisé (429) pour {profile.name} : {reason}",
+                                             retry_after_s=announced_wait(response.headers))
             if waits >= self._max_waits:
                 raise LlmQuotaExhaustedError(
-                    f"quota Groq épuisé (429) pour {profile.name} : toujours dépassé après {waits} attentes")
+                    f"quota Groq épuisé (429) pour {profile.name} : toujours dépassé après {waits} attentes",
+                    retry_after_s=announced_wait(response.headers))
             waits += 1
             self._sleep(rate_limit_wait(response.headers))
         if response.status_code == 413:

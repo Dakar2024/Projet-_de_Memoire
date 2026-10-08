@@ -29,9 +29,14 @@ search:
   max_question_chars: 1000
 
 llm:
-  # Profil d'analyse de la question. Valeur de départ : la mesure de E2a la fixe
-  # (reference/mesure_recherche_e2a.md).
-  analysis_profile: claude-opus-5.5
+  # Profil d'analyse de la question. PROVISOIRE : profil d'essai gratuit (Groq) tant
+  # que la mesure officielle de E2a n'a pas désigné le modèle (crédits OpenRouter).
+  analysis_profile: essai-groq-gpt-oss-120b
+  # Profil de génération de la réponse (E2b). PROVISOIRE : le modèle est choisi par
+  # mesure en E3 (RAGAS, règle fixée d'avance).
+  generation_profile: essai-groq-gpt-oss-120b
+  # Réponse JSON (texte ≤ 4 000 caractères + citations) et réflexion interne comprises.
+  generation_max_tokens: 3000
   request_timeout_s: 60
   # La réflexion interne du modèle compte dans ce plafond (documentation OpenRouter).
   max_tokens: 2000
@@ -65,3 +70,14 @@ llm:
       provider_tag: groq
       provider_name: Groq
       quantization: null
+
+api:
+  # Questions traitées en même temps ; au-delà, 429. Chaque emplacement ouvre sa propre
+  # connexion PostgreSQL (une connexion ne se partage pas entre transactions).
+  max_concurrency: 4
+  # Délai total d'une question (analyse, recherche, génération) ; au-delà, 503.
+  request_timeout_s: 120
+  # Corps de requête maximal ; au-delà, 413.
+  max_body_bytes: 8192
+  # Documentation OpenAPI : désactivée (aucun client ne la consomme).
+  openapi: false
