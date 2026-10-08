@@ -146,13 +146,15 @@ développement où seul Airflow joint la base vectorielle.
       aujourd'hui l'écriture (via `./data`), donc une tâche compromise pourrait empoisonner le
       modèle servi. Reporté : demande de redécouper le montage de `./data` ; à faire avant E2.
 
-- [ ] **Proxy sortant filtrant (squid/tinyproxy, `openrouter.ai:443` seulement) sur
+- [x] **Proxy sortant filtrant (squid/tinyproxy, `openrouter.ai:443` seulement) sur
       `rag-egress`**, `rag-search` sur réseau interne + `HTTPS_PROXY` — avant E2b.
-      Aujourd'hui `rag-egress` donne un accès Internet non filtré (Docker ne filtre pas par
-      domaine) : seul le code se limite à OpenRouter.
-- [ ] **Verrouiller par empreinte les dépendances de l'image `rag-search`**, comme l'image
+      Fait en E2b (rag-proxy, docker/rag-api/requirements.lock) : Squid, seul service sur
+      `rag-egress`, n'autorise que `CONNECT` vers `openrouter.ai:443` et `api.groq.com:443` ;
+      `rag-api` / `rag-search` sont sur le réseau interne `rag-proxy-net`.
+- [x] **Verrouiller par empreinte les dépendances de l'image `rag-search`**, comme l'image
       d'export : versions épinglées aujourd'hui, sans empreintes. À faire avant que le service
-      devienne l'API (E2b).
+      devienne l'API (E2b). Fait en E2b (rag-proxy, docker/rag-api/requirements.lock) : image
+      commune `docker/rag-api/Dockerfile`, `pip install --require-hashes`.
 
 ### Robustesse — avant la mise en service régulière
 

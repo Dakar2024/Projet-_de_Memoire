@@ -115,6 +115,32 @@ x-airflow-after-init: &airflow-after-init
   airflow-init:
     condition: service_completed_successfully
 
+#----------------------------------
+# RAG — image commune (E2a/E2b) : API et outil de mesure
+#----------------------------------
+x-rag-app: &rag-app
+  build:
+    context: .
+    dockerfile: docker/rag-api/Dockerfile
+  user: "${AIRFLOW_UID:?AIRFLOW_UID obligatoire, sortie de id -u sur l hôte}:0"
+  read_only: true
+  tmpfs:
+    - /tmp
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  working_dir: /opt/projet
+  # Sortie Internet uniquement par rag-proxy (liste d'autorisation : OpenRouter, Groq).
+  # La base et l'embedding sont joints en direct sur rag-network.
+  # Pas genomique-network : ni base d'Airflow, ni MinIO.
+  networks:
+    - rag-network
+    - rag-proxy-net
+  depends_on:
+    rag-proxy:
+      condition: service_started
+
 services:
 #----------------------------------
 # PostgreSQL — base de métadonnées Airflow
@@ -437,63 +463,143 @@ services:
     restart: "no"
 
 #----------------------------------
-# RAG — recherche (E2a), outil à la demande ; deviendra l'API en E2b
+# RAG — API locale (E2b) : questions en français, réponses vérifiées
 #----------------------------------
-  rag-search:
-    profiles: ["outils"]
-    build:
-      context: .
-      dockerfile: docker/rag-search/Dockerfile
-    user: "${AIRFLOW_UID:?AIRFLOW_UID obligatoire, sortie de id -u sur l hôte}:0"
-    read_only: true
-    tmpfs:
-      - /tmp
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    environment:
+  rag-api:
+    <<: *rag-app
+    container_name: genomique-rag-api
+    restart: unless-stopped
+    environment: &rag-app-env
       PYTHONPATH: /opt/projet:/opt/projet/src
+      # requests suit HTTPS_PROXY : tout appel sortant passe par le proxy filtrant, sauf
+      # les services internes listés dans NO_PROXY (base, embedding, API elle-même).
+      HTTPS_PROXY: http://rag-proxy:3128
+      HTTP_PROXY: http://rag-proxy:3128
+      NO_PROXY: rag-postgres,rag-embeddings,rag-api,localhost,127.0.0.1
       RAG_EMBEDDINGS_URL: http://rag-embeddings:8080
       RAG_EMBEDDINGS_API_KEY: ${RAG_EMBEDDINGS_API_KEY:?RAG_EMBEDDINGS_API_KEY obligatoire, à renseigner}
       RAG_EMBEDDING_MODEL: ${RAG_EMBEDDING_MODEL:?RAG_EMBEDDING_MODEL obligatoire, à renseigner}
       RAG_PG_HOST: rag-postgres
       RAG_PG_PORT: "5432"
       RAG_PG_DB: rag
-      # Lecture seule : la recherche n'écrit jamais dans la base.
+      # Lecture seule : ni la recherche ni l'API n'écrivent dans la base.
       RAG_PG_USER: rag_reader
       RAG_PG_PASSWORD: ${RAG_READER_PASSWORD:?RAG_READER_PASSWORD obligatoire, à renseigner}
       # `:-` et non `:?` : une clé absente ne doit pas bloquer les commandes Compose
-      # du pipeline ; le code refuse lui-même de chercher sans clé.
+      # du pipeline ; le code refuse lui-même d'appeler le LLM sans clé.
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      # Essai gratuit seulement (profils de llm.trial_profiles) ; même règle `:-`.
+      # Profils d'essai (llm.trial_profiles) ; même règle `:-`.
       GROQ_API_KEY: ${GROQ_API_KEY:-}
-    working_dir: /opt/projet
-    # Montages restreints : ni .env, ni le reste du dépôt dans ce conteneur relié à Internet.
+      # `:-` : l'API refuse elle-même de démarrer sans clé de 32 caractères au moins.
+      RAG_API_KEY: ${RAG_API_KEY:-}
+    # Montages restreints : ni .env, ni le reste du dépôt dans ce conteneur.
     volumes:
       - ./RAG:/opt/projet/RAG:ro
       - ./src:/opt/projet/src:ro
       - ./data/models:/opt/projet/data/models:ro
-      # Seul dossier écrit : les mesures de E2a (cache d'analyses, séries). Le reste de
-      # data/experiments (mesures de E1) n'est ni lu ni modifiable d'ici. Le dossier doit
-      # exister sur l'hôte (mkdir -p data/experiments/e2a), sinon Docker le crée en root.
+    command: ["uvicorn", "RAG.src.api.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000",
+              "--workers", "1", "--no-server-header", "--log-level", "info"]
+    ports:
+      # Boucle locale seulement : l'API n'est pas exposée au réseau (pas de TLS).
+      - "127.0.0.1:${RAG_API_PORT:-8090}:8000"
+    depends_on:
+      rag-proxy:
+        condition: service_started
+      rag-embeddings:
+        condition: service_healthy
+      rag-postgres-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).status == 200 else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          memory: 1536m
+
+#----------------------------------
+# RAG — recherche et mesures (E2a/E2b), outil à la demande, même image que rag-api
+#----------------------------------
+  rag-search:
+    <<: *rag-app
+    profiles: ["outils"]
+    environment: *rag-app-env
+    volumes:
+      - ./RAG:/opt/projet/RAG:ro
+      - ./src:/opt/projet/src:ro
+      - ./data/models:/opt/projet/data/models:ro
+      # Seuls dossiers écrits : les mesures de E2a (cache d'analyses, séries), l'essai
+      # gratuit (Groq) et la recette de E2b. Le reste de data/experiments (mesures de E1)
+      # n'est ni lu ni modifiable d'ici. Les dossiers doivent exister sur l'hôte
+      # (mkdir -p data/experiments/<nom>), sinon Docker les crée en root.
       - ./data/experiments/e2a:/opt/projet/data/experiments/e2a
-      # Séries de l'essai gratuit (Groq), à part des séries officielles ; la vérité
-      # terrain est lue dans e2a, déjà monté. À créer aussi sur l'hôte (mkdir -p).
       - ./data/experiments/e2a-essai:/opt/projet/data/experiments/e2a-essai
-    # rag-network pour la base et l'embedding ; rag-egress pour joindre OpenRouter (et
-    # Groq pour l'essai). rag-egress donne un accès Internet NON filtré : Docker ne filtre
-    # pas par domaine, seul le code se limite à ces services (proxy filtrant prévu avant
-    # E2b, TODO.md §6).
-    # Pas genomique-network : ni base d'Airflow, ni MinIO.
-    networks:
-      - rag-network
-      - rag-egress
+      - ./data/experiments/e2b-recette:/opt/projet/data/experiments/e2b-recette
     entrypoint: ["python"]
     deploy:
       resources:
         limits:
           memory: 1g
+
+#----------------------------------
+# RAG — tests d'intégration (outil à la demande) : image rag-api + pytest verrouillé.
+# Derrière le proxy, PyPI n'est plus joignable : pytest ne peut plus s'installer à
+# l'exécution, d'où cette image dédiée.
+#----------------------------------
+  rag-api-test:
+    <<: *rag-app
+    profiles: ["outils"]
+    build:
+      context: .
+      dockerfile: docker/rag-api/Dockerfile.test
+    environment:
+      <<: *rag-app-env
+      RAG_API_KEY: ${RAG_API_KEY:-}
+    volumes:
+      - ./RAG:/opt/projet/RAG:ro
+      - ./src:/opt/projet/src:ro
+      - ./data/models:/opt/projet/data/models:ro
+    entrypoint: ["python", "-m", "pytest", "-p", "no:cacheprovider"]
+
+#----------------------------------
+# RAG — proxy sortant filtrant (Squid) : seule sortie Internet du RAG
+#----------------------------------
+  rag-proxy:
+    image: ubuntu/squid:6.6-24.04_edge@sha256:8a3baed477e2c282ab8aa5edad442f69873246964f225c5c2ae8364b6610963c
+    container_name: genomique-rag-proxy
+    restart: unless-stopped
+    # Vérifié le 08/10/2026 (Squid 6.14) : démarre et écoute sous l'utilisateur proxy
+    # (13) de l'image, sans aucune capacité, racine en lecture seule. L'image démarre
+    # en root et laisse Squid changer d'utilisateur (SETUID/SETGID) : inutile ici, le
+    # port 3128 n'est pas privilégié.
+    user: "13:13"
+    read_only: true
+    # Sans cache disque, PID ni fichier journal (squid.conf), Squid n'écrit que dans
+    # /tmp (coredump_dir, répertoire courant) : seul tmpfs nécessaire.
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Squid appelé directement : l'entrypoint de l'image tente de régénérer un
+    # certificat dans /etc/ssl (racine en lecture seule) et suit des fichiers journaux
+    # que cette configuration n'écrit pas (journaux sur stdout/stderr).
+    entrypoint: ["/usr/sbin/squid"]
+    command: ["-f", "/etc/squid/squid.conf", "-NYC"]
+    volumes:
+      - ./docker/rag-proxy/squid.conf:/etc/squid/squid.conf:ro
+    # Seul service du RAG relié à Internet (rag-egress) ; rag-api le joint par rag-proxy-net.
+    networks:
+      - rag-proxy-net
+      - rag-egress
+    deploy:
+      resources:
+        limits:
+          memory: 256m
 
 #----------------------------------
 # Volumes et réseau
@@ -512,8 +618,10 @@ networks:
   rag-network:
     driver: bridge
     internal: true
-  # Sortie vers Internet du seul service de recherche. Accès non filtré : Docker ne
-  # sait pas restreindre un réseau à un domaine ; seul le code de rag-search se limite
-  # à OpenRouter (et à Groq pour l'essai). Aucun autre service n'y est rattaché.
+  # Réseau interne entre rag-api / rag-search et le proxy : aucun accès direct à Internet.
+  rag-proxy-net:
+    driver: bridge
+    internal: true
+  # Sortie vers Internet du seul proxy rag-proxy, qui filtre par domaine (OpenRouter, Groq).
   rag-egress:
     driver: bridge
