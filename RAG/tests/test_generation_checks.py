@@ -1,6 +1,8 @@
 import pytest
 
-from RAG.src.generation.checks import check_citations, check_identifiers, check_significances
+from RAG.src.generation.checks import (
+    check_citations, check_identifiers, check_no_history_narration, check_significances,
+)
 from RAG.src.retrieval.retriever import RetrievedDocument
 from RAG.src.utils.errors import GenerationRejectedError
 
@@ -279,9 +281,33 @@ def test_composite_significance_is_split():
     assert _reason(check_significances, "Il est bénin.", [d]) == "significance_not_in_sources"
 
 
-@pytest.mark.parametrize("dash", ["\u2010", "\u2011", "\u2012", "\u2013", "\u2014", "\u2015", "\u2212"])
+@pytest.mark.parametrize("dash", ["\u2010", "\u2011", "\u2012", "\u2013", "\u2014", "\u2015", "\u2212",
+                                  "\u2e3a", "\u2e3b", "\u02d7", "\u2796", "\ufe58"])
 def test_unicode_dashes_cannot_hide_an_invented_intronic_hgvs(dash):
     d = _doc_text("Variant NM_007294.4(BRCA1):c.68-2A>G. Clinical significance: Pathogenic.")
     check_identifiers(f"Le variant c.68{dash}2A>G est décrit.", [d])
     answer = f"Le variant c.5266{dash}2A>G est décrit."
     assert _reason(check_identifiers, answer, [d]) == "identifier_not_in_sources"
+
+
+@pytest.mark.parametrize("answer", [
+    "Il était auparavant pathogène jusqu'en 2015-01.",
+    "Il a été reclassé pathogène en 2019.",
+    "Il était classé ainsi jusqu’au 2015-01.",
+    "Initialement, la classification différait.",
+    "Comme indiqué précédemment, il est pathogène.",
+    "Une classification antérieure existe.",
+    "Il était anciennement décrit autrement.",
+    "Il est Re­classé.",
+])
+def test_narrated_history_is_rejected(answer):
+    # « comme indiqué précédemment » est rejeté aussi : choix prudent, accepté.
+    assert _reason(check_no_history_narration, answer) == "history_narrated"
+
+
+@pytest.mark.parametrize("answer", [
+    "Le variant rs80357906 est pathogène (Pathogenic), revu par un panel d'experts.",
+    "Ce variant est associé au cancer du sein héréditaire, évalué en 2019.",
+])
+def test_neutral_answer_passes_the_history_check(answer):
+    check_no_history_narration(answer)

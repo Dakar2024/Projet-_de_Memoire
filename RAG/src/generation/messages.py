@@ -79,3 +79,9 @@ def identifiers_not_found(identifiers: list[str]) -> str:
     listed = ", ".join(identifiers)
     return (f"Aucune fiche ClinVar du panel ne correspond à : {listed}. Vérifiez l'identifiant "
             "(les noms historiques comme « 5382insC » ou « Glu6Val » ne sont pas reconnus).")
+
+
+def history_sentence(doc_id: str, previous_fr: str, until: str) -> str:
+    """Phrase d'historique écrite par le code, jamais par le LLM, pour une source citée."""
+    return (f"Historique ClinVar ({doc_id}) : classé « {previous_fr} » jusqu'au {until}, "
+            "avant la classification actuelle.")

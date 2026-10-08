@@ -90,3 +90,9 @@ def test_prompt_version_is_v4_and_sha_covers_escaping():
 def test_system_prompt_forbids_negated_significances_and_abbreviations():
     assert "never negate a significance" in prompt.SYSTEM_PROMPT
     assert "Never use abbreviations such as VUS" in prompt.SYSTEM_PROMPT
+
+
+def test_history_sentence_is_written_by_the_code():
+    assert messages.history_sentence("clinvar:32716", "signification incertaine", "2015-01") == (
+        "Historique ClinVar (clinvar:32716) : classé « signification incertaine » jusqu'au 2015-01, "
+        "avant la classification actuelle.")
