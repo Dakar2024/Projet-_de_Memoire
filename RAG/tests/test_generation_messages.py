@@ -1,0 +1,64 @@
+import json
+
+import pytest
+
+from RAG.src.generation import messages
+from RAG.src.prompts import generation as prompt
+
+
+@pytest.mark.parametrize("label,expected", [
+    ("Pathogenic", "pathogène"),
+    ("Likely pathogenic", "probablement pathogène"),
+    ("Benign", "bénin"),
+    ("Likely benign", "probablement bénin"),
+    ("Uncertain significance", "signification incertaine"),
+    ("Conflicting classifications of pathogenicity", "interprétations contradictoires"),
+    ("Pathogenic/Likely pathogenic", "pathogène / probablement pathogène"),
+    ("Pathogenic; other", "pathogène ; autre"),
+    (None, None),
+])
+def test_significance_translation_is_fixed(label, expected):
+    assert messages.translate_significance(label) == expected
+
+
+def test_unknown_label_is_kept_verbatim_rather_than_guessed():
+    assert messages.translate_significance("drug response") == "drug response"
+
+
+def test_disclaimer_names_the_archive():
+    text = messages.disclaimer("2026-09")
+    assert "2026-09" in text and "interprétation clinique" in text
+    assert "archive inconnue" in messages.disclaimer(None)
+
+
+def test_every_scope_reason_has_a_fixed_message():
+    assert set(prompt.SCOPE_REASONS) | {"gene_out_of_panel"} == set(messages.OUT_OF_SCOPE)
+    assert all(text.strip() for text in messages.OUT_OF_SCOPE.values())
+
+
+def test_identifiers_not_found_lists_them():
+    text = messages.identifiers_not_found(["rs9999999999", "c.99999A>G"])
+    assert "rs9999999999" in text and "c.99999A>G" in text
+
+
+def test_schema_is_closed_and_enumerated():
+    schema = prompt.GENERATION_SCHEMA
+    assert schema["additionalProperties"] is False
+    assert set(schema["required"]) == {"status", "scope_reason", "answer", "citations"}
+    assert schema["properties"]["status"]["enum"] == list(prompt.STATUSES)
+
+
+def test_prompt_sha_covers_prompt_and_schema():
+    expected = prompt._sha(prompt.SYSTEM_PROMPT, prompt.GENERATION_SCHEMA)
+    assert prompt.GENERATION_PROMPT_SHA == expected and len(expected) == 64
+
+
+def test_user_message_wraps_question_and_context():
+    text = prompt.user_message("Que sait-on de rs334 ?", "<document id=\"x\">t</document>", ["identifier_not_found"])
+    assert "<question>" in text and "Que sait-on de rs334 ?" in text
+    assert "<documents>" in text and "identifier_not_found" in text
+
+
+def test_system_prompt_names_every_translation():
+    for french in messages.SIGNIFICANCE_FR.values():
+        assert french in prompt.SYSTEM_PROMPT
