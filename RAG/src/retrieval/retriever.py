@@ -47,8 +47,9 @@ from RAG.src.utils.errors import QuestionRejectedError, RagConfigurationError
 
 MODES = ("similarity", "filters", "full")
 PANELS = tuple(PANEL_GENES)
-_COLUMNS = ("doc_id", "doc_type", "text", "gene_symbol", "clinical_significance", "rs_dbsnp",
-            "hgvs_c", "hgvs_p", "clinvar_url", "source_version")
+_COLUMNS = ("doc_id", "doc_type", "text", "gene_symbol", "clinical_significance",
+            "review_status", "rs_dbsnp", "hgvs_c", "hgvs_p", "clinvar_variation_id", "clinvar_url",
+            "source_version")
 
 
 @dataclass(frozen=True)
@@ -58,9 +59,11 @@ class RetrievedDocument:
     text: str
     gene_symbol: str | None
     clinical_significance: str | None
+    review_status: str | None
     rs_dbsnp: int | None
     hgvs_c: str | None
     hgvs_p: str | None
+    clinvar_variation_id: str | None
     clinvar_url: str | None
     source_version: str | None
     similarity: float
@@ -76,6 +79,7 @@ class SearchTrace:
     significance_labels: tuple[str, ...] = ()
     exact_search: bool = False
     flags: list[str] = field(default_factory=list)
+    not_found_identifiers: list[str] = field(default_factory=list)
     timings_ms: dict[str, float] = field(default_factory=dict)
 
 
@@ -116,6 +120,18 @@ def validate_question(question: str, max_chars: int) -> str:
     return text
 
 
+def _missing_identifiers(ids: Identifiers, searched_hgvs: bool, found: list[RetrievedDocument]) -> list[str]:
+    """Identifiants cités sans document exact (formes normalisées). Un HGVS non cherché
+    (gène hors panneau seul) compte comme introuvable."""
+    rs_found = {d.rs_dbsnp for d in found}
+    c_found = {d.hgvs_c for d in found}
+    p_found = {d.hgvs_p for d in found}
+    missing = [f"rs{rs}" for rs in ids.rs if rs not in rs_found]
+    missing += [c for c in ids.hgvs_c if not searched_hgvs or c not in c_found]
+    missing += [p for p in ids.hgvs_p if not searched_hgvs or p not in p_found]
+    return missing
+
+
 def search(question: str, *, settings: SearchSettings, analyze: Callable[[str], QueryAnalysis],
            embed: Callable[[str], np.ndarray], store: SearchStore, mode: str = "full",
            force_exact: bool | None = None, clock: Callable[[], float] = time.perf_counter) -> SearchResult:
@@ -152,7 +168,8 @@ def search(question: str, *, settings: SearchSettings, analyze: Callable[[str], 
         if ids.rs or hgvs_c or hgvs_p:
             documents = store.exact_matches(rs=ids.rs, hgvs_c=hgvs_c, hgvs_p=hgvs_p, genes=ids.genes,
                                             query_vector=vector, limit=settings.k)
-        if not documents:
+        trace.not_found_identifiers = _missing_identifiers(ids, hgvs_searchable, documents)
+        if trace.not_found_identifiers:
             trace.flags.append("identifier_not_found")
 
     remaining = settings.k - len(documents)
@@ -256,6 +273,10 @@ class PgSearchStore:
                 self._db.execute("SELECT set_config('hnsw.ef_search', %s, true)", (str(max(40, 4 * limit)),))
             return self._db.execute(sql, params).fetchall()
 
+    def ping(self) -> None:
+        """Vérifie que la base répond (`SELECT 1`, même délai que les requêtes)."""
+        self._timed("SELECT 1", ())
+
     def _timed(self, sql: str, params: tuple) -> list[tuple]:
         """Requête simple de lecture, avec le même délai de 30 s que les recherches."""
         with self._db.transaction():
@@ -353,7 +374,17 @@ class Searcher:
         return self
 
     def __exit__(self, *exc_info) -> None:
-        self._store.__exit__(*exc_info)
+        try:
+            self._store.__exit__(*exc_info)
+        finally:
+            self.close()
+
+    def close(self) -> None:
+        """Ferme les sessions HTTP (service d'embedding et client LLM)."""
+        try:
+            self._embedder.close()
+        finally:
+            self._llm.close()
 
     def index_doc_ids_sha256(self) -> str:
         """Empreinte des documents de l'index, à comparer à celle de la vérité terrain."""

@@ -21,6 +21,9 @@ d'erreur court y figurent.
 
 from __future__ import annotations
 
+import time
+from collections.abc import Callable
+
 import requests
 
 from RAG.src.llm.common import (
@@ -31,6 +34,7 @@ from RAG.src.llm.common import (
     is_cost,
     json_object,
     json_schema_format,
+    post_with_bounded_retry,
     read_chat_reply,
 )
 from RAG.src.utils.config import LlmProfile
@@ -71,7 +75,8 @@ def build_payload(profile: LlmProfile, *, system: str, user: str, schema_name: s
 
 class OpenRouterClient:
     def __init__(self, api_key: str, *, timeout_s: float = 60.0, session: requests.Session | None = None,
-                 base_url: str = OPENROUTER_BASE_URL) -> None:
+                 base_url: str = OPENROUTER_BASE_URL,
+                 sleep: Callable[[float], None] = time.sleep) -> None:
         if not api_key or not api_key.strip():
             raise LlmPermanentError("clé OpenRouter vide (OPENROUTER_API_KEY)")
         self._headers = {"Authorization": f"Bearer {api_key.strip()}"}
@@ -80,6 +85,10 @@ class OpenRouterClient:
         # deux fois la même analyse.
         self._session = session or requests.Session()
         self._base = base_url.rstrip("/")
+        self._sleep = sleep
+
+    def close(self) -> None:
+        self._session.close()
 
     def _send(self, method: str, path: str, **kwargs) -> requests.Response:
         try:
@@ -93,7 +102,8 @@ class OpenRouterClient:
                       schema: dict, max_tokens: int) -> LlmCall:
         payload = build_payload(profile, system=system, user=user, schema_name=schema_name,
                                 schema=schema, max_tokens=max_tokens)
-        response = self._send("POST", "/chat/completions", json=payload)
+        response = post_with_bounded_retry(
+            lambda: self._send("POST", "/chat/completions", json=payload), sleep=self._sleep)
         if response.status_code in PERMANENT_STATUSES:
             raise LlmPermanentError(
                 f"OpenRouter refuse la requête ({response.status_code}) pour {profile.name}"

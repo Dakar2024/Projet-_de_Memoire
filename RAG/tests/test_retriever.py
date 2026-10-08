@@ -9,10 +9,11 @@ SETTINGS = SearchSettings(k=10, min_filtered=3, max_question_chars=1000)
 KNOWN = ("Pathogenic", "Likely pathogenic", "Pathogenic/Likely pathogenic", "Benign", "Uncertain significance")
 
 
-def doc(doc_id, significance="Pathogenic", gene="BRCA1", stage="filtered"):
+def doc(doc_id, significance="Pathogenic", gene="BRCA1", stage="filtered", rs=None, c=None, p=None):
     return RetrievedDocument(doc_id=doc_id, doc_type="variant", text=f"texte {doc_id}", gene_symbol=gene,
-                             clinical_significance=significance, rs_dbsnp=None, hgvs_c=None, hgvs_p=None,
-                             clinvar_url=None, source_version="2026-09", similarity=0.9, stage=stage)
+                             clinical_significance=significance, review_status=None, rs_dbsnp=rs, hgvs_c=c,
+                             hgvs_p=p, clinvar_variation_id=None, clinvar_url=None, source_version="2026-09",
+                             similarity=0.9, stage=stage)
 
 
 class FakeStore:
@@ -307,7 +308,7 @@ def test_hgvs_with_only_an_out_of_panel_gene_is_never_searched_exactly():
 
 
 def test_rs_with_only_an_out_of_panel_gene_is_still_searched_exactly():
-    store = FakeStore(exact=[doc("clinvar:1", stage="exact")])
+    store = FakeStore(exact=[doc("clinvar:1", stage="exact", rs=80357906)])
 
     result = _search("Le variant rs80357906 de MLH1 ?", store)
 
@@ -353,3 +354,48 @@ def test_only_the_key_of_the_chosen_backend_is_required():
         build_llm_client(_profile("openrouter"), {"GROQ_API_KEY": "gsk"}, 30.0)
     with pytest.raises(RagConfigurationError, match="backend"):
         build_llm_client(_profile("ollama"), {"OPENROUTER_API_KEY": "sk-or", "GROQ_API_KEY": "gsk"}, 30.0)
+
+
+def test_each_missing_identifier_is_named_in_the_trace():
+    store = FakeStore(exact=[doc("clinvar:1", stage="exact", rs=334)], similar=[doc("clinvar:2")])
+
+    result = _search("rs334 et rs9999999999 sur HBB", store)
+
+    assert result.trace.not_found_identifiers == ["rs9999999999"]
+    assert "identifier_not_found" in result.trace.flags
+
+
+def test_no_missing_identifier_when_all_are_found():
+    store = FakeStore(exact=[doc("clinvar:1", stage="exact", rs=334)], similar=[doc("clinvar:2")])
+
+    result = _search("rs334 sur HBB", store)
+
+    assert result.trace.not_found_identifiers == []
+    assert "identifier_not_found" not in result.trace.flags
+
+
+def test_hgvs_ignored_for_an_out_of_panel_gene_counts_as_not_found():
+    store = FakeStore(similar=[doc("clinvar:2")])
+
+    result = _search("Le variant c.1A>G de MLH1 est-il pathogène ?", store)
+
+    assert result.trace.not_found_identifiers == ["c.1A>G"]
+
+
+def test_searcher_close_closes_the_embedder_and_the_llm_client():
+    from RAG.src.retrieval.retriever import Searcher
+
+    closed = []
+
+    class Closable:
+        def __init__(self, name):
+            self.name = name
+
+        def close(self):
+            closed.append(self.name)
+
+    searcher = Searcher.__new__(Searcher)
+    searcher._embedder, searcher._llm = Closable("embedder"), Closable("llm")
+    searcher.close()
+
+    assert closed == ["embedder", "llm"]

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import requests
@@ -19,6 +20,8 @@ from RAG.src.utils.errors import LlmUnavailableError
 
 # Refus que relancer ne corrigerait pas (requête, clé, crédit, modèle).
 PERMANENT_STATUSES = (400, 401, 402, 403, 404)
+# Statuts reçus après lesquels aucune génération n'a eu lieu : relançables sans risque de double facturation.
+RETRY_STATUSES = (429, 502, 503)
 _MAX_CODE_CHARS = 40
 
 
@@ -110,3 +113,31 @@ def json_object(raw_content: object, service: str) -> dict:
     if not isinstance(content, dict):
         raise LlmUnavailableError(f"réponse {service} : le JSON attendu est un objet")
     return content
+
+
+def _retry_after(response: requests.Response) -> float | None:
+    value = response.headers.get("Retry-After")
+    try:
+        seconds = float(value) if value is not None else None
+    except ValueError:
+        return None
+    return seconds if seconds is not None and math.isfinite(seconds) and seconds >= 0 else None
+
+
+def post_with_bounded_retry(send: Callable[[], requests.Response], *, sleep: Callable[[float], None],
+                            max_retries: int = 2, base_delay_s: float = 1.0, max_delay_s: float = 30.0,
+                            statuses: tuple[int, ...] = RETRY_STATUSES) -> requests.Response:
+    """Relance un appel seulement quand le service a RÉPONDU 429, 502 ou 503 : aucune
+    génération n'a eu lieu, rien n'est facturé. Jamais sur une erreur réseau ni un délai
+    dépassé, où la requête a pu être traitée (et facturée) sans que la réponse arrive.
+    L'attente respecte `Retry-After`, plafonnée à `max_delay_s` ; après `max_retries`
+    relances, la dernière réponse est rendue telle quelle."""
+    response = send()
+    for attempt in range(max_retries):
+        if response.status_code not in statuses:
+            return response
+        announced = _retry_after(response)
+        delay = announced if announced is not None else base_delay_s * (2 ** attempt)
+        sleep(min(delay, max_delay_s))
+        response = send()
+    return response

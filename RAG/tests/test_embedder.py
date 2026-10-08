@@ -103,3 +103,15 @@ def test_max_input_length_comes_from_the_service():
 def test_an_empty_api_key_is_refused_upfront():
     with pytest.raises(EmbeddingRequestError):
         EmbeddingClient(URL, "")
+
+
+def test_close_closes_the_session():
+    closed = []
+
+    class Session:
+        def close(self):
+            closed.append(1)
+
+    EmbeddingClient(URL, "cle-secrete", session=Session()).close()
+
+    assert closed == [1]

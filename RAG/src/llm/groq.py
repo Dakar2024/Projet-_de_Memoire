@@ -36,6 +36,7 @@ from RAG.src.llm.common import (
     error_code,
     json_object,
     json_schema_format,
+    post_with_bounded_retry,
     read_chat_reply,
 )
 from RAG.src.utils.config import LlmProfile
@@ -136,13 +137,20 @@ class GroqClient:
         self._sleep = sleep
         self._max_waits = max_rate_limit_waits
 
+    def close(self) -> None:
+        self._session.close()
+
     def _post(self, path: str, payload: dict) -> requests.Response:
-        try:
-            return self._session.post(f"{self._base}{path}", headers=self._headers, json=payload,
-                                      timeout=self._timeout)
-        except requests.RequestException as exc:
-            # Ni les en-têtes ni la clé dans le message.
-            raise LlmUnavailableError(f"Groq injoignable ({path}) : {type(exc).__name__}") from exc
+        def send() -> requests.Response:
+            try:
+                return self._session.post(f"{self._base}{path}", headers=self._headers, json=payload,
+                                          timeout=self._timeout)
+            except requests.RequestException as exc:
+                # Ni les en-têtes ni la clé dans le message.
+                raise LlmUnavailableError(f"Groq injoignable ({path}) : {type(exc).__name__}") from exc
+
+        # Seuls 502/503 sont relancés ici ; le 429 garde la logique de quota propre à Groq.
+        return post_with_bounded_retry(send, sleep=self._sleep, statuses=(502, 503))
 
     def complete_json(self, profile: LlmProfile, *, system: str, user: str, schema_name: str,
                       schema: dict, max_tokens: int) -> LlmCall:
