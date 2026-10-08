@@ -83,8 +83,8 @@ def test_question_keeps_gt_and_identifiers_intact():
     assert "c.68A>G &amp; rs334" in message
 
 
-def test_prompt_version_is_v3_and_sha_covers_escaping():
-    assert prompt.GENERATION_PROMPT_VERSION == "generation-v3"
+def test_prompt_version_is_v4_and_sha_covers_escaping():
+    assert prompt.GENERATION_PROMPT_VERSION == "generation-v4"
 
 
 def test_system_prompt_forbids_negated_significances_and_abbreviations():

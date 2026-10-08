@@ -1,7 +1,14 @@
 """Contrôles déterministes de la réponse générée, en plus du prompt : citations parmi
-les documents transmis, identifiants (rs, HGVS, ClinVar) présents dans ces documents,
+les documents transmis, identifiants (rs, HGVS, ClinVar, gènes) présents dans ces documents,
 significations conformes aux documents cités. Un échec lève GenerationRejectedError
-avec un code court ; la réponse est alors remplacée par un message fixe."""
+avec un code court ; la réponse est alors remplacée par un message fixe.
+
+Règle de l'historique de classification : le LLM ne le raconte pas, le code le restitue
+(tâche 5) à partir de la ligne Gold « Classification history ». La réponse ne peut donc
+citer que la signification ACTUELLE des documents cités. Raison : trois tours de motifs
+(« auparavant », « jusqu'en <date> », « précédemment »…) ont montré qu'un historique raconté
+en langue libre n'est pas contrôlable de façon sûre, chaque assouplissement rouvrant un
+contournement (« Comme indiqué précédemment, il est de signification incertaine »)."""
 
 from __future__ import annotations
 
@@ -24,15 +31,19 @@ _VARIATION_ID = re.compile(
 )
 _LABELS = sorted(SIGNIFICANCE_FR, key=len, reverse=True)
 _TYPOGRAPHY = str.maketrans({c: " " for c in "«»’‘“”…\u00a0\u202f"})
+# Tirets Unicode (U+2010 à U+2015, signe moins U+2212) ramenés à « - » : « c.68‑2A>G »
+# écrit avec un trait d'union insécable reste un HGVS intronique contrôlé.
+_DASHES = str.maketrans({c: "-" for c in "\u2010\u2011\u2012\u2013\u2014\u2015\u2212"})
 _PANEL_STATUSES = ("answered", "partial")
 
 
 def _clean(answer: str) -> str:
     """Réponse remise sous forme comparable : entités HTML décodées (c.69A&gt;G), Unicode
     normalisé (NFKC : pleine chasse, ligatures) et caractères de format (Cf : largeur nulle,
-    trait d'union conditionnel, liant de mots) retirés, car ils casseraient « rs12345 »."""
+    trait d'union conditionnel, liant de mots) retirés, car ils casseraient « rs12345 » ;
+    tirets Unicode ramenés à « - »."""
     text = unicodedata.normalize("NFKC", html.unescape(answer))
-    return "".join(c for c in text if unicodedata.category(c) != "Cf")
+    return "".join(c for c in text if unicodedata.category(c) != "Cf").translate(_DASHES)
 
 
 def check_citations(citations: Sequence[str], documents: Sequence[RetrievedDocument], status: str) -> None:
@@ -100,6 +111,7 @@ _FEMININE_PLURAL = {"bénin": r"b[ée]nin(?:e|s|es)?|b[ée]nigne(?:s)?",
                     "interprétations contradictoires":
                         r"interpr[ée]tation(?:s)?\s+(?:\S+\s+){0,3}?contradictoire(?:s)?"}
 
+
 def _build_terms() -> list[tuple[str, re.Pattern]]:
     """Termes de signification reconnus dans une réponse : (clé française, motif), en
     français et avec le libellé ClinVar anglais, du plus long au plus court pour que
@@ -125,19 +137,6 @@ _OFF_TABLE = re.compile(
     re.IGNORECASE,
 )
 _NEGATIONS = {"pas", "non", "ni", "jamais", "plus", "aucun", "aucune"}
-# « jusqu'… » n'est un marqueur que suivi d'une date : « jusqu'à présent » n'en est pas un.
-_DATE_LIMIT = (r"jusqu['’]\s*(?:en|au|à|a)\s+(?:\d{1,2}(?:er)?\s+)?(?:[a-zéû]+\s+)?(?:19|20)\d\d")
-_HISTORY_MARKER = re.compile(
-    r"auparavant|pr[ée]c[ée]demment|" + _DATE_LIMIT + r"|historique|\bavant\b(?!\s+tout)|"
-    r"\bd['’]abord\b|\binitialement\b|\bautrefois\b|\bancien(?:ne)?(?:ment)?\b|"
-    r"\bant[ée]rieure?s?\b", re.IGNORECASE)
-_TRAILING_MARKER = re.compile(r"\b" + _DATE_LIMIT, re.IGNORECASE)
-# Mots qui disent que la situation a changé depuis : entre un marqueur et un libellé
-# d'historique, ils signalent une reclassification (le libellé serait alors l'actuel).
-_BLOCKER = re.compile(
-    r"maintenant|d[ée]sormais|aujourd|actuellement|depuis|\bpuis\b|à\s+pr[ée]sent|\bensuite\b|"
-    r"\bvers\b|\ben\s+(?=signification|pathog|b[ée]nin|probablement|interpr)", re.IGNORECASE)
-_HISTORY_REACH = 6  # mots au plus entre le marqueur et le terme
 _SENTENCES = re.compile(r"(?<=[.!?;])\s+")
 
 
@@ -146,17 +145,16 @@ def _negated(text: str, start: int) -> bool:
     return any(word in _NEGATIONS for word in words)
 
 
-def _terms_in(sentence: str) -> dict[str, int]:
-    """Termes de signification d'une phrase avec leur première position, sans double
-    compte. Une négation dans les trois mots qui précèdent un terme rend la phrase
-    invérifiable (conservateur)."""
-    found: dict[str, int] = {}
+def _terms_in(sentence: str) -> set[str]:
+    """Termes de signification d'une phrase, sans double compte. Une négation dans les trois
+    mots qui précèdent un terme rend la phrase invérifiable (conservateur)."""
+    found: set[str] = set()
     remaining = sentence
     for term, pattern in _TERMS:
         for match in pattern.finditer(remaining):
             if _negated(sentence, match.start()):
                 raise GenerationRejectedError("significance_not_in_sources")
-            found[term] = min(found.get(term, match.start()), match.start())
+            found.add(term)
         remaining = pattern.sub(lambda m: " " * len(m.group()), remaining)
     # « incertaine » isolé dans une phrase qui parle de « signification » vaut « signification
     # incertaine » (« Sa signification clinique est encore incertaine »).
@@ -165,27 +163,8 @@ def _terms_in(sentence: str) -> dict[str, int]:
         if lone:
             if _negated(sentence, lone.start()):
                 raise GenerationRejectedError("significance_not_in_sources")
-            found["signification incertaine"] = lone.start()
+            found.add("signification incertaine")
     return found
-
-
-def _after_marker(sentence: str, position: int) -> bool:
-    """Le terme situé à `position` est un libellé d'historique : il suit un marqueur de la même
-    phrase, à six mots au plus, sans autre signification ni mot de changement (« maintenant »,
-    « puis »…) entre les deux. Une date limite (« jusqu'en 2015 ») peut aussi le suivre.
-    Conservateur : un terme placé AVANT un autre marqueur (« incertaine avant 2019 ») est
-    refusé."""
-    for marker in _HISTORY_MARKER.finditer(sentence[:position]):
-        between = sentence[marker.end():position]
-        if (len(re.findall(r"\w+", between)) <= _HISTORY_REACH and not _BLOCKER.search(between)
-                and not any(pattern.search(between) for _, pattern in _TERMS)):
-            return True
-    follow = sentence[position:]
-    for marker in _TRAILING_MARKER.finditer(follow):
-        between = follow[:marker.start()]
-        if "," not in between and len(re.findall(r"\w+", between)) <= _HISTORY_REACH + 3:
-            return True
-    return False
 
 
 def _labels_in(text: str) -> set[str]:
@@ -198,11 +177,13 @@ def _labels_in(text: str) -> set[str]:
     return found
 
 
+# Ligne de la signification actuelle ; elle s'arrête avant une éventuelle ligne d'historique.
 _CURRENT_LINE = re.compile(r"Clinical significance:\s*(.*?)(?:\.(?:\s|$)|\n|Classification history:|$)")
-_HISTORY_LINE = re.compile(r"Classification history:\s*(.*?)(?:\n|$)")
 
 
 def _translated(labels: set[str]) -> set[str]:
+    """Traduction française des libellés ClinVar, composites découpés (« Pathogenic/Likely
+    pathogenic »)."""
     out: set[str] = set()
     for label in labels:
         for part in re.split(r"/|; |, ", label):
@@ -213,26 +194,19 @@ def _translated(labels: set[str]) -> set[str]:
 
 
 def check_significances(answer: str, cited: Sequence[RetrievedDocument]) -> None:
-    """Chaque signification de la réponse figure dans un document cité : sa signification
-    actuelle (champ et ligne « Clinical significance »), ou, dans une phrase qui parle
-    d'historique, un libellé de la ligne « Classification history ». Limite connue : deux
-    documents cités peuvent permuter leurs significations sans être détectés."""
+    """Chaque signification de la réponse est la signification actuelle d'un document cité
+    (champ `clinical_significance` et ligne « Clinical significance »). Un libellé de la ligne
+    « Classification history » est rejeté : l'historique est restitué par le code. Limite
+    connue : deux documents cités peuvent permuter leurs significations sans être détectés."""
     current: set[str] = set()
-    history: set[str] = set()
     for d in cited:
         labels = {d.clinical_significance} if d.clinical_significance else set()
         for match in _CURRENT_LINE.finditer(d.text):
             labels |= _labels_in(match.group(1))
         current |= _translated(labels)
-        for match in _HISTORY_LINE.finditer(d.text):
-            history |= _translated(_labels_in(match.group(1)))
     text = _clean(answer)
     if _OFF_TABLE.search(text):
         raise GenerationRejectedError("significance_not_in_sources")
     for sentence in _SENTENCES.split(text):
-        for term, position in _terms_in(sentence).items():
-            if term in current:
-                continue
-            if term in history and _after_marker(sentence, position):
-                continue
+        if _terms_in(sentence) - current:
             raise GenerationRejectedError("significance_not_in_sources")
