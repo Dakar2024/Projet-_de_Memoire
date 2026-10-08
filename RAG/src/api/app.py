@@ -8,14 +8,16 @@ from __future__ import annotations
 
 import asyncio
 import math
+import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from typing import Callable
 
 import psycopg
 from litestar import Litestar, Request, Response, get, post
 from litestar.datastructures import State
-from litestar.exceptions import HTTPException, NotAuthorizedException, ValidationException
+from litestar.exceptions import ClientException, HTTPException, NotAuthorizedException, ValidationException
 
 from RAG.src.api.logs import configure_logging, log_event
 from RAG.src.api.schemas import QuestionIn
@@ -53,6 +55,9 @@ def _classify(exc: BaseException) -> ApiError:
         return ApiError("unauthorized", 401)
     if isinstance(exc, (ValidationException, QuestionRejectedError)):
         return ApiError("invalid_question", 422)
+    if isinstance(exc, ClientException) and exc.status_code == 400:
+        # Corps JSON illisible : seule source de 400 ici, traitée comme une question invalide.
+        return ApiError("invalid_question", 422)
     if isinstance(exc, HTTPException) and exc.status_code == 413:
         return ApiError("too_large", 413)
     if isinstance(exc, HTTPException) and exc.status_code == 404:
@@ -76,7 +81,7 @@ def _error_response(request: Request, exc: Exception) -> Response:
     err = _classify(exc)
     request_id = getattr(request.state, "request_id", None) or uuid.uuid4().hex
     log_event(event="error", request_id=request_id, http_status=err.http_status, error=err.code,
-              **({"status": type(exc).__name__} if err.http_status >= 500 else {}))
+              **({"exception": type(exc).__name__} if err.http_status >= 500 else {}))
     headers = {}
     if err.retry_after is not None and math.isfinite(err.retry_after):
         headers["Retry-After"] = str(max(1, math.ceil(err.retry_after)))
@@ -112,15 +117,30 @@ async def ask_question(data: QuestionIn, state: State, request: Request) -> dict
             try:
                 pipeline.release(slot)
             except RuntimeError:
-                # Pipeline déjà fermé (arrêt pendant que ce fil tournait) : rien à rendre.
+                # Toléré seulement si l'API s'arrête (pipeline fermé pendant que ce fil
+                # tournait) ; sinon c'est un double rendu, qui ferait partager une connexion.
+                if not state.closing.is_set():
+                    raise
                 log_event(event="release_after_shutdown", request_id=request_id)
 
-    future = asyncio.get_running_loop().run_in_executor(None, run)
+    future = asyncio.get_running_loop().run_in_executor(state.executor, run)
+    timed_out = False
+
+    def consume(f: asyncio.Future) -> None:
+        # Toujours consommer l'issue du fil : sinon asyncio signalerait plus tard « Future
+        # exception was never retrieved », trace et message compris. Après un délai dépassé,
+        # l'erreur tardive est journalisée par sa seule classe.
+        if f.cancelled():
+            return
+        exc = f.exception()
+        if exc is not None and timed_out:
+            log_event(event="late_error", request_id=request_id, exception=type(exc).__name__)
+
+    future.add_done_callback(consume)
     try:
         result = await asyncio.wait_for(asyncio.shield(future), timeout=state.api_config.request_timeout_s)
     except asyncio.TimeoutError:
-        # Le résultat tardif (ou son erreur) est consommé pour ne pas être signalé plus tard.
-        future.add_done_callback(lambda f: f.exception() if not f.cancelled() else None)
+        timed_out = True
         raise ApiError("timeout", 503) from None
     body = result.as_dict(include_trace=data.trace)
     a = result.answer
@@ -148,17 +168,27 @@ def create_app(pipeline_factory: Callable[[], object] | None = None, *, api_conf
         # l'application ne démarre pas.
         pipeline = await asyncio.get_running_loop().run_in_executor(None, lambda: pipeline_factory().__enter__())
         app.state.pipeline = pipeline
+        app.state.closing = threading.Event()
+        # Un fil par emplacement : une question n'attend jamais un fil libre.
+        app.state.executor = ThreadPoolExecutor(max_workers=config.max_concurrency, thread_name_prefix="rag-api")
         try:
             yield
         finally:
-            pipeline.__exit__(None, None, None)
+            # Le drapeau précède la fermeture : un fil encore actif qui rend son emplacement
+            # après coup sait que l'erreur de `release` vient de l'arrêt.
+            app.state.closing.set()
+            try:
+                pipeline.__exit__(None, None, None)
+            finally:
+                app.state.executor.shutdown(wait=False)
 
     configure_logging()
     return Litestar(
         route_handlers=[health, ready, ask_question],
         lifespan=[lifespan],
-        state=State({"api_key": key, "api_config": config, "pipeline": None}),
-        openapi_config=None,
+        state=State({"api_key": key, "api_config": config, "pipeline": None, "closing": None, "executor": None}),
+        # OpenAPI seulement si la configuration le demande (désactivé en production).
+        **({} if config.openapi else {"openapi_config": None}),
         logging_config=None,
         request_max_body_size=config.max_body_bytes,
         exception_handlers={Exception: _error_response},

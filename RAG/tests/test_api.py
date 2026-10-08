@@ -60,10 +60,35 @@ class FakePipeline:
         return {"database": True, "embeddings": True}
 
 
-def client(pipeline=None, timeout=120.0):
+class StrictPipeline(FakePipeline):
+    """Comme `QuestionPipeline.release` : rendre un emplacement non acquis, ou après la
+    fermeture, lève `RuntimeError`."""
+
+    def __init__(self, *a, double_release=False, **kw):
+        super().__init__(*a, **kw)
+        self.double_release = double_release
+
+    def release(self, slot):
+        if self.closed or self.double_release:
+            raise RuntimeError("emplacement non acquis ou déjà rendu")
+        super().release(slot)
+
+
+def client(pipeline=None, timeout=120.0, openapi=False):
     pipeline = pipeline or FakePipeline()
-    app = create_app(lambda: pipeline, api_config=ApiConfig(4, timeout, 8192, False), api_key=KEY)
+    app = create_app(lambda: pipeline, api_config=ApiConfig(4, timeout, 8192, openapi), api_key=KEY)
     return TestClient(app=app), pipeline
+
+
+def wait_until(condition, limit=5.0):
+    deadline = time.monotonic() + limit
+    while not condition():
+        assert time.monotonic() < deadline, "condition jamais atteinte"
+        time.sleep(0.01)
+
+
+def api_events(caplog):
+    return [json.loads(r.getMessage()) for r in caplog.records if r.name == "rag.api"]
 
 
 def ask(c, question="Que sait-on de rs80357906 ?", headers=H, **extra):
@@ -122,6 +147,13 @@ def test_body_too_large_is_413():
     assert r.status_code == 413
 
 
+def test_malformed_json_is_422():
+    c, _ = client()
+    with c:
+        r = c.post("/v1/questions", content=b"{not json", headers={**H, "content-type": "application/json"})
+    assert r.status_code == 422 and r.json()["error"] == "invalid_question"
+
+
 def test_wrong_method_is_405_with_the_standard_error_body():
     c, _ = client()
     with c:
@@ -154,7 +186,7 @@ def test_slots_are_never_shared_between_concurrent_questions():
         threads = [threading.Thread(target=lambda: codes.append(ask(c).status_code)) for _ in range(6)]
         for t in threads:
             t.start()
-        time.sleep(0.5)
+        wait_until(lambda: len(pipeline.in_use) == 4)
         gate.set()
         for t in threads:
             t.join()
@@ -162,7 +194,8 @@ def test_slots_are_never_shared_between_concurrent_questions():
     assert pipeline.shared is False
 
 
-def test_deadline_returns_503_and_keeps_the_slot_busy():
+def test_deadline_returns_503_and_keeps_the_slot_busy(caplog):
+    caplog.set_level(logging.INFO)
     release = threading.Event()
     pipeline = FakePipeline(slots=1, behaviour=lambda q: release.wait(5))
     c, _ = client(pipeline, timeout=0.3)
@@ -175,6 +208,7 @@ def test_deadline_returns_503_and_keeps_the_slot_busy():
     assert first.status_code == 503 and first.json()["error"] == "timeout"
     assert second.status_code == 429
     assert third.status_code == 200
+    assert any(e.get("event") == "error" and e.get("error") == "timeout" for e in api_events(caplog))
 
 
 def test_question_text_never_logged_even_on_errors(caplog, capfd):
@@ -194,17 +228,43 @@ def test_question_text_never_logged_even_on_errors(caplog, capfd):
 
 
 def test_release_after_shutdown_is_logged_without_text(caplog):
-    class ClosedOnRelease(FakePipeline):
-        def release(self, slot):
-            raise RuntimeError("emplacement non acquis ou déjà rendu")
     caplog.set_level(logging.INFO)
-    c, _ = client(ClosedOnRelease())
+    gate = threading.Event()
+    pipeline = StrictPipeline(slots=1, behaviour=lambda q: gate.wait(5))
+    c, _ = client(pipeline, timeout=0.3)
     with c:
         r = ask(c, question=SECRET_QUESTION)
-    assert r.status_code == 200
-    events = [json.loads(rec.getMessage()) for rec in caplog.records if rec.name == "rag.api"]
-    assert any(e.get("event") == "release_after_shutdown" for e in events)
-    assert all("confidentielle" not in json.dumps(e) for e in events)
+    assert r.status_code == 503 and pipeline.closed
+    gate.set()
+    wait_until(lambda: any(e.get("event") == "release_after_shutdown" for e in api_events(caplog)))
+    assert all("confidentielle" not in json.dumps(e) for e in api_events(caplog))
+
+
+def test_double_release_on_an_open_pipeline_is_not_swallowed(caplog):
+    caplog.set_level(logging.INFO)
+    c, _ = client(StrictPipeline(double_release=True))
+    with c:
+        r = ask(c)
+    assert r.status_code == 500 and r.json()["error"] == "internal"
+    assert not any(e.get("event") == "release_after_shutdown" for e in api_events(caplog))
+    assert any(e.get("exception") == "RuntimeError" for e in api_events(caplog))
+
+
+def test_late_error_after_deadline_is_logged_without_text(caplog):
+    caplog.set_level(logging.INFO)
+    gate = threading.Event()
+
+    def late(q):
+        gate.wait(5)
+        raise LlmUnavailableError(f"échec tardif : {q}")
+    c, _ = client(FakePipeline(slots=1, behaviour=late), timeout=0.3)
+    with c:
+        assert ask(c, question=SECRET_QUESTION).status_code == 503
+        gate.set()
+        wait_until(lambda: any(e.get("event") == "late_error" for e in api_events(caplog)))
+    late_events = [e for e in api_events(caplog) if e.get("event") == "late_error"]
+    assert late_events[0]["exception"] == "LlmUnavailableError"
+    assert "confidentielle" not in "\n".join(r.getMessage() for r in caplog.records)
 
 
 def test_pipeline_is_closed_on_shutdown():
@@ -218,3 +278,9 @@ def test_openapi_is_disabled():
     c, _ = client()
     with c:
         assert c.get("/schema").status_code == 404
+
+
+def test_openapi_can_be_enabled_by_config():
+    c, _ = client(openapi=True)
+    with c:
+        assert c.get("/schema/openapi.json").status_code == 200

@@ -9,7 +9,7 @@ import sys
 
 LOGGER = logging.getLogger("rag.api")
 _ALLOWED = {"event", "request_id", "status", "http_status", "error", "timings_ms", "cost_usd", "model",
-            "provider_name", "flags", "rejected", "scope_reason", "sources"}
+            "provider_name", "flags", "rejected", "scope_reason", "sources", "exception"}
 
 
 def configure_logging() -> None:
