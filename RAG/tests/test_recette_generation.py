@@ -129,3 +129,105 @@ def test_evaluer_refuses_to_conclude_when_questions_are_missing(tmp_path, monkey
     (tmp_path / "records.json").write_text(json.dumps([dict(rec(), id="P2-01", part=2)]), encoding="utf-8")
     with pytest.raises(SystemExit, match="P4-01"):
         rg.cmd_evaluer(None)
+
+
+def _result(available=True, from_llm=True, analysis_ms=900.0):
+    analysis = SimpleNamespace(available=available, latency_ms=analysis_ms, from_cache=True)
+    answer = SimpleNamespace(status="answered", scope_reason=None, sources=[SimpleNamespace(doc_id="d")],
+                             rejected=None, answer="t", from_llm=from_llm)
+    return SimpleNamespace(answer=answer, search=SimpleNamespace(trace=SimpleNamespace(analysis=analysis, flags=["f"])),
+                           timings_ms={"analysis": 0.0, "total": 2000.0})
+
+
+def test_record_keeps_analysis_fields_and_replay_flag():
+    r = rg.build_record({"id": "q", "part": 2}, _result(), replayed=False)
+    assert r["analysis_latency_ms"] == 900.0 and r["analysis_available"] is True and r["flags"] == ["f"]
+    assert r["generation_from_llm"] is True and r["from_cache"] is False
+
+
+def test_summary_uses_original_analysis_latency_and_splits_fixed_messages():
+    llm = dict(rec(total=2000.0), part=2, ok=True, timings_ms={"total": 2000.0, "analysis": 0.0},
+               analysis_latency_ms=900.0, generation_from_llm=True)
+    fixed = dict(llm, generation_from_llm=False, analysis_latency_ms=100.0)
+    s = summarize([llm, fixed])
+    assert s["latency_ms"]["median"] == 2900.0 and s["latency_fixed_ms"]["median"] == 2100.0
+
+
+def test_cache_key_depends_on_max_tokens(tmp_path):
+    inner = FakeInner()
+    gen = CachedGenerator(inner, tmp_path / "c.json", "sha")
+    gen.complete_json(PROFILE, system="s", user="u", schema_name="n", schema={}, max_tokens=10)
+    gen.complete_json(PROFILE, system="s", user="u", schema_name="n", schema={}, max_tokens=20)
+    assert inner.calls == 2
+
+
+def test_evaluer_refuses_degraded_analysis(tmp_path, monkeypatch):
+    qa, qb = tmp_path / "a.yaml", tmp_path / "b.yaml"
+    qa.write_text("- {id: P2-01, part: 2, question: q}\n", encoding="utf-8")
+    qb.write_text("[]\n", encoding="utf-8")
+    monkeypatch.setattr(rg, "QUESTIONS_E2A", qa)
+    monkeypatch.setattr(rg, "QUESTIONS_E2B", qb)
+    monkeypatch.setattr(rg, "OUT", tmp_path)
+    (tmp_path / "records.json").write_text(
+        json.dumps([dict(rec(), id="P2-01", part=2, analysis_available=False)]), encoding="utf-8")
+    with pytest.raises(SystemExit, match="P2-01"):
+        rg.cmd_evaluer(None)
+
+
+class _Pipeline:
+    def __init__(self, results, searcher_sha="x"):
+        self.results, self.slot = list(results), SimpleNamespace(
+            generator=FakeInner(), searcher=SimpleNamespace(index_doc_ids_sha256=lambda: searcher_sha))
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return None
+
+    def acquire(self):
+        return self.slot
+
+    def release(self, slot):
+        pass
+
+    def ask(self, slot, question):
+        # Premier tour : appel réel (remplit last_hit), puis message fixe sans appel.
+        res = self.results.pop(0)
+        if res.answer.from_llm:
+            call(slot.generator)
+        return res
+
+
+def _setup_lancer(monkeypatch, tmp_path, results, sha="x"):
+    import RAG.src.generation.pipeline as pl
+    qa, qb = tmp_path / "a.yaml", tmp_path / "b.yaml"
+    qa.write_text("- {id: Q1, part: 2, question: a}\n- {id: Q2, part: 3, question: b}\n- {id: Q3, part: 3, question: c}\n", encoding="utf-8")
+    qb.write_text("[]\n", encoding="utf-8")
+    truth = tmp_path / "truth.json"
+    truth.write_text(json.dumps({"manifest": {"gold_doc_ids_sha256": sha}, "relevant": {}}), encoding="utf-8")
+    for name, value in (("QUESTIONS_E2A", qa), ("QUESTIONS_E2B", qb), ("OUT", tmp_path), ("TRUTH_PATH", truth)):
+        monkeypatch.setattr(rg, name, value)
+    monkeypatch.setattr(pl, "QuestionPipeline", lambda *a, **k: _Pipeline(results))
+
+
+def test_fixed_message_after_a_cache_hit_is_not_a_replay(tmp_path, monkeypatch):
+    (tmp_path / "cache_generation.json").write_text("{}", encoding="utf-8")
+    _setup_lancer(monkeypatch, tmp_path, [_result(), _result(), _result(from_llm=False)])
+    # Q2 rejoue le cache de Q1 (même message) ; Q3 est à message fixe juste après ce rejeu.
+    rg.cmd_lancer(None)
+    records = json.loads((tmp_path / "records.json").read_text(encoding="utf-8"))
+    assert [r["from_cache"] for r in records] == [False, True, False]
+
+
+def test_degraded_analysis_is_not_recorded_and_stops(tmp_path, monkeypatch):
+    _setup_lancer(monkeypatch, tmp_path, [_result(available=False)])
+    with pytest.raises(SystemExit) as exc:
+        rg.cmd_lancer(None)
+    assert exc.value.code == 1 and not (tmp_path / "records.json").exists()
+
+
+def test_lancer_stops_when_index_differs_from_truth(tmp_path, monkeypatch):
+    _setup_lancer(monkeypatch, tmp_path, [_result()], sha="autre")
+    with pytest.raises(SystemExit, match="vérité terrain"):
+        rg.cmd_lancer(None)

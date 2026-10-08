@@ -6,8 +6,13 @@
            si des questions manquent
 
 Les analyses viennent du cache de l'essai gratuit E2a (une seule fois payées en quota) ;
-les générations sont mises en cache par `CachedGenerator`. Les latences rejouées depuis
-un cache ne sont pas des mesures : le résumé les exclut (`from_cache`).
+les générations sont mises en cache par `CachedGenerator`. Les générations rejouées depuis
+un cache ne sont pas des mesures : le résumé les exclut (`from_cache`). La latence de bout
+en bout reconstitue l'analyse d'origine (`analysis_latency_ms`), même rejouée du cache.
+Les latences sont celles du profil d'essai Groq, pas du profil de production OpenRouter.
+
+Partie 3 : un piège sans indicateur attendu (`expected_flags` vide) interdit seulement le
+statut `unverifiable` ; il ne vérifie pas que la réponse soit juste (examen manuel).
 """
 
 from __future__ import annotations
@@ -29,6 +34,8 @@ QUESTIONS_E2B = EXPERIMENTS / "questions_recette_e2b.yaml"
 OUT = _ROOT / "data" / "experiments" / "e2b-recette"
 ANALYSIS_CACHE = _ROOT / "data" / "experiments" / "e2a-essai" / "cache_analyses.json"
 TRUTH_PATH = _ROOT / "data" / "experiments" / "e2a" / "verite_terrain.json"
+ANALYSIS_MESSAGE = ("analyse indisponible (quota Groq épuisé ou erreur) — question non enregistrée ; "
+                    "relancer après la réinitialisation, le cache garde les analyses et réponses obtenues")
 QUOTA_MESSAGE = ("quota Groq épuisé — relancer après la réinitialisation ; "
                  "le cache garde les réponses obtenues")
 _ANSWERED = {"answered", "partial"}
@@ -78,18 +85,27 @@ def summarize(records: list[dict]) -> dict:
         if r.get("rejected"):
             rejections[r["rejected"]] = rejections.get(r["rejected"], 0) + 1
         statuses[r["status"]] = statuses.get(r["status"], 0) + 1
-    real = [r["timings_ms"]["total"] for r in records if not r.get("from_cache")]
+    def real_total(r: dict) -> float:
+        t = r["timings_ms"]
+        # Analyse d'origine (même rejouée du cache) + embedding + base + génération en direct.
+        return t["total"] - t.get("analysis", 0.0) + r.get("analysis_latency_ms", t.get("analysis", 0.0))
+
+    def stats(values: list[float]) -> dict:
+        return ({"median": float(np.percentile(values, 50)), "p95": float(np.percentile(values, 95)),
+                 "n": len(values)} if values else {"median": None, "p95": None, "n": 0})
+
+    live = [r for r in records if not r.get("from_cache")]
     summary["rejections"], summary["statuses"] = rejections, statuses
-    summary["latency_ms"] = ({"median": float(np.percentile(real, 50)), "p95": float(np.percentile(real, 95)),
-                              "n": len(real)} if real else {"median": None, "p95": None, "n": 0})
-    summary["n_cached"] = len(records) - len(real)
+    summary["latency_ms"] = stats([real_total(r) for r in live if r.get("generation_from_llm", True)])
+    summary["latency_fixed_ms"] = stats([real_total(r) for r in live if not r.get("generation_from_llm", True)])
+    summary["n_cached"] = len(records) - len(live)
     return summary
 
 
 class CachedGenerator:
     """Enveloppe le client de génération d'un emplacement ; expose `complete_json` et `close`.
 
-    Clé : sha256 de (GENERATION_PROMPT_SHA, modèle, provider_tag, message utilisateur exact).
+    Clé : sha256 de (GENERATION_PROMPT_SHA, modèle, provider_tag, max_tokens, message utilisateur exact).
     Le message utilisateur contient la question et le contexte échappé : il identifie
     exactement les documents transmis, sans avoir à en extraire les `doc_id`. Les appels
     échoués ne sont jamais mis en cache. `last_hit` dit si le dernier appel vient du cache.
@@ -102,13 +118,14 @@ class CachedGenerator:
             json.loads(cache_path.read_text(encoding="utf-8")) if cache_path.exists() else {})
         self.last_hit = False
 
-    def _key(self, profile, user: str) -> str:
-        payload = json.dumps([self._sha, profile.model, profile.provider_tag, user], ensure_ascii=False)
+    def _key(self, profile, user: str, max_tokens: int) -> str:
+        payload = json.dumps([self._sha, profile.model, profile.provider_tag, max_tokens, user],
+                             ensure_ascii=False)
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     def complete_json(self, profile, *, system, user, schema_name, schema, max_tokens):
         from RAG.src.llm.common import LlmCall
-        key = self._key(profile, user)
+        key = self._key(profile, user, max_tokens)
         if key in self._cache:
             self.last_hit = True
             return LlmCall(**self._cache[key])
@@ -123,6 +140,17 @@ class CachedGenerator:
 
     def close(self) -> None:
         self._inner.close()
+
+
+def build_record(question: dict, result, replayed: bool) -> dict:
+    """Enregistrement d'une question. `replayed` : la génération a réellement été rejouée du cache."""
+    a, analysis = result.answer, result.search.trace.analysis
+    return {"id": question["id"], "part": question["part"], "status": a.status,
+            "scope_reason": a.scope_reason, "citations": [s.doc_id for s in a.sources],
+            "rejected": a.rejected, "answer": a.answer, "timings_ms": result.timings_ms,
+            "from_cache": replayed, "generation_from_llm": a.from_llm,
+            "analysis_available": analysis.available, "analysis_latency_ms": analysis.latency_ms,
+            "analysis_from_cache": analysis.from_cache, "flags": list(result.search.trace.flags)}
 
 
 # --- Commandes ----------------------------------------------------------------------------
@@ -151,22 +179,29 @@ def cmd_lancer(args) -> None:
     done = {r["id"] for r in records}
     todo = [q for q in questions if q["id"] not in done]
     print(f"{len(done)} question(s) déjà enregistrée(s), {len(todo)} à poser")
+    truth_manifest = json.loads(TRUTH_PATH.read_text(encoding="utf-8"))["manifest"]
     with QuestionPipeline(1, analysis_cache_path=ANALYSIS_CACHE) as pipeline:
         slot = pipeline.acquire()
+        if slot.searcher.index_doc_ids_sha256() != truth_manifest["gold_doc_ids_sha256"]:
+            pipeline.release(slot)
+            raise SystemExit("l'index ne contient pas les documents de la vérité terrain E2a : "
+                             "relancer verite-terrain sur le Gold indexé, ou réindexer")
         cached = CachedGenerator(slot.generator, OUT / "cache_generation.json", GENERATION_PROMPT_SHA)
         slot.generator = cached
         try:
             for q in todo:
+                cached.last_hit = False  # sinon une réponse à message fixe passerait pour un rejeu
                 try:
                     result = pipeline.ask(slot, q["question"])
                 except LlmQuotaExhaustedError:
                     print(QUOTA_MESSAGE, file=sys.stderr)
                     raise SystemExit(1) from None
+                if not result.search.trace.analysis.available:
+                    # Analyse dégradée : l'enregistrer fausserait recherche et réponse.
+                    print(ANALYSIS_MESSAGE, file=sys.stderr)
+                    raise SystemExit(1)
                 a = result.answer
-                records.append({"id": q["id"], "part": q["part"], "status": a.status,
-                                "scope_reason": a.scope_reason, "citations": [s.doc_id for s in a.sources],
-                                "rejected": a.rejected, "answer": a.answer, "timings_ms": result.timings_ms,
-                                "from_cache": cached.last_hit})
+                records.append(build_record(q, result, cached.last_hit))
                 _write_json_atomic(records_path, records)
                 print(f"{q['id']} : {a.status}")
         finally:
@@ -177,6 +212,13 @@ def cmd_evaluer(args) -> None:
     questions = _load_questions()
     records = _load_records(OUT / "records.json")
     by_id = {r["id"]: r for r in records}
+    known = {q["id"] for q in questions}
+    for stray in sorted(set(by_id) - known):
+        print(f"AVERTISSEMENT : enregistrement {stray} absent des fichiers de questions (ignoré)", file=sys.stderr)
+    degraded = sorted(r["id"] for r in records if r.get("analysis_available") is False)
+    if degraded:
+        raise SystemExit(f"analyse indisponible pour {', '.join(degraded)} : enregistrements invalides, "
+                         "supprimer ces questions de records.json et relancer")
     missing = [q["id"] for q in questions if q["id"] not in by_id]
     if missing:
         raise SystemExit(f"{len(missing)} question(s) sans enregistrement : {', '.join(missing)} — "
@@ -187,16 +229,18 @@ def cmd_evaluer(args) -> None:
         record = by_id[q["id"]]
         scored.append({**record, **score_recette(q, record, relevant.get(q["id"], set()))})
     s = summarize(scored)
-    n_ok, n_total = s["part2"]
+    p2, p3, p4 = s["part2"], s["part3"], s["part4"]
     print("| Critère | Résultat | Seuil | Verdict |\n|---|---|---|---|")
-    p3, p4 = s["part3"], s["part4"]
-    print(f"| P2 (identifiants) | {n_ok}/{n_total} | 20/20 | {'OK' if n_ok == n_total == 20 else 'ÉCHEC'} |")
-    print(f"| P3 (pièges) | {p3[0]}/{p3[1]} | 100 % | {'OK' if p3[0] == p3[1] else 'ÉCHEC'} |")
-    print(f"| P4 (hors périmètre) | {p4[0]}/{p4[1]} | ≥ 9/10 | {'OK' if p4[0] >= 9 else 'ÉCHEC'} |")
+    print(f"| P2 (identifiants) | {p2[0]}/{p2[1]} | tout | {'OK' if p2[0] == p2[1] else 'ÉCHEC'} |")
+    print(f"| P3 (pièges) | {p3[0]}/{p3[1]} | tout | {'OK' if p3[0] == p3[1] else 'ÉCHEC'} |")
+    print(f"| P4 (hors périmètre) | {p4[0]}/{p4[1]} | ≥ 90 % | {'OK' if p4[0] >= 0.9 * p4[1] else 'ÉCHEC'} |")
     print(f"\nStatuts : {s['statuses']}")
-    lat = s["latency_ms"]
-    print(f"Latence (hors cache, n={lat['n']}) : médiane {lat['median']} ms, p95 {lat['p95']} ms ; "
-          f"{s['n_cached']} rejeu(x) de cache exclus")
+    for label, key in (("générées par le LLM", "latency_ms"), ("à message fixe", "latency_fixed_ms")):
+        lat = s[key]
+        print(f"Latence de bout en bout, réponses {label} (n={lat['n']}) : médiane {lat['median']} ms, "
+              f"p95 {lat['p95']} ms")
+    print(f"{s['n_cached']} rejeu(x) de génération exclus. Latences mesurées avec le profil d'essai "
+          "Groq, pas avec le profil de production OpenRouter.")
     print("\nRéponses rejetées :")
     rejected = [r for r in scored if r.get("rejected")]
     for r in rejected:
