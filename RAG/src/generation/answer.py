@@ -19,7 +19,6 @@ from RAG.src.prompts.generation import (
     GENERATION_SCHEMA, GENERATION_SCHEMA_NAME, MAX_ANSWER_CHARS, SCOPE_REASONS, STATUSES, SYSTEM_PROMPT,
     user_message,
 )
-from RAG.src.retrieval.identifiers import extract_identifiers
 from RAG.src.retrieval.retriever import RetrievedDocument, SearchResult
 from RAG.src.utils.config import LlmProfile
 from RAG.src.utils.errors import GenerationRejectedError, LlmUnavailableError
@@ -115,6 +114,11 @@ def validate_generation(content: Mapping) -> tuple[str, str | None, str, list[st
     return status, reason, text.strip(), list(dict.fromkeys(citations))
 
 
+def _check_not_empty(text: str) -> None:
+    if not text.strip():
+        raise GenerationRejectedError("empty_answer")
+
+
 def _fixed(status: str, text: str, documents, *, reason: str | None = None, sources=()) -> Answer:
     """Réponse à message fixe, sans appel au LLM."""
     return Answer(status=status, answer=text, sources=tuple(sources), disclaimer=messages.disclaimer(_archive(documents)),
@@ -127,7 +131,8 @@ def generate_answer(question: str, result: SearchResult, *, client, profile: Llm
     documents, trace = list(result.documents), result.trace
     ids = trace.identifiers
     # Cas tranchés sans LLM : gène hors panel seul, identifiants tous absents, aucun document.
-    if "gene_out_of_panel" in trace.flags and not ids.genes:
+    # Gène hors panel seul : sans identifiant de variant cité, rien à chercher dans les fiches.
+    if "gene_out_of_panel" in trace.flags and not ids.genes and not ids.has_variant_identifier:
         return _fixed("out_of_scope", messages.OUT_OF_SCOPE["gene_out_of_panel"], documents, reason="gene_out_of_panel")
     cited_ids = [f"rs{r}" for r in ids.rs] + list(ids.hgvs_c) + list(ids.hgvs_p)
     if cited_ids and set(cited_ids) <= set(trace.not_found_identifiers):
@@ -152,12 +157,19 @@ def generate_answer(question: str, result: SearchResult, *, client, profile: Llm
         return Answer(status=status, answer=messages.OUT_OF_SCOPE[reason], sources=(), scope_reason=reason,
                       rejected=None, **meta)
     if status == "not_in_sources":
-        # Un texte libre qui cite un identifiant n'est pas contrôlable : message fixe.
-        found = extract_identifiers(text)
-        safe = text and not (found.rs or found.hgvs_c or found.hgvs_p)
-        return Answer(status=status, answer=text if safe else messages.NO_DOCUMENT, sources=(), scope_reason=None,
-                      rejected=None, **meta)
+        # Texte libre contrôlé comme une réponse, mais contre aucun document : ni identifiant,
+        # ni signification, ni historique. Sinon, message fixe et code de rejet consigné.
+        try:
+            _check_not_empty(text)
+            check_identifiers(text, [], status=status)
+            check_no_history_narration(text)
+            check_significances(text, [])
+        except GenerationRejectedError as exc:
+            return Answer(status=status, answer=messages.NO_DOCUMENT, sources=(), scope_reason=None,
+                          rejected=str(exc), **meta)
+        return Answer(status=status, answer=text, sources=(), scope_reason=None, rejected=None, **meta)
     try:
+        _check_not_empty(text)
         check_citations(citations, documents, status)
         check_identifiers(text, documents, status=status)
         check_no_history_narration(text)
