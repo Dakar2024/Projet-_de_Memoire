@@ -231,3 +231,75 @@ def test_lancer_stops_when_index_differs_from_truth(tmp_path, monkeypatch):
     _setup_lancer(monkeypatch, tmp_path, [_result()], sha="autre")
     with pytest.raises(SystemExit, match="vérité terrain"):
         rg.cmd_lancer(None)
+
+
+def test_unavailable_generation_fails_parts_2_3_4_even_for_a_trap_without_flag():
+    unavailable = rec(status="generation_unavailable", citations=())
+    assert score_recette({"part": 2}, unavailable, {"clinvar:1"})["ok"] is False
+    assert score_recette({"part": 3, "expected_flags": []}, unavailable, set())["ok"] is False
+    assert score_recette({"part": 3, "expected_flags": ["identifier_not_found"]}, unavailable, set())["ok"] is False
+    assert score_recette({"part": 4, "expected_scope_reason": "counting"}, unavailable, set())["ok"] is False
+    assert score_recette({"part": 1}, unavailable, set())["ok"] is None
+
+
+def test_summary_counts_unavailable_generations_without_touching_latency():
+    ok = dict(rec(total=2000.0), part=2, ok=True, timings_ms={"total": 2000.0, "analysis": 0.0},
+              analysis_latency_ms=900.0, generation_from_llm=True)
+    down = {"id": "q", "part": 2, "status": "generation_unavailable", "ok": False, "citations": [],
+            "rejected": None, "from_cache": False}
+    s = summarize([ok, down])
+    assert s["statuses"] == {"answered": 1, "generation_unavailable": 1}
+    assert s["part2"] == (1, 2) and s["latency_ms"]["n"] == 1 and s["n_cached"] == 0
+
+
+def test_record_carries_the_prompt_version():
+    from RAG.src.prompts.generation import GENERATION_PROMPT_VERSION
+    r = rg.build_record({"id": "q", "part": 2}, _result(), replayed=False)
+    assert r["prompt_version"] == GENERATION_PROMPT_VERSION
+
+
+def test_evaluer_refuses_records_from_several_prompt_versions(tmp_path, monkeypatch):
+    qa, qb = tmp_path / "a.yaml", tmp_path / "b.yaml"
+    qa.write_text("- {id: P2-01, part: 2, question: q}\n- {id: P2-02, part: 2, question: q}\n", encoding="utf-8")
+    qb.write_text("[]\n", encoding="utf-8")
+    monkeypatch.setattr(rg, "QUESTIONS_E2A", qa)
+    monkeypatch.setattr(rg, "QUESTIONS_E2B", qb)
+    monkeypatch.setattr(rg, "OUT", tmp_path)
+    (tmp_path / "records.json").write_text(json.dumps([
+        dict(rec(), id="P2-01", part=2, prompt_version="generation-v4"),
+        dict(rec(), id="P2-02", part=2, prompt_version="generation-v5")]), encoding="utf-8")
+    with pytest.raises(SystemExit, match="e2b-recette"):
+        rg.cmd_evaluer(None)
+
+
+class _FailingPipeline(_Pipeline):
+    def ask(self, slot, question):
+        if isinstance(self.results[0], Exception):
+            raise self.results.pop(0)
+        return super().ask(slot, question)
+
+
+def test_unavailable_generation_is_recorded_without_text_and_the_run_continues(tmp_path, monkeypatch):
+    import RAG.src.generation.pipeline as pl
+    from RAG.src.utils.errors import LlmUnavailableError
+    _setup_lancer(monkeypatch, tmp_path, [])
+    results = [_result(), LlmUnavailableError("texte de la question secrète"), _result()]
+    monkeypatch.setattr(pl, "QuestionPipeline", lambda *a, **k: _FailingPipeline(results))
+    rg.cmd_lancer(None)
+    records = json.loads((tmp_path / "records.json").read_text(encoding="utf-8"))
+    assert [r["status"] for r in records] == ["answered", "generation_unavailable", "answered"]
+    down = records[1]
+    assert down["error"] == "LlmUnavailableError" and down["citations"] == []
+    assert "secrète" not in json.dumps(down) and down["prompt_version"]
+
+
+def test_quota_exhaustion_still_stops_the_run(tmp_path, monkeypatch):
+    import RAG.src.generation.pipeline as pl
+    from RAG.src.utils.errors import LlmQuotaExhaustedError
+    _setup_lancer(monkeypatch, tmp_path, [])
+    results = [_result(), LlmQuotaExhaustedError("quota")]
+    monkeypatch.setattr(pl, "QuestionPipeline", lambda *a, **k: _FailingPipeline(results))
+    with pytest.raises(SystemExit) as exc:
+        rg.cmd_lancer(None)
+    assert exc.value.code == 1
+    assert [r["id"] for r in json.loads((tmp_path / "records.json").read_text(encoding="utf-8"))] == ["Q1"]
