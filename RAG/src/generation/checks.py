@@ -29,9 +29,10 @@ _PANEL_STATUSES = ("answered", "partial")
 
 def _clean(answer: str) -> str:
     """Réponse remise sous forme comparable : entités HTML décodées (c.69A&gt;G), Unicode
-    normalisé (NFC) et caractères de largeur nulle retirés (ils casseraient « rs12345 »)."""
-    text = unicodedata.normalize("NFC", html.unescape(answer))
-    return re.sub("[\u200b\u200c\u200d\ufeff]", "", text)
+    normalisé (NFKC : pleine chasse, ligatures) et caractères de format (Cf : largeur nulle,
+    trait d'union conditionnel, liant de mots) retirés, car ils casseraient « rs12345 »."""
+    text = unicodedata.normalize("NFKC", html.unescape(answer))
+    return "".join(c for c in text if unicodedata.category(c) != "Cf")
 
 
 def check_citations(citations: Sequence[str], documents: Sequence[RetrievedDocument], status: str) -> None:
@@ -99,12 +100,10 @@ _FEMININE_PLURAL = {"bénin": r"b[ée]nin(?:e|s|es)?|b[ée]nigne(?:s)?",
                     "interprétations contradictoires":
                         r"interpr[ée]tation(?:s)?\s+(?:\S+\s+){0,3}?contradictoire(?:s)?"}
 
-# Termes de signification reconnus dans une réponse : (clé française, motif), en français et
-# avec le libellé ClinVar anglais, du plus long au plus court pour que « probablement
-# pathogène » masque le « pathogène » qu'il contient.
-
-
 def _build_terms() -> list[tuple[str, re.Pattern]]:
+    """Termes de signification reconnus dans une réponse : (clé française, motif), en
+    français et avec le libellé ClinVar anglais, du plus long au plus court pour que
+    « probablement pathogène » masque le « pathogène » qu'il contient."""
     entries: list[tuple[int, str, str]] = []
     for term in significance_terms_fr():
         entries.append((len(term), term, _french_pattern(term)))
@@ -126,10 +125,18 @@ _OFF_TABLE = re.compile(
     re.IGNORECASE,
 )
 _NEGATIONS = {"pas", "non", "ni", "jamais", "plus", "aucun", "aucune"}
+# « jusqu'… » n'est un marqueur que suivi d'une date : « jusqu'à présent » n'en est pas un.
+_DATE_LIMIT = (r"jusqu['’]\s*(?:en|au|à|a)\s+(?:\d{1,2}(?:er)?\s+)?(?:[a-zéû]+\s+)?(?:19|20)\d\d")
 _HISTORY_MARKER = re.compile(
-    r"auparavant|pr[ée]c[ée]demment|jusqu|historique|reclass|\bavant\b|\bd['’]abord\b|"
-    r"\binitialement\b|\bautrefois\b|\bancien(?:ne)?(?:ment)?\b", re.IGNORECASE)
-_TRAILING_MARKER = re.compile(r"\bjusqu", re.IGNORECASE)
+    r"auparavant|pr[ée]c[ée]demment|" + _DATE_LIMIT + r"|historique|\bavant\b(?!\s+tout)|"
+    r"\bd['’]abord\b|\binitialement\b|\bautrefois\b|\bancien(?:ne)?(?:ment)?\b|"
+    r"\bant[ée]rieure?s?\b", re.IGNORECASE)
+_TRAILING_MARKER = re.compile(r"\b" + _DATE_LIMIT, re.IGNORECASE)
+# Mots qui disent que la situation a changé depuis : entre un marqueur et un libellé
+# d'historique, ils signalent une reclassification (le libellé serait alors l'actuel).
+_BLOCKER = re.compile(
+    r"maintenant|d[ée]sormais|aujourd|actuellement|depuis|\bpuis\b|à\s+pr[ée]sent|\bensuite\b|"
+    r"\bvers\b|\ben\s+(?=signification|pathog|b[ée]nin|probablement|interpr)", re.IGNORECASE)
 _HISTORY_REACH = 6  # mots au plus entre le marqueur et le terme
 _SENTENCES = re.compile(r"(?<=[.!?;])\s+")
 
@@ -151,19 +158,28 @@ def _terms_in(sentence: str) -> dict[str, int]:
                 raise GenerationRejectedError("significance_not_in_sources")
             found[term] = min(found.get(term, match.start()), match.start())
         remaining = pattern.sub(lambda m: " " * len(m.group()), remaining)
+    # « incertaine » isolé dans une phrase qui parle de « signification » vaut « signification
+    # incertaine » (« Sa signification clinique est encore incertaine »).
+    if "signification incertaine" not in found and re.search(r"\bsignification", sentence, re.IGNORECASE):
+        lone = re.search(r"\bincertain(?:e|s|es)?\b", sentence, re.IGNORECASE)
+        if lone:
+            if _negated(sentence, lone.start()):
+                raise GenerationRejectedError("significance_not_in_sources")
+            found["signification incertaine"] = lone.start()
     return found
 
 
 def _after_marker(sentence: str, position: int) -> bool:
-    """Le terme situé à `position` suit un marqueur d'historique de la même phrase, à six mots
-    au plus et sans virgule entre les deux. Conservateur : un terme placé AVANT le marqueur
-    (« incertaine avant 2019 ») n'est pas accepté."""
+    """Le terme situé à `position` est un libellé d'historique : il suit un marqueur de la même
+    phrase, à six mots au plus, sans autre signification ni mot de changement (« maintenant »,
+    « puis »…) entre les deux. Une date limite (« jusqu'en 2015 ») peut aussi le suivre.
+    Conservateur : un terme placé AVANT un autre marqueur (« incertaine avant 2019 ») est
+    refusé."""
     for marker in _HISTORY_MARKER.finditer(sentence[:position]):
         between = sentence[marker.end():position]
-        if "," not in between and len(re.findall(r"\w+", between)) <= _HISTORY_REACH:
+        if (len(re.findall(r"\w+", between)) <= _HISTORY_REACH and not _BLOCKER.search(between)
+                and not any(pattern.search(between) for _, pattern in _TERMS)):
             return True
-    # « jusqu'en 2015 » s'écrit après le libellé (« incertaine jusqu'en 2015 ») : seul marqueur
-    # accepté en suite, avec les mêmes limites.
     follow = sentence[position:]
     for marker in _TRAILING_MARKER.finditer(follow):
         between = follow[:marker.start()]

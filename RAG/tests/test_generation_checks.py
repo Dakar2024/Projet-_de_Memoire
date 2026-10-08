@@ -229,3 +229,58 @@ def test_uncertain_wordings_are_recognised(answer):
 def test_zero_width_and_decomposed_text_cannot_hide_anything():
     assert _reason(check_identifiers, "Voir rs​12345.", [H]) == "identifier_not_in_sources"
     assert _reason(check_significances, "Il est bénin.", [H]) == "significance_not_in_sources"
+
+
+# --- tour de correction 3 ---
+
+@pytest.mark.parametrize("answer", [
+    "Ce variant est de signification incertaine jusqu'à preuve du contraire.",
+    "Ce variant est de signification incertaine jusqu'à nouvel ordre.",
+    "Ce variant est de signification incertaine jusqu'ici.",
+    "Ce variant est de signification incertaine jusqu'à présent.",
+    "Ce variant est de signification incertaine jusqu'aujourd'hui.",
+    "Ce variant est de signification incertaine jusqu'à maintenant.",
+    "Jusqu'à présent il est de signification incertaine.",
+    "Il est avant tout de signification incertaine.",
+    "Il était auparavant pathogène et il est maintenant de signification incertaine.",
+    "Auparavant pathogène et désormais de signification incertaine.",
+    "Initialement pathogène puis de signification incertaine.",
+    "Ce variant a été reclassé en signification incertaine.",
+    "Sa signification clinique est encore incertaine.",
+    "La signification de ce variant, incertaine, est discutée.",
+])
+def test_round3_rejections(answer):
+    assert _reason(check_significances, answer, [H]) == "significance_not_in_sources"
+
+
+@pytest.mark.parametrize("answer", [
+    "Ce variant est de signification incertaine jusqu'en 2015.",
+    "Il fut de signification incertaine jusqu'en 2015-01.",
+    "Il fut de signification incertaine jusqu'au 1er janvier 2015.",
+    "Il fut de signification incertaine jusqu'en septembre 2016.",
+    "Avant 2015, il était classé de signification incertaine.",
+    "Auparavant, il était classé de signification incertaine.",
+    "Jusqu'en 2015-01, il était de signification incertaine.",
+])
+def test_round3_acceptances(answer):
+    check_significances(answer, [H])
+
+
+@pytest.mark.parametrize("answer", ["Sa signification clinique est encore incertaine.",
+                                    "La signification de ce variant, incertaine, est discutée."])
+def test_standalone_uncertain_is_accepted_for_an_uncertain_document(answer):
+    check_significances(answer, [_doc_text("Clinical significance: Uncertain significance.",
+                                           sig="Uncertain significance")])
+
+
+@pytest.mark.parametrize("answer", ["Il est b⁠énin.", "Il est bé­nin.", "Voir ｒｓ12345."])
+def test_compatibility_and_format_characters_cannot_hide_anything(answer):
+    if "12345" in answer:
+        assert _reason(check_identifiers, answer, [H]) == "identifier_not_in_sources"
+    else:
+        assert _reason(check_significances, answer, [H]) == "significance_not_in_sources"
+
+
+def test_soft_hyphen_and_word_joiner_inside_rs_are_rejected():
+    for answer in ("Voir rs⁠12345.", "Voir rs­12345."):
+        assert _reason(check_identifiers, answer, [H]) == "identifier_not_in_sources"
