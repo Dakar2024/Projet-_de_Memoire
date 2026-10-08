@@ -38,6 +38,7 @@ ANALYSIS_MESSAGE = ("analyse indisponible (quota Groq épuisé ou erreur) — qu
                     "relancer après la réinitialisation, le cache garde les analyses et réponses obtenues")
 QUOTA_MESSAGE = ("quota Groq épuisé — relancer après la réinitialisation ; "
                  "le cache garde les réponses obtenues")
+UNAVAILABLE_STATUS = "generation_unavailable"
 _ANSWERED = {"answered", "partial"}
 _NO_ANSWER = {"not_in_sources", "out_of_scope"}
 
@@ -55,6 +56,8 @@ def _write_json_atomic(path: Path, data) -> None:
 def score_recette(question: dict, record: dict, relevant: set[str]) -> dict:
     """Verdict d'une question selon sa partie ; `ok=None` en partie 1 (comptée, sans seuil)."""
     part, status, citations = question["part"], record["status"], record.get("citations") or []
+    if part in (2, 3, 4) and status == UNAVAILABLE_STATUS:
+        return {"ok": False}  # aucune réponse produite : le critère n'est pas rempli
     if part == 1:
         ok = None
     elif part == 2:
@@ -94,11 +97,12 @@ def summarize(records: list[dict]) -> dict:
         return ({"median": float(np.percentile(values, 50)), "p95": float(np.percentile(values, 95)),
                  "n": len(values)} if values else {"median": None, "p95": None, "n": 0})
 
-    live = [r for r in records if not r.get("from_cache")]
+    # Une génération indisponible n'a pas de latence de bout en bout : hors des statistiques.
+    live = [r for r in records if not r.get("from_cache") and r["status"] != UNAVAILABLE_STATUS]
     summary["rejections"], summary["statuses"] = rejections, statuses
     summary["latency_ms"] = stats([real_total(r) for r in live if r.get("generation_from_llm", True)])
     summary["latency_fixed_ms"] = stats([real_total(r) for r in live if not r.get("generation_from_llm", True)])
-    summary["n_cached"] = len(records) - len(live)
+    summary["n_cached"] = sum(1 for r in records if r.get("from_cache"))
     return summary
 
 
@@ -142,10 +146,21 @@ class CachedGenerator:
         self._inner.close()
 
 
+def build_unavailable_record(question: dict, error: Exception) -> dict:
+    """Question dont la génération a échoué de façon transitoire : seul le nom de la classe
+    d'erreur est conservé (jamais son texte), sans citation."""
+    from RAG.src.prompts.generation import GENERATION_PROMPT_VERSION
+    return {"id": question["id"], "part": question["part"], "status": UNAVAILABLE_STATUS,
+            "error": type(error).__name__, "scope_reason": None, "citations": [], "rejected": None,
+            "answer": "", "from_cache": False, "prompt_version": GENERATION_PROMPT_VERSION}
+
+
 def build_record(question: dict, result, replayed: bool) -> dict:
     """Enregistrement d'une question. `replayed` : la génération a réellement été rejouée du cache."""
+    from RAG.src.prompts.generation import GENERATION_PROMPT_VERSION
     a, analysis = result.answer, result.search.trace.analysis
     return {"id": question["id"], "part": question["part"], "status": a.status,
+            "prompt_version": GENERATION_PROMPT_VERSION,
             "scope_reason": a.scope_reason, "citations": [s.doc_id for s in a.sources],
             "rejected": a.rejected, "answer": a.answer, "timings_ms": result.timings_ms,
             "from_cache": replayed, "generation_from_llm": a.from_llm,
@@ -171,7 +186,7 @@ def _load_records(path: Path) -> list[dict]:
 def cmd_lancer(args) -> None:
     from RAG.src.generation.pipeline import QuestionPipeline
     from RAG.src.prompts.generation import GENERATION_PROMPT_SHA
-    from RAG.src.utils.errors import LlmQuotaExhaustedError
+    from RAG.src.utils.errors import LlmQuotaExhaustedError, LlmUnavailableError
 
     questions = _load_questions()
     records_path = OUT / "records.json"
@@ -196,6 +211,12 @@ def cmd_lancer(args) -> None:
                 except LlmQuotaExhaustedError:
                     print(QUOTA_MESSAGE, file=sys.stderr)
                     raise SystemExit(1) from None
+                except LlmUnavailableError as exc:
+                    # Génération indisponible (sortie hors schéma, 5xx...) : consignée, la recette continue.
+                    records.append(build_unavailable_record(q, exc))
+                    _write_json_atomic(records_path, records)
+                    print(f"{q['id']} : {UNAVAILABLE_STATUS} ({type(exc).__name__})")
+                    continue
                 if not result.search.trace.analysis.available:
                     # Analyse dégradée : l'enregistrer fausserait recherche et réponse.
                     print(ANALYSIS_MESSAGE, file=sys.stderr)
@@ -219,6 +240,10 @@ def cmd_evaluer(args) -> None:
     if degraded:
         raise SystemExit(f"analyse indisponible pour {', '.join(degraded)} : enregistrements invalides, "
                          "supprimer ces questions de records.json et relancer")
+    versions = sorted({str(r.get("prompt_version")) for r in records})
+    if len(versions) > 1:
+        raise SystemExit(f"enregistrements de plusieurs versions du prompt ({', '.join(versions)}) : "
+                         "supprimer data/experiments/e2b-recette et relancer")
     missing = [q["id"] for q in questions if q["id"] not in by_id]
     if missing:
         raise SystemExit(f"{len(missing)} question(s) sans enregistrement : {', '.join(missing)} — "
