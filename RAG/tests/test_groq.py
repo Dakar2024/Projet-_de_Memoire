@@ -289,3 +289,17 @@ def test_close_closes_the_session():
     GroqClient("gsk_secret", session=Session()).close()
 
     assert closed == [1]
+
+
+@responses.activate
+def test_schema_validation_failure_is_transient_and_never_echoes_the_body():
+    responses.add(responses.POST, CHAT, status=400, json={"error": {
+        "message": "Failed to validate JSON : usr", "type": "invalid_request_error",
+        "code": "json_validate_failed", "failed_generation": "texte de la question usr"}})
+
+    with pytest.raises(LlmUnavailableError) as excinfo:
+        _call(_client())
+    message = str(excinfo.value)
+    assert not isinstance(excinfo.value, LlmPermanentError)
+    assert "usr" not in message and "Failed" not in message and TRIAL.name in message
+    assert len(responses.calls) == 1

@@ -9,7 +9,7 @@ import json
 from RAG.src.generation.context import escape_data
 from RAG.src.generation.messages import SIGNIFICANCE_FR
 
-GENERATION_PROMPT_VERSION = "generation-v4"
+GENERATION_PROMPT_VERSION = "generation-v5"
 GENERATION_SCHEMA_NAME = "grounded_answer"
 STATUSES = ("answered", "partial", "not_in_sources", "out_of_scope")
 SCOPE_REASONS = ("counting", "acmg", "frequency", "clinical_advice", "other")
@@ -56,7 +56,9 @@ in the documents. "answered" and "partial" require at least one citation.
 significance (do not write 'not benign', 'n'est pas pathogène'). Never use abbreviations such as \
 VUS; write the table term.
 10. scope_reason is null unless status is "out_of_scope". Keep "answer" under {MAX_ANSWER_CHARS} \
-characters."""
+characters.
+11. Be concise: at most 1 500 characters. In any list (conditions, phenotypes), give at most 5 \
+items, then write "et N autres (voir la fiche ClinVar)"."""
 
 
 def _sha(system: str, schema: dict) -> str:
