@@ -57,7 +57,7 @@ def disclaimer(archive: str | None) -> str:
 OUT_OF_SCOPE: dict[str, str] = {
     "counting": ("Cet outil retrouve les fiches ClinVar les plus pertinentes pour une question ; "
                  "il ne compte pas les variants et ne dresse pas de liste exhaustive. Un comptage "
-                 "relève de la couche analytique du pipeline."),
+                 "relève d'une analyse dédiée de ClinVar."),
     "acmg": ("Cet outil ne classe pas les variants selon les critères ACMG : il restitue la "
              "classification déposée dans ClinVar. La classification reste l'acte du biologiste."),
     "frequency": ("Les fréquences en population (gnomAD, cohortes africaines) ne font pas partie "
