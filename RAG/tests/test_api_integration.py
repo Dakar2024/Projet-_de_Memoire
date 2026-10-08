@@ -1,5 +1,6 @@
-"""Dans le conteneur rag-search (même image et mêmes réseaux que rag-api), contre la vraie
-pile. Exclus de la passe rapide. Les tests du proxy sortent sur Internet (OpenRouter)."""
+"""Dans le conteneur rag-api-test (image rag-api + pytest, mêmes réseaux que rag-api),
+contre la vraie pile. Exclus de la passe rapide. Les tests du proxy sortent sur Internet
+(OpenRouter)."""
 
 import os
 
@@ -7,6 +8,9 @@ import pytest
 import requests
 
 pytestmark = pytest.mark.integration
+
+# Adresse d'openrouter.ai résolue sur l'hôte le 08/10/2026 ; remplaçable par la variable.
+OPENROUTER_IP = os.environ.get("RAG_TEST_OPENROUTER_IP", "104.18.2.115")
 
 
 def test_proxy_refuses_a_domain_outside_the_allow_list():
@@ -16,6 +20,27 @@ def test_proxy_refuses_a_domain_outside_the_allow_list():
 
 def test_proxy_lets_openrouter_through():
     assert requests.get("https://openrouter.ai/api/v1/models", timeout=30).status_code == 200
+
+
+def test_proxy_refuses_an_allowed_host_on_another_port():
+    with pytest.raises(requests.exceptions.ProxyError):
+        requests.get("https://openrouter.ai:8443/api/v1/models", timeout=15)
+
+
+def test_proxy_refuses_plain_http_even_to_an_allowed_host():
+    # Sans CONNECT, Squid répond lui-même 403 (aucune erreur de tunnel côté requests).
+    try:
+        r = requests.get("http://openrouter.ai/api/v1/models", timeout=15)
+    except requests.exceptions.ProxyError:
+        return
+    assert r.status_code == 403
+
+
+def test_proxy_refuses_an_ip_literal_even_of_an_allowed_host():
+    # Le refus ne dépend pas de l'adresse (acl to_ip) : une adresse d'OpenRouter, même
+    # périmée, suffit. Le conteneur, sur des réseaux internes, ne résout aucun nom externe.
+    with pytest.raises(requests.exceptions.ProxyError):
+        requests.get(f"https://{OPENROUTER_IP}/api/v1/models", timeout=15, verify=False)
 
 
 def test_direct_internet_access_is_impossible():
