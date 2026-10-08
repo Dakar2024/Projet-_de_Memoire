@@ -1,16 +1,19 @@
-# RAG génomique — E1 : indexation, E2a : recherche
+# RAG génomique — E1 : indexation, E2a : recherche, E2b : génération et API
 
 E1 copie les documents de `gold/rag/documents` dans une base vectorielle (PostgreSQL +
 pgvector), avec leurs vecteurs, de façon incrémentale, reprenable et vérifiée (§1 à §7).
-E2a cherche dans cette base à partir d'une question en français (§8). Restent :
+E2a cherche dans cette base à partir d'une question en français (§8). E2b génère une réponse
+vérifiée contre les fiches retrouvées et l'expose par une API locale Litestar, derrière une
+passerelle et un proxy sortant filtrant (§9). Reste :
 
-- **E2b** (à venir) : génération de la réponse, prompts, API Litestar ;
-- **E3** (à venir) : évaluation RAGAS et audit.
+- **E3** (à venir) : évaluation RAGAS, choix du modèle de génération et audit.
 
 Documents de référence :
 
 - spec : `docs/superpowers/specs/2026-10-01-sous-projet-e1-indexation-rag-design.md` ;
-- choix du modèle, mesuré : `reference/choix_embedding.md`.
+- choix du modèle, mesuré : `reference/choix_embedding.md` ;
+- spec de E2b : `docs/superpowers/specs/2026-10-08-sous-projet-e2b-generation-api-design.md`
+  (amendements au §10).
 
 ## 1. Architecture
 
@@ -216,10 +219,11 @@ d'une énumération validée.
 
 ### 8.2 Service `rag-search`
 
-Outil à la demande (profil `outils`), qui deviendra l'API en E2b. Utilisateur non root, racine en
-lecture seule, `no-new-privileges`, `cap_drop: ALL`, compte PostgreSQL `rag_reader`. Réseaux :
-`rag-network` (base, embedding) et `rag-egress`, sortie Internet **non filtrée** (Docker ne filtre
-pas par domaine ; proxy filtrant prévu avant E2b, `TODO.md`). Seuls `data/experiments/e2a` et
+Outil à la demande (profil `outils`), conservé à côté de l'API (`rag-api`, §9) : même image
+(`docker/rag-api/`), mêmes réglages. Utilisateur non root, racine en lecture seule,
+`no-new-privileges`, `cap_drop: ALL`, compte PostgreSQL `rag_reader`. Réseaux : `rag-network` (base,
+embedding) et `rag-proxy-net` (interne) ; sa seule sortie Internet passe par le proxy filtrant
+`rag-proxy` (§9.7), variables `HTTPS_PROXY` / `NO_PROXY`. Seuls `data/experiments/e2a` et
 `data/experiments/e2a-essai` y sont montés en écriture : les créer sur l'hôte avant la première
 mesure (`mkdir -p data/experiments/e2a data/experiments/e2a-essai`), sinon Docker les crée au nom de
 root.
@@ -288,19 +292,236 @@ d'analyse) sera consignée dans `reference/mesure_recherche_e2a.md`.
 
 ### 8.6 Tests d'intégration de la recherche
 
-```bash
-set -a; . ./.env; set +a
-docker compose --env-file .env --profile outils run --rm \
-  -e RAG_READER_PASSWORD -e RAG_INDEXER_PASSWORD \
-  --entrypoint sh rag-search -c '
-    pip install --quiet --target /tmp/pytest-lib pytest==9.1.1 &&
-    export PYTHONPATH=/tmp/pytest-lib:$PYTHONPATH &&
-    export RAG_TEST_PG_READER_CONNINFO="host=rag-postgres dbname=rag user=rag_reader password=$RAG_READER_PASSWORD" &&
-    export RAG_TEST_PG_CONNINFO="host=rag-postgres dbname=rag user=rag_indexer password=$RAG_INDEXER_PASSWORD" &&
-    python -m pytest -p no:cacheprovider -m integration RAG/tests/test_search_store_integration.py -q'
-```
+Depuis E2b, PyPI n'est plus joignable depuis `rag-search` (le proxy n'autorise que les LLM) : ces
+tests se lancent avec `rag-api-test`, comme ceux de l'API (§9.9), en nommant
+`RAG/tests/test_search_store_integration.py`.
 
 Limites connues : les noms historiques de variants (« 5382insC », « Glu6Val ») ne sont pas traduits ;
 un symbole en majuscules avec un chiffre (« CD4 ») peut être signalé à tort comme gène hors panel ;
 le cache des analyses (`data/experiments/`, non versionné) contient la reformulation anglaise des
 questions en clair.
+
+## 9. Génération et API (E2b)
+
+Spec : `docs/superpowers/specs/2026-10-08-sous-projet-e2b-generation-api-design.md` (amendements au
+§10). L'API prend une question en français et renvoie une réponse **vérifiée** : le texte du LLM
+n'est montré que s'il passe des contrôles faits par le code. Le modèle de génération est
+**provisoire** (§9.3) ; le choix officiel relève de la mesure E2a puis de RAGAS en E3.
+
+### 9.1 Architecture
+
+```
+hôte (127.0.0.1:8090)
+  └─ rag-gateway (nginx, sans secret) ── rag-gateway-net ──► rag-api (Litestar, uvicorn)
+                                                               ├─ rag-network ─► rag-postgres (rag_reader), rag-embeddings
+                                                               └─ rag-proxy-net ─► rag-proxy (Squid) ─ rag-egress ─► OpenRouter / Groq
+
+question ─► analyse (E2a) ─► recherche (E2a, 10 documents) ─► génération (LLM, JSON strict)
+         ─► contrôles du code ─► réponse + sources + avertissement
+```
+
+| Service | Rôle | Exposition |
+|---|---|---|
+| `rag-gateway` | seul point d'entrée : relaie `GET /health`, `GET /ready`, `POST /v1/questions` | `127.0.0.1:8090` ; nginx non privilégié, racine en lecture seule, aucun secret |
+| `rag-api` | API Litestar : analyse, recherche, génération, contrôles | aucun port publié (réseaux internes seulement) ; compte `rag_reader` |
+| `rag-proxy` | Squid : seule sortie Internet du RAG | `CONNECT` vers `openrouter.ai:443` et `api.groq.com:443` seulement |
+| `rag-search`, `rag-api-test` | outils à la demande (profil `outils`) : mesures, tests | même image que `rag-api` |
+
+Pourquoi une passerelle : Docker ne publie aucun port pour un conteneur relié seulement à des
+réseaux internes, et `rag-api` ne doit avoir aucune sortie directe. La passerelle publie le port sur
+la boucle locale de l'hôte et joint `rag-api` par le réseau interne `rag-gateway-net`.
+
+Démarrage : `docker compose --env-file .env up -d rag-gateway` (démarre aussi `rag-api`, `rag-proxy`
+et leurs dépendances). Au démarrage, l'API refuse de tourner sans `RAG_API_KEY` valide, et vérifie que
+le modèle d'embedding servi est celui de l'index (§8.2).
+
+### 9.2 Ce qui est garanti sur une réponse
+
+Le LLM rend un JSON strict (`status`, `scope_reason`, `answer`, `citations`). Le code accepte le texte
+seulement si :
+
+- **Citations** : chaque source citée est l'un des 10 documents transmis ; la liste affichée des
+  sources vient du code, pas du LLM.
+- **Identifiants** : tout identifiant du texte (rs, HGVS c./p., identifiant ClinVar, gène) est présent
+  dans un document cité ou dans les textes transmis ; un identifiant inventé rejette la réponse.
+- **Signification actuelle** : toute signification clinique affirmée est celle du document cité ; une
+  signification d'un autre libellé, niée ou en anglais est rejetée.
+- **Historique restitué par le code** : le LLM ne raconte jamais l'historique de classification
+  (« auparavant », « reclassé », « jusqu'en 2019 » sont rejetés) ; le code ajoute lui-même une phrase
+  « Historique ClinVar … » depuis la ligne `Classification history` du Gold.
+- **Messages fixes** : hors périmètre (comptage, ACMG, fréquences, conseil clinique, gène hors panel),
+  document introuvable et réponse non vérifiable reçoivent un texte écrit par le code. Le texte d'un
+  `not_in_sources` produit par le LLM passe les mêmes contrôles.
+- **Longueur** : réponse de 1 500 caractères au plus (prompt v5), 4 000 au maximum dur.
+
+Statuts renvoyés (champ `status`) :
+
+| Statut | Sens |
+|---|---|
+| `answered` | réponse complète, vérifiée, avec sources |
+| `partial` | réponse vérifiée, mais les fiches ne couvrent qu'une partie de la question |
+| `not_in_sources` | aucune fiche ne répond (identifiant introuvable, aucun document, ou ClinVar ne documente pas le point) |
+| `out_of_scope` | hors périmètre, avec `scope_reason` ; message fixe |
+| `unverifiable` | le texte généré a échoué un contrôle ; il n'est **pas affiché**, seules les sources le sont |
+
+Un LLM injoignable ou hors quota ne produit pas de statut : l'API répond 503 (§9.5). La recette
+(§9.10) enregistre ce cas sous le nom `generation_unavailable`.
+
+### 9.3 Profils LLM provisoires
+
+`RAG/config.yaml`, section `llm` :
+
+- `analysis_profile` et `generation_profile` valent `essai-groq-gpt-oss-120b` (API Groq, offre
+  gratuite, zéro rétention à activer dans *Data Controls*). **Provisoires** : le profil d'analyse
+  sera désigné par la mesure officielle de E2a (crédits OpenRouter), celui de génération par RAGAS en E3.
+- Chaque réponse porte le modèle, le fournisseur et le coût réellement observés.
+- Le quota gratuit de Groq est quotidien : la recette (§9.10) est reprenable sur plusieurs jours.
+
+### 9.4 Configuration et clé d'API
+
+Section `api` de `RAG/config.yaml` : `max_concurrency: 4` (au-delà, 429 ; chaque emplacement a sa
+propre connexion PostgreSQL), `request_timeout_s: 120` (503), `max_body_bytes: 8192` (413),
+`openapi: false`. Avec `openapi: true`, `/schema` est exposé **sans clé** : à ne jamais activer hors
+d'un essai local.
+
+`RAG_API_KEY` (`.env` de la racine) : **32 caractères au moins**, sinon l'API ne démarre pas. À
+générer sans l'afficher :
+
+```bash
+printf 'RAG_API_KEY=%s\n' "$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')" >> .env
+```
+
+Elle est comparée en temps constant et n'est jamais journalisée. La passerelle ne la connaît pas :
+elle la transmet telle quelle, et c'est l'API qui la vérifie.
+
+### 9.5 Appeler l'API
+
+La clé est lue dans l'environnement du shell, jamais tapée en clair dans la commande :
+
+```bash
+set -a; . ./.env; set +a
+curl -s http://127.0.0.1:8090/health                                   # {"status":"ok"}, sans clé
+curl -s -H "X-API-Key: $RAG_API_KEY" http://127.0.0.1:8090/ready       # modèle d'embedding, base
+curl -s -H "X-API-Key: $RAG_API_KEY" -H 'Content-Type: application/json' \
+  -d '{"question": "Le variant rs80357906 sur BRCA1 est-il pathogène ?"}' \
+  http://127.0.0.1:8090/v1/questions
+# "trace": true dans le corps ajoute la trace de recherche (§8.1)
+```
+
+La réponse contient `status`, `answer`, `sources`, `disclaimer`, `request_id`, et les durées par
+étape. Elle ne contient jamais de clé. Erreurs (corps fixe `{"error", "message", "request_id"}`) :
+
+| Code | `error` | Cause |
+|---|---|---|
+| 401 | `unauthorized` | `X-API-Key` absente ou invalide (`/ready`, `/v1/questions`) |
+| 404 | `not_found` | route inconnue ; **aussi, par la passerelle, toute requête avec chaîne de requête** (`?…`) ou méthode non prévue |
+| 413 | `too_large` | corps supérieur à 8 192 octets |
+| 422 | `invalid_question` | JSON illisible, champ inconnu, question vide ou de plus de 1 000 caractères |
+| 429 | `busy` | 4 questions déjà en cours ; **ou, par la passerelle, plus de 30 questions par minute** : la passerelle répond alors par une page HTML de nginx, pas du JSON |
+| 503 | `unavailable` / `timeout` | LLM, embedding ou base injoignable, quota épuisé (en-tête `Retry-After`), ou délai de 120 s dépassé |
+| 500 | `internal` | erreur interne, journalisée avec le seul nom de la classe d'exception |
+
+### 9.6 Journaux
+
+Un événement JSON par question : identifiant de requête, statut, durées, coût, modèle, indicateurs de
+recherche, nombre de sources. **Ni la question, ni la réponse, ni la clé, ni l'en-tête** : la
+passerelle journalise `méthode chemin statut durée`, sans chaîne de requête ; le proxy journalise
+l'hôte et le port, jamais l'URL complète. Les messages d'exception ne sont pas journalisés (ils
+pourraient citer un extrait de la requête).
+
+### 9.7 Architecture de sécurité
+
+- **Proxy sortant** (`docker/rag-proxy/squid.conf`) : seuls clients admis, ceux du sous-réseau de
+  `rag-proxy-net` ; seule méthode `CONNECT`, port 443, vers `openrouter.ai` et `api.groq.com`. L'option
+  `-n` compare au nom demandé seul (pas de résolution inverse), et toute destination en IP littérale
+  est refusée. Aucun cache, aucune inspection du contenu. **Le sous-réseau fixe `172.31.250.0/24` est
+  écrit dans `squid.conf` ET dans `docker-compose.yml` (réseau `rag-proxy-net`) : les deux doivent
+  rester synchronisés**, sinon le proxy refuse tout.
+- **Passerelle sans secret, mais sur un pont non interne** (`rag-api-ingress`, nécessaire à la
+  publication du port) : elle voit donc la clé et les questions en transit. Risque résiduel accepté
+  pour une API locale sur 127.0.0.1. Elle relaie une URI fixe par route (aucun `../` ni `%2F`
+  transmis), refuse toute chaîne de requête, borne le corps à 8 Ko.
+- **Limite de débit** : 30 questions par minute (rafale de 10), **partagées entre tous les clients et
+  appliquées avant l'authentification**. Elle plafonne la dépense LLM si un processus local boucle,
+  mais un flot local sans clé peut aussi affamer l'utilisateur légitime : limite de déni de service
+  local connue.
+- **Base** (`RAG/sql/001_schema.sql`) : mots de passe lus par `\getenv` (absents de la liste des
+  processus et de la ligne de commande psql ; variable manquante → erreur SQL et code de sortie 3) ;
+  attributs des rôles remis à zéro à chaque amorçage (`NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS
+  NOREPLICATION`) ; `REVOKE ALL` avant chaque `GRANT` ; `REVOKE TEMPORARY, CREATE ON DATABASE rag FROM
+  PUBLIC`.
+- **Airflow** : les secrets `RAG_*` ne sont que sur le scheduler (ancre `x-rag-indexer-env`) ;
+  `data/models` est monté en lecture seule ; `rag-model-export` a son propre réseau `rag-export` et un
+  plafond de 4 Gio.
+- **Conteneurs** : `rag-api` ne monte ni `.env` ni le reste du dépôt ; clés LLM absentes de
+  `rag-api-test` ; dépendances de l'image verrouillées par empreinte (`--require-hashes`,
+  `docker/rag-api/requirements.lock`).
+
+### 9.8 Mesures et essai rapide
+
+`rag-search` reste l'outil d'essai en ligne de commande (§8.4). Mesure de l'essai réel du 8 octobre
+2026 (Groq, gpt-oss-120b) : réponse `answered` avec une source, analyse 0,76 s, recherche 1,50 s,
+génération 1,07 s, total 2,57 s. Depuis l'hôte, via la passerelle : `/health` 200, `/ready` sans clé
+401, question réelle 200 en 2,1 s.
+
+### 9.9 Tests d'intégration
+
+Les tests d'intégration tournent dans `rag-api-test` (image de `rag-api` + `pytest` verrouillé :
+derrière le proxy, PyPI n'est plus joignable). Cette image n'a pas `responses` : **nommer les fichiers**
+au lieu de lancer tout le dossier.
+
+```bash
+set -a; . ./.env; set +a
+docker compose --env-file .env --profile outils build rag-api-test
+docker compose --env-file .env --profile outils run --rm --no-deps -e RAG_READER_PASSWORD -e RAG_INDEXER_PASSWORD \
+  --entrypoint sh rag-api-test -c '
+    export RAG_TEST_PG_READER_CONNINFO="host=rag-postgres dbname=rag user=rag_reader password=$RAG_READER_PASSWORD" &&
+    export RAG_TEST_PG_CONNINFO="host=rag-postgres dbname=rag user=rag_indexer password=$RAG_INDEXER_PASSWORD" &&
+    python -m pytest -p no:cacheprovider -m integration \
+      RAG/tests/test_api_integration.py RAG/tests/test_hardening_integration.py \
+      RAG/tests/test_search_store_integration.py RAG/tests/test_vector_store_integration.py -q'
+```
+
+`rag-api`, `rag-gateway` et `rag-proxy` doivent tourner. Ils vérifient le proxy (domaine hors liste,
+autre port, HTTP clair, IP littérale), le filtrage de la passerelle, les droits des rôles et le
+durcissement de la base. Passe rapide : `pytest -q` (logique) et `pytest tests_airflow -q`.
+
+### 9.10 Recette
+
+Jeu de 99 questions (`RAG/experiments/questions_recette_e2b.yaml`) : les 89 de E2a plus 10 hors
+périmètre validées par l'utilisateur. Seuils fixés d'avance dans la spec (§8). La recette valide la
+chaîne, elle ne choisit aucun modèle.
+
+```bash
+mkdir -p data/experiments/e2b-recette
+docker compose --env-file .env --profile outils run --rm rag-search -m RAG.experiments.recette_generation lancer
+venv/bin/python -m RAG.experiments.recette_generation evaluer    # résumé et critères
+```
+
+`lancer` enregistre chaque réponse (avec la version du prompt) dans `data/experiments/e2b-recette/`
+et reprend où il s'est arrêté. Le quota quotidien de Groq peut l'interrompre : relancer le lendemain.
+Un changement de prompt purge les enregistrements antérieurs, pour que tous aient la même version.
+Une génération indisponible est enregistrée (`generation_unavailable`) et non rejouée : elle compte
+comme échec du critère. Résultats et examen des rejets : `reference/recette_e2b.md`.
+
+### 9.11 Limites connues
+
+- **Listes de phénotypes polluées** (modes de transmission, âges) dans les documents : à traiter
+  après la première mesure RAGAS (E3).
+- **Contrôle de signification par motifs** : lacunes lexicales (« classé incertain » sans
+  « signification », « inoffensif », « sans danger », « Uncertain-significance » avec tiret, négation
+  placée après le terme) ; une réponse peut être rejetée à tort (`unverifiable`, sens sûr), jamais
+  acceptée avec un autre libellé connu.
+- **Permutation entre deux documents cités** : si deux fiches citées ont des significations
+  différentes, une inversion entre elles n'est pas détectée.
+- « et N autres » (comptes de listes) n'est pas vérifié.
+- Noms historiques de variants (« 5382insC », « Glu6Val ») non reconnus ; un symbole du type « CD4 »
+  peut être pris pour un gène hors panel (§8.6).
+- Un identifiant hors des k premiers documents exacts peut être signalé introuvable à tort ; une
+  question citant `c.` et `p.` d'un même variant dont la fiche n'a qu'une forme est refusée.
+- Hors panel : un gène hors panel seul court-circuite (`out_of_scope`) seulement sans identifiant de
+  variant.
+- Sessions HTTP des clients LLM non fermées ; délai de génération partagé avec `llm.request_timeout_s` ;
+  `text/plain` accepté pour le corps ; erreur d'un fil non journalisée après déconnexion du client.
+- Le cache des analyses et les enregistrements de recette (`data/experiments/`, non versionnés)
+  contiennent des questions en clair.

@@ -101,9 +101,11 @@ critiques que le jour d'un déploiement hors de la machine de développement.
 - [x] **Sous-projet RAG — E1, indexation** : `gold/rag/documents` → pgvector, incrémental et
       reprenable, tâche `index_rag_documents` en fin de DAG de panel. Modèle choisi par mesure :
       NeuML PubMedBERT (`reference/choix_embedding.md`). Exploitation : `RAG/README.md`.
-- [ ] **Sous-projet RAG — E2, question-réponse** : recherche hybride (filtres gène et
-      signification, correspondance exacte `rs`/HGVS, similarité), prompts, appel au LLM
-      Anthropic, API Litestar. La mesure de E1 confirme que la similarité seule ne distingue pas
+- [x] **Sous-projet RAG — E2, question-réponse** : *implémenté* — E2a (recherche hybride, branche
+      `rag/e2a-recherche`, mesure officielle en attente de crédits) et E2b (génération vérifiée, API
+      Litestar, passerelle, proxy, durcissement ; branche `rag/e2b-generation`, recette en cours).
+      Objectif d'origine : recherche hybride (filtres gène et
+      signification, correspondance exacte `rs`/HGVS, similarité), prompts, appel au LLM, API Litestar. La mesure de E1 confirme que la similarité seule ne distingue pas
       un variant pathogène d'un bénin (précision 0,305 sur la famille C).
 - [ ] **Sous-projet RAG — E3, évaluation et audit** : RAGAS, puis audit du RAG et application de
       la même politique au pipeline. Décision à trancher **après** une première mesure RAGAS :
@@ -188,3 +190,25 @@ développement où seul Airflow joint la base vectorielle.
 - [ ] **Corriger l'avertissement de dépréciation Polars `is_in`** dans
       `RAG/experiments/comparaison_embeddings.py`. Reporté : script de mesure déjà exécuté,
       sans effet sur l'indexation ; à faire avant de le relancer.
+
+---
+
+## 7. E2b — reste à faire (revues de la branche `rag/e2b-generation`)
+
+Écarts de sécurité relevés en revue et volontairement différés (aucun n'est exploitable depuis
+l'extérieur de la machine de développement) :
+
+- [ ] **`SET log_min_error_statement = panic`** en tête de `RAG/sql/001_schema.sql` : si un
+      `ALTER ROLE … PASSWORD` échoue, l'instruction (donc le mot de passe) peut apparaître dans le
+      journal du serveur.
+- [ ] **`BEGIN` / `COMMIT` autour des `REVOKE ALL` / `GRANT`** : un arrêt entre les deux laisse
+      brièvement les rôles sans aucun droit (ou, dans l'ordre inverse, avec trop).
+- [ ] **`REVOKE CONNECT, TEMPORARY ON DATABASE postgres, template1 FROM PUBLIC`** : les bases
+      système restent ouvertes à tout rôle.
+- [ ] **Garder synchronisé le sous-réseau du proxy** (`172.31.250.0/24`) entre
+      `docker/rag-proxy/squid.conf` et le réseau `rag-proxy-net` de `docker-compose.yml` ; un test qui
+      compare les deux éviterait la dérive.
+- [ ] Droits d'écriture de l'indexeur non exercés après le changement de rôles, et « seul le scheduler
+      voit les secrets » vérifié à la main : à automatiser.
+- [ ] Relance bornée 429/5xx côté clients HTTP, fermeture des sessions HTTP, `text/plain` refusé sur
+      `/v1/questions`, journalisation de l'erreur d'un fil après déconnexion du client.
