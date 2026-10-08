@@ -55,8 +55,8 @@ def test_invented_hgvs_and_variation_id_are_rejected():
 
 @pytest.mark.parametrize("answer", [
     "Ce variant est classé pathogène.",
-    "Il était auparavant de signification incertaine.",
-    "Pathogène selon ClinVar ; classé de signification incertaine jusqu'en 2015.",
+    "Ces variants sont Pathogènes.",
+    "Pathogène selon ClinVar.",
 ])
 def test_significances_present_in_cited_documents_pass(answer):
     check_significances(answer, [doc()])
@@ -124,10 +124,12 @@ def test_double_space_probably_pathogenic_is_not_pathogenic():
     assert _reason(check_significances, "Il est pathogène.", [likely]) == "significance_not_in_sources"
 
 
-def test_history_label_allowed_only_in_a_history_sentence():
+def test_history_label_is_rejected_even_in_a_history_sentence():
+    # Tour 4 : l'historique est restitué par le code, jamais raconté par le LLM.
     d = _doc_text(HISTORY_TEXT)
-    check_significances("Il est pathogène. Il était auparavant de signification incertaine.", [d])
-    check_significances("Il a été reclassé : signification incertaine jusqu'en 2015.", [d])
+    for answer in ("Il est pathogène. Il était auparavant de signification incertaine.",
+                   "Il a été reclassé : signification incertaine jusqu'en 2015."):
+        assert _reason(check_significances, answer, [d]) == "significance_not_in_sources"
 
 
 def test_labels_elsewhere_in_text_are_not_allowed():
@@ -202,23 +204,6 @@ def test_gene_absent_from_documents_is_rejected():
 H = _doc_text(HISTORY_TEXT)
 
 
-@pytest.mark.parametrize("answer", [
-    "Ce variant est de signification incertaine, sans reclassement.",
-    "Il était auparavant pathogène, il est maintenant de signification incertaine.",
-    "Classé de signification incertaine avant 2019. Il est aujourd'hui pathogène.",
-])
-def test_history_label_needs_a_marker_before_it_in_the_same_clause(answer):
-    assert _reason(check_significances, answer, [H]) == "significance_not_in_sources"
-
-
-@pytest.mark.parametrize("answer", [
-    "Il a d'abord été classé de signification incertaine, puis pathogène.",
-    "Il était initialement de signification incertaine.",
-])
-def test_history_label_after_a_marker_passes(answer):
-    check_significances(answer, [H])
-
-
 @pytest.mark.parametrize("answer", ["Sa signification reste incertaine.", "Signification : incertaine."])
 def test_uncertain_wordings_are_recognised(answer):
     assert _reason(check_significances, answer, [H]) == "significance_not_in_sources"
@@ -234,36 +219,11 @@ def test_zero_width_and_decomposed_text_cannot_hide_anything():
 # --- tour de correction 3 ---
 
 @pytest.mark.parametrize("answer", [
-    "Ce variant est de signification incertaine jusqu'à preuve du contraire.",
-    "Ce variant est de signification incertaine jusqu'à nouvel ordre.",
-    "Ce variant est de signification incertaine jusqu'ici.",
-    "Ce variant est de signification incertaine jusqu'à présent.",
-    "Ce variant est de signification incertaine jusqu'aujourd'hui.",
-    "Ce variant est de signification incertaine jusqu'à maintenant.",
-    "Jusqu'à présent il est de signification incertaine.",
-    "Il est avant tout de signification incertaine.",
-    "Il était auparavant pathogène et il est maintenant de signification incertaine.",
-    "Auparavant pathogène et désormais de signification incertaine.",
-    "Initialement pathogène puis de signification incertaine.",
-    "Ce variant a été reclassé en signification incertaine.",
     "Sa signification clinique est encore incertaine.",
     "La signification de ce variant, incertaine, est discutée.",
 ])
-def test_round3_rejections(answer):
+def test_lone_uncertain_in_a_significance_sentence_is_checked(answer):
     assert _reason(check_significances, answer, [H]) == "significance_not_in_sources"
-
-
-@pytest.mark.parametrize("answer", [
-    "Ce variant est de signification incertaine jusqu'en 2015.",
-    "Il fut de signification incertaine jusqu'en 2015-01.",
-    "Il fut de signification incertaine jusqu'au 1er janvier 2015.",
-    "Il fut de signification incertaine jusqu'en septembre 2016.",
-    "Avant 2015, il était classé de signification incertaine.",
-    "Auparavant, il était classé de signification incertaine.",
-    "Jusqu'en 2015-01, il était de signification incertaine.",
-])
-def test_round3_acceptances(answer):
-    check_significances(answer, [H])
 
 
 @pytest.mark.parametrize("answer", ["Sa signification clinique est encore incertaine.",
@@ -284,3 +244,44 @@ def test_compatibility_and_format_characters_cannot_hide_anything(answer):
 def test_soft_hyphen_and_word_joiner_inside_rs_are_rejected():
     for answer in ("Voir rs⁠12345.", "Voir rs­12345."):
         assert _reason(check_identifiers, answer, [H]) == "identifier_not_in_sources"
+
+
+# --- tour 4 : l'historique est restitué par le code, plus par le LLM ---
+
+@pytest.mark.parametrize("answer", [
+    "Il était auparavant de signification incertaine.",
+    "Pathogène selon ClinVar ; classé de signification incertaine jusqu'en 2015.",
+    "Ce variant est de signification incertaine jusqu'en 2015.",
+    "Il fut de signification incertaine jusqu'en 2015-01.",
+    "Il fut de signification incertaine jusqu'au 1er janvier 2015.",
+    "Il fut de signification incertaine jusqu'en septembre 2016.",
+    "Avant 2015, il était classé de signification incertaine.",
+    "Auparavant, il était classé de signification incertaine.",
+    "Jusqu'en 2015-01, il était de signification incertaine.",
+    "Il a d'abord été classé de signification incertaine, puis pathogène.",
+    "Il était initialement de signification incertaine.",
+    "Comme indiqué précédemment, il est de signification incertaine.",
+    "Il était auparavant pathogène, il est maintenant de signification incertaine.",
+    "Ce variant a été reclassé en signification incertaine.",
+    "Historique : previously Uncertain significance until 2015-01.",
+])
+def test_narrated_classification_history_is_rejected(answer):
+    assert _reason(check_significances, answer, [H]) == "significance_not_in_sources"
+
+
+def test_current_significance_passes_although_the_document_has_a_history():
+    check_significances("Ce variant est pathogène, classé Pathogenic.", [H])
+
+
+def test_composite_significance_is_split():
+    d = _doc_text("Clinical significance: Pathogenic/Likely pathogenic.", sig="Pathogenic/Likely pathogenic")
+    check_significances("Il est pathogène ou probablement pathogène.", [d])
+    assert _reason(check_significances, "Il est bénin.", [d]) == "significance_not_in_sources"
+
+
+@pytest.mark.parametrize("dash", ["\u2010", "\u2011", "\u2012", "\u2013", "\u2014", "\u2015", "\u2212"])
+def test_unicode_dashes_cannot_hide_an_invented_intronic_hgvs(dash):
+    d = _doc_text("Variant NM_007294.4(BRCA1):c.68-2A>G. Clinical significance: Pathogenic.")
+    check_identifiers(f"Le variant c.68{dash}2A>G est décrit.", [d])
+    answer = f"Le variant c.5266{dash}2A>G est décrit."
+    assert _reason(check_identifiers, answer, [d]) == "identifier_not_in_sources"

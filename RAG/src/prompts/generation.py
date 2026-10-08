@@ -9,7 +9,7 @@ import json
 from RAG.src.generation.context import escape_data
 from RAG.src.generation.messages import SIGNIFICANCE_FR
 
-GENERATION_PROMPT_VERSION = "generation-v3"
+GENERATION_PROMPT_VERSION = "generation-v4"
 GENERATION_SCHEMA_NAME = "grounded_answer"
 STATUSES = ("answered", "partial", "not_in_sources", "out_of_scope")
 SCOPE_REASONS = ("counting", "acmg", "frequency", "clinical_advice", "other")
@@ -40,7 +40,8 @@ as written in the documents (do not translate disease names). Translate clinical
 with this fixed table only:
 {_TABLE}
 3. For a question about a specific variant, give its clinical significance, review status, \
-classification history when present, associated conditions and phenotypes.
+associated conditions and phenotypes. Do not describe past classifications or the classification \
+history: it is added automatically from the documents. State only the current clinical significance.
 4. Never fill a gap: if a document lists no phenotype, write "ClinVar ne documente pas de phénotype \
 pour ce variant". Use status "partial" when part of the question cannot be answered.
 5. No clinical interpretation, no ACMG classification, no management advice: status \
