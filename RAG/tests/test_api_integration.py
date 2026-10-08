@@ -80,3 +80,24 @@ def test_gateway_does_not_relay_other_paths():
 
 def test_gateway_relays_questions_and_the_api_checks_the_key():
     assert requests.post(f"{GATEWAY}/v1/questions", json={"question": "q ?"}, timeout=30).status_code == 401
+
+
+def test_gateway_refuses_a_query_string():
+    # Aucune route ne prend d'argument : 404 à la passerelle, rien n'atteint l'API.
+    assert requests.get(f"{GATEWAY}/health?x=1", timeout=15).status_code == 404
+
+
+def test_gateway_never_relays_a_raw_path():
+    # Chemin brut non normalisé, envoyé tel quel (requête préparée dont l'URL est fixée
+    # après préparation, comme curl --path-as-is). nginx normalise /schema/../health en
+    # /health et relaie l'URI fixe /health ; il ne doit jamais atteindre /schema. On
+    # exige donc soit un 404 de la passerelle, soit exactement la réponse de /health.
+    expected = requests.get(f"{GATEWAY}/health", timeout=15)
+    with requests.Session() as session:
+        for raw in ("/schema/../health", "/v1/questions/../../health", "/schema%2F..%2Fhealth"):
+            prepared = requests.Request("GET", f"{GATEWAY}/health").prepare()
+            prepared.url = f"{GATEWAY}{raw}"
+            r = session.send(prepared, timeout=15)
+            assert r.status_code in (200, 404), raw
+            if r.status_code == 200:
+                assert r.content == expected.content, raw
