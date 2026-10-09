@@ -255,3 +255,11 @@ def test_out_of_scope_rules_come_before_the_no_document_message():
     q = "Combien de variants de BRCA1 ?"
     answer = generate_answer(q, result(docs=[], question=q), client=StubClient(ok()), profile=PROFILE, max_tokens=3000)
     assert (answer.status, answer.scope_reason) == ("out_of_scope", "counting")
+
+
+def test_literal_backslash_n_becomes_a_real_line_break():
+    content = {"status": "answered", "scope_reason": None,
+               "answer": "Variants pathogènes :\\n- c.5266dup\\n- c.68A>G", "citations": ["a"]}
+    _, _, text, _ = validate_generation(content)
+    assert text == "Variants pathogènes :\n- c.5266dup\n- c.68A>G"
+    assert "\\n" not in text

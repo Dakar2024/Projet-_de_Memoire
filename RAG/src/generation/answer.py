@@ -116,7 +116,9 @@ def validate_generation(content: Mapping) -> tuple[str, str | None, str, list[st
         raise ValueError("answer non textuelle ou trop longue")
     if not isinstance(citations, list) or not all(isinstance(c, str) for c in citations):
         raise ValueError("citations doit être une liste de textes")
-    return status, reason, text.strip(), list(dict.fromkeys(citations))
+    # Le modèle émet parfois « \\n » littéral (deux caractères) : ramené à un vrai retour à la
+    # ligne avant tout contrôle et avant l'affichage.
+    return status, reason, text.replace("\\n", "\n").strip(), list(dict.fromkeys(citations))
 
 
 def _check_not_empty(text: str) -> None:
