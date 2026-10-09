@@ -198,17 +198,20 @@ développement où seul Airflow joint la base vectorielle.
 Écarts de sécurité relevés en revue et volontairement différés (aucun n'est exploitable depuis
 l'extérieur de la machine de développement) :
 
-- [ ] **`SET log_min_error_statement = panic`** en tête de `RAG/sql/001_schema.sql` : si un
+- [x] **`SET log_min_error_statement = panic`** en tête de `RAG/sql/001_schema.sql` : si un
       `ALTER ROLE … PASSWORD` échoue, l'instruction (donc le mot de passe) peut apparaître dans le
-      journal du serveur.
-- [ ] **`BEGIN` / `COMMIT` autour des `REVOKE ALL` / `GRANT`** : un arrêt entre les deux laisse
-      brièvement les rôles sans aucun droit (ou, dans l'ordre inverse, avec trop).
-- [ ] **`REVOKE CONNECT, TEMPORARY ON DATABASE postgres, template1 FROM PUBLIC`** : les bases
-      système restent ouvertes à tout rôle.
-- [ ] **Garder synchronisé le sous-réseau du proxy** (`172.31.250.0/24`) entre
-      `docker/rag-proxy/squid.conf` et le réseau `rag-proxy-net` de `docker-compose.yml` ; un test qui
-      compare les deux éviterait la dérive.
-- [ ] Droits d'écriture de l'indexeur non exercés après le changement de rôles, et « seul le scheduler
-      voit les secrets » vérifié à la main : à automatiser.
-- [ ] Relance bornée 429/5xx côté clients HTTP, fermeture des sessions HTTP, `text/plain` refusé sur
-      `/v1/questions`, journalisation de l'erreur d'un fil après déconnexion du client.
+      journal du serveur. Fait (vague finale E2b ; journaux vérifiés sans mot de passe).
+- [x] **`BEGIN` / `COMMIT` autour des `REVOKE ALL` / `GRANT`** : un arrêt entre les deux laisse
+      brièvement les rôles sans aucun droit (ou, dans l'ordre inverse, avec trop). Fait.
+- [x] **`REVOKE CONNECT, TEMPORARY ON DATABASE postgres, template1 FROM PUBLIC`** : les bases
+      système restent ouvertes à tout rôle. Fait, vérifié par `RAG/tests/test_hardening_integration.py`.
+- [x] **Garder synchronisé le sous-réseau du proxy** (`172.31.250.0/24`) entre
+      `docker/rag-proxy/squid.conf` et le réseau `rag-proxy-net` de `docker-compose.yml`. Fait : test
+      de logique `RAG/tests/test_compose_security.py`.
+- [x] Droits d'écriture de l'indexeur exercés après durcissement (test d'intégration, transaction
+      annulée) et « seul le scheduler voit les secrets `RAG_*` » automatisé (test de logique sur
+      `docker-compose.yml`). Fait.
+- [x] Relance bornée 502/503 (et 429 pour OpenRouter) côté clients LLM, fermeture des sessions HTTP,
+      `text/plain` refusé sur `/v1/questions` (415), résultat tardif journalisé (`late_result`). Fait.
+- [ ] Journaliser l'issue d'un fil quand le **client se déconnecte** avant la réponse (seul le délai
+      dépassé est journalisé : `late_error`, `late_result`).
