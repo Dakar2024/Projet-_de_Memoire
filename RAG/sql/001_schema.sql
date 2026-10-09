@@ -3,6 +3,9 @@
 -- l'environnement par `\getenv` (PostgreSQL ≥ 15) : ils n'apparaissent ni dans la ligne
 -- de commande ni dans ce fichier.
 \set ON_ERROR_STOP on
+-- Une instruction en échec n'est jamais recopiée dans le journal du serveur : celles qui
+-- posent un mot de passe (ALTER ROLE … PASSWORD) l'y écriraient en clair.
+SET log_min_error_statement = panic;
 
 \getenv indexer_password RAG_INDEXER_PASSWORD
 \getenv reader_password RAG_READER_PASSWORD
@@ -37,6 +40,9 @@ ALTER ROLE rag_reader  NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOREPLICA
 
 -- Ni tables temporaires ni création d'objets pour quiconque n'en a pas besoin.
 REVOKE TEMPORARY, CREATE ON DATABASE rag FROM PUBLIC;
+-- Les bases d'administration ne servent qu'au superutilisateur : ni connexion ni table
+-- temporaire pour les comptes applicatifs.
+REVOKE CONNECT, TEMPORARY ON DATABASE postgres, template1 FROM PUBLIC;
 
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO rag_indexer, rag_reader;
@@ -71,6 +77,10 @@ CREATE INDEX IF NOT EXISTS rag_documents_rs_dbsnp ON rag_documents (rs_dbsnp);
 CREATE INDEX IF NOT EXISTS rag_documents_hgvs_c ON rag_documents (hgvs_c);
 CREATE INDEX IF NOT EXISTS rag_documents_hgvs_p ON rag_documents (hgvs_p);
 
+-- Une seule transaction : aucun instant où l'indexeur ou l'API perd ses droits pendant
+-- un redémarrage de la stack.
+BEGIN;
 REVOKE ALL ON rag_documents FROM PUBLIC, rag_indexer, rag_reader;
 GRANT SELECT, INSERT, UPDATE, DELETE ON rag_documents TO rag_indexer;
 GRANT SELECT ON rag_documents TO rag_reader;
+COMMIT;
