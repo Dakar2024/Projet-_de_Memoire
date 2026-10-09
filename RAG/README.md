@@ -348,7 +348,14 @@ seulement si :
   signification d'un autre libellé ou en anglais est rejetée, de même que toute phrase qui porte un
   terme de signification et une négation n'importe où (`ne`, `n'`, `pas`, `aucun`, `jamais`, `rien`,
   `sans`, `ni`, `non`) et tout qualificatif hors table (« VUS », « inoffensif », « sans danger »,
-  « anodin », « bénéfique », « incertain » seul…).
+  « anodin », « bénéfique », « incertain » seul…). Avant ce test, une **liste fermée** de formules est
+  masquée, parce que leur négation ne porte jamais sur la signification : « aucun / sans conflit(s) »
+  (statut de revue ClinVar « no conflicts »), « aucun critère (d'évaluation) fourni » (« no assertion
+  criteria provided »), « ClinVar ne documente pas de phénotype pour ce variant » (phrase imposée par
+  le prompt pour les fiches maigres), « variantes non listées ici / variants non listés ici » (liste
+  tronquée) et « non sphérocytaire » (nom de maladie). « non listé » seul n'est **pas** masqué :
+  « Ce variant est non listé comme pathogène » reste rejeté. Un « \n » littéral émis par le modèle
+  est ramené à un vrai retour à la ligne avant tout contrôle.
 - **Historique restitué par le code** : le LLM ne raconte jamais l'historique de classification
   (« auparavant », « reclassé », « jusqu'en 2019 » sont rejetés) ; le code ajoute lui-même une phrase
   « Historique ClinVar … » depuis la ligne `Classification history` du Gold.
@@ -569,9 +576,14 @@ rejets : `reference/recette_e2b.md`.
   (« classé incertain », « inoffensif », « sans danger », « Uncertain-significance », négation après
   le terme), mais une formulation nouvelle peut encore lui échapper : le contrôle n'est **pas** sûr
   dans les deux sens. Une phrase est découpée sur `.`, `!`, `?` et `;` : « Pathogène ? Non. » sépare
-  le terme de sa négation. À l'inverse, une liste sans point final forme une seule « phrase » : un
-  « non » ou un « sans » ailleurs dans la liste (« non listées », « non sphérocytaire ») la rejette à
-  tort (7 réponses de la partie 1 au rejeu du 09/10/2026).
+  le terme de sa négation. À l'inverse, une phrase (ou une liste sans point final, qui forme une seule
+  « phrase » : les puces ne sont pas découpées) est rejetée dès qu'elle contient une négation qui ne
+  porte pas sur la signification. Le premier rejeu du 09/10/2026 en a rejeté 7 de la partie 1 à tort,
+  à cause de formules sans rapport avec la signification : le statut de revue traduit (« aucun
+  conflit »), la phrase des fiches maigres, « variantes non listées ici », « non sphérocytaire ». Ces
+  formules exactes sont désormais masquées (voir §9.2) ; il reste 2 rejets (P1-B08, P1-C03), dus à
+  une vraie négation dans la phrase (« ClinVar ne documente pas d'autres variantes … pathogène »,
+  « les documents ne mentionnent pas … »), rejet voulu par le sens prudent.
 - **Règles hors périmètre lexicales** : une question peut être détectée à tort (message fixe au lieu
   d'une réponse ; aucune sur les 89 questions de E2a, hors P3-05, réellement une question de
   fréquence) ou échapper aux règles (le LLM tranche alors).

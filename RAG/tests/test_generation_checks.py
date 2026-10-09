@@ -353,3 +353,49 @@ def test_lone_uncertain_matches_an_uncertain_document_and_english_label_with_das
     uncertain = _doc_text("Clinical significance: Uncertain significance.", sig="Uncertain significance")
     check_significances("Ce variant est classé incertain.", [uncertain])
     check_significances("Classé Uncertain-significance.", [uncertain])
+
+
+# --- correctifs résiduels : formules de statut ClinVar masquées avant le test de négation ---
+
+REVIEWED = _doc_text("Clinical significance: Pathogenic. "
+                     "Review status: criteria provided, multiple submitters, no conflicts.")
+NON_SPHEROCYTIC = _doc_text("Clinical significance: Pathogenic. "
+                            "Condition: Anemia, nonspherocytic hemolytic.", gene="G6PD")
+
+
+@pytest.mark.parametrize("answer", [
+    "Ce variant est pathogène (statut : critères fournis, plusieurs soumissionnaires, aucun conflit).",
+    "Le variant est pathogène, sans conflit. ClinVar ne documente pas de phénotype pour ce variant.",
+    "Le variant est pathogène, sans conflits.",
+    "Variants pathogènes : c.5266dup, c.68A>G (et d'autres variantes non listées ici)",
+    "Variants pathogènes : c.5266dup (et d’autres variants non listés ici)",
+    "Pathogène (aucun critère d'évaluation fourni).",
+    "Pathogène, aucun critère fourni.",
+    "Pathogène, aucune critères d’évaluation fournies.",
+    "Pathogène, ClinVar ne documente pas de phénotypes pour ce variant",
+])
+def test_clinvar_review_status_phrases_do_not_trigger_the_negation_rule(answer):
+    check_significances(answer, [REVIEWED])
+
+
+def test_non_spherocytic_disease_name_does_not_trigger_the_negation_rule():
+    check_significances("Variant pathogène associé à l'anémie hémolytique non sphérocytaire.", [NON_SPHEROCYTIC])
+    check_significances("Variant pathogène associé à l'anémie hémolytique non-sphérocytaire.", [NON_SPHEROCYTIC])
+
+
+@pytest.mark.parametrize("answer", [
+    "Ce variant est inoffensif.",
+    "Ce variant est sans danger.",
+    "Il ne s'agit en aucun cas d'un variant pathogène.",
+    "Ce variant n'a rien de pathogène.",
+    "Ce variant est pathogène selon un laboratoire, mais pas selon les autres.",
+    "Ce variant est classé incertain.",
+    "Classé Uncertain-significance.",
+    "Ce variant n'est pas pathogène.",
+    "Ce variant est non listé comme pathogène.",
+    "Aucun conflit, il n'est pas pathogène.",
+    "Aucun conflit : il est non pathogène.",
+    "Sans conflit, ce variant n'est pas listé comme pathogène.",
+])
+def test_negations_are_still_rejected_next_to_masked_phrases(answer):
+    assert _reason(check_significances, answer, [REVIEWED]) == "significance_not_in_sources"
