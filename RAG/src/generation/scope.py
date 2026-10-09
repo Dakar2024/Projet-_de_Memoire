@@ -23,8 +23,12 @@ _RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
         r"\bamp\b",
         r"\b(?:pvs1|ps[1-4]|pm[1-6]|pp[1-5]|ba1|bs[1-4]|bp[1-7])\b",
         r"\bcriteres?\s+de\s+classification\b",
-        # « Classe(r) le variant X selon les critères… » ; « classé selon ClinVar » n'en est pas.
-        r"\bclasse[rz]?\b(?:\s+\S+){0,8}?\s+selon\b(?!\s+clinvar)",
+        r"\bamerican\s+college\s+of\s+medical\s+genetics\b",
+        r"\bgrilles?\s+de\s+classification\b",
+        # « Classe(r) le variant X selon les critères… » ; « classé selon ClinVar », « selon les
+        # laboratoires » ou « selon les soumissionnaires » n'en sont pas (donnée ClinVar).
+        r"\bclasse[rz]?\b(?:\s+\S+){0,8}?\s+selon\b"
+        r"(?!\s+(?:clinvar|les\s+(?:laboratoires|soumissionnaires)\b))",
     )),
     ("frequency", (
         r"\bfrequences?\b",
@@ -33,6 +37,14 @@ _RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
         r"\bproportion\s+de\s+la\s+population\b",
         r"\bgnomad\b",
         r"\balleles?\b.*\bpopulations?\b",
+        # « rare » : aucune question de E2a ne l'emploie (pas de « maladie rare » parasite).
+        r"\brares?\b",
+        r"\bcourante?s?\b",
+        r"\brepandue?s?\b",
+        r"\bpourcentages?\b",
+        r"\bmaf\b",
+        r"\bincidences?\b",
+        r"\bcombien\s+de\s+porteu\w+",
     )),
     ("clinical_advice", (
         r"\bfaut[- ]il\b",
@@ -47,14 +59,36 @@ _RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
         r"\bmastectomies?\b",
         r"\bchirurgi\w*",
         r"\bdepistages?\b",
+        r"\bdois[- ]je\b",
+        r"\bdevrais[- ]je\b",
+        r"\bdevrai(?:t|ent)[- ](?:il|elle|ils|elles)\b",
+        r"\bpuis[- ]je\b",
+        r"\bpeu(?:t|vent)[- ](?:il|elle|ils|elles)\b",
+        r"\bconsulter\b",
+        # « indiquée(s) », « indiqués » ; « indiqué » masculin seulement après « est/sont » (sinon
+        # « Qu'indique ClinVar » serait pris, les accents étant retirés).
+        r"\bindiquee?s\b|\bindiquee\b",
+        r"\b(?:est|sont|serai(?:t|ent))(?:[- ](?:t[- ])?(?:il|elle|ils|elles))?\s+indique\b",
+        r"\b[ms]'inquieter\b",
+        r"\bavoir\s+des\s+enfants\b",
+        r"\brisques?\b.*\bpour\s+(?:moi|elle|lui)\b",
+        r"\bretirer\b.*\bovaires?\b",
+        r"\bablations?\b",
     )),
     ("counting", (
         r"\bcombien\b",
-        r"\bnombre\s+(?:de|d')",
+        # « nombre de soumissionnaires » est une donnée de la fiche, pas un comptage.
+        r"\bnombre\s+(?:de|d')(?!\s*soumissionnaires?\b)",
         r"\blistes?\s+(?:complete|exhaustive)s?\b",
         r"\btous\s+les\s+variants?\b",
         r"\btoutes\s+les\s+variantes?\b",
         r"\benumer\w*",
+        r"\bdecomptes?\b",
+        r"\bl'ensemble\s+des\s+(?:variants|mutations|variantes)\b",
+        r"\binventaires?\b",
+        r"\bliste[sz]?\s+les\b",
+        r"\bcite[sz]?\s+tou(?:te)?s\b",
+        r"\bquelle\s+quantite\b",
         r"\ble\s+plus\s+de\b",
         r"\ble\s+moins\s+de\b",
         r"\ble\s+plus\s+grand\s+nombre\b",

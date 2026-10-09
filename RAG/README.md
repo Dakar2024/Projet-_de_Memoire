@@ -360,9 +360,13 @@ seulement si :
   (« auparavant », « reclassé », « jusqu'en 2019 » sont rejetés) ; le code ajoute lui-même une phrase
   « Historique ClinVar … » depuis la ligne `Classification history` du Gold.
 - **Hors périmètre détecté par règles, avant le LLM** (`RAG/src/generation/scope.py`) : comptage
-  (« combien », « liste complète », « le plus de »…), ACMG (« ACMG », codes PVS1, PM2…), fréquences
-  (« fréquence », « prévalence », « gnomAD »…) et conseil clinique (« faut-il », « traitement »,
-  « dépistage »…) reçoivent un message fixe sans appel au LLM ; la règle du prompt reste un second
+  (« combien », « liste complète », « le plus de », « liste les », « inventaire », « l'ensemble des
+  variants »…), ACMG (« ACMG », codes PVS1, PM2, « American College of Medical Genetics », « grille de
+  classification »…), fréquences (« fréquence », « prévalence », « gnomAD », « rare », « courant »,
+  « répandu », « MAF », « incidence »…) et conseil clinique (« faut-il », « traitement », « dépistage »,
+  « dois-je », « puis-je », « peut-il », « consulter », « indiquée », « s'inquiéter », « risque … pour
+  moi »…) reçoivent un message fixe sans appel au LLM ; « nombre de soumissionnaires » et « classé
+  selon les laboratoires / les soumissionnaires » (données de la fiche) ne sont pas détectés ; la règle du prompt reste un second
   filet (questions hors domaine, `other`). Règles écrites avec la seule série de développement (§9.10).
 - **Messages fixes** : hors périmètre, gène hors panel, document introuvable et réponse non vérifiable
   reçoivent un texte écrit par le code. Un `not_in_sources` du LLM reçoit **toujours** le message fixe

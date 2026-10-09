@@ -77,3 +77,60 @@ def test_normalization_tolerates_accents_case_and_typographic_apostrophes():
     assert normalize("  Énumère   l’ensemble ") == "enumere l'ensemble"
     assert detect_out_of_scope("Quelle est la FREQUENCE de rs334 ?") == "frequency"
     assert detect_out_of_scope("Ｃombien de variants ?") == "counting"  # pleine chasse (NFKC)
+
+
+# --- correctifs résiduels : verbes de conseil clinique, mots de fréquence, comptage élargi ---
+
+@pytest.mark.parametrize("question,reason", [
+    ("Dois-je faire tester mes filles pour c.5266dup ?", "clinical_advice"),
+    ("Devrais-je m'inquiéter de ce variant de PALB2 ?", "clinical_advice"),
+    ("Ma sœur devrait-elle passer un test génétique ?", "clinical_advice"),
+    ("Mon fils devrait-il éviter le sport intensif ?", "clinical_advice"),
+    ("Puis-je avoir une grossesse normale avec ce variant de HBB ?", "clinical_advice"),
+    ("Ma tante peut-elle encore allaiter ?", "clinical_advice"),
+    ("Le patient peut-il donner son sang ?", "clinical_advice"),
+    ("Quand consulter un généticien pour rs334 ?", "clinical_advice"),
+    ("Une IRM mammaire est-elle indiquée chez une porteuse de BRCA2 ?", "clinical_advice"),
+    ("Un test est-il indiqué pour ma cousine ?", "clinical_advice"),
+    ("Des examens sont-ils indiqués pour la famille ?", "clinical_advice"),
+    ("Est-il normal de s'inquiéter pour un variant de CHEK2 ?", "clinical_advice"),
+    ("Est-ce grave de vouloir avoir des enfants avec un trait drépanocytaire ?", "clinical_advice"),
+    ("Quel est le risque de cancer pour moi avec ce variant de ATM ?", "clinical_advice"),
+    ("Ce variant représente-t-il un risque pour elle ?", "clinical_advice"),
+    ("Le risque de cancer du sein est-il élevé pour lui ?", "clinical_advice"),
+    ("Est-il utile de retirer les ovaires d'une porteuse de BRCA1 ?", "clinical_advice"),
+    ("Une ablation préventive des seins est-elle utile ?", "clinical_advice"),
+    ("Ce variant de BRCA1 est-il rare ?", "frequency"),
+    ("La mutation drépanocytaire est-elle courante en Afrique de l'Ouest ?", "frequency"),
+    ("Ce variant est-il répandu au Sénégal ?", "frequency"),
+    ("Quel pourcentage des Africains porte l'allèle S ?", "frequency"),
+    ("Quelle est la MAF de rs334 ?", "frequency"),
+    ("Quelle est l'incidence du cancer du sein héréditaire ?", "frequency"),
+    ("Combien de porteurs de rs334 y a-t-il en Afrique ?", "frequency"),
+    ("Fais le décompte des variants pathogènes de BRCA2.", "counting"),
+    ("Présente l'ensemble des variants de HBB.", "counting"),
+    ("Donne l'ensemble des mutations de PALB2.", "counting"),
+    ("Dresse un inventaire des variants de CHEK2.", "counting"),
+    ("Liste les variants bénins de TP53.", "counting"),
+    ("Cite toutes les variantes de HBB.", "counting"),
+    ("Cite tous les variants probablement pathogènes de ATM.", "counting"),
+    ("Quelle quantité de variants pathogènes compte RAD51C ?", "counting"),
+    ("Que dit l'American College of Medical Genetics sur c.5266dup ?", "acmg"),
+    ("Applique la grille de classification à rs80357906.", "acmg"),
+])
+def test_widened_out_of_scope_rules(question, reason):
+    assert detect_out_of_scope(question) == reason
+
+
+@pytest.mark.parametrize("question", [
+    "Quel est le nombre de soumissionnaires pour rs80357906 ?",
+    "Comment ce variant est-il classé selon les laboratoires ?",
+    "Le variant c.5266dup est-il classé pathogène selon les soumissionnaires ?",
+    "Que signifie ce variant pour le risque de cancer du sein ?",
+    "Quels variants de PTEN sont observés chez des enfants ?",
+    "Variants de RAD51D associés aux tumeurs héréditaires de l'ovaire",
+    "Qu'indique ClinVar sur rs334 ?",
+    "Ce variant est non listé comme pathogène ?",
+])
+def test_widened_rules_spare_ordinary_questions(question):
+    assert detect_out_of_scope(question) is None
