@@ -21,7 +21,7 @@ from litestar.exceptions import ClientException, HTTPException, NotAuthorizedExc
 
 from RAG.src.api.logs import configure_logging, log_event
 from RAG.src.api.schemas import QuestionIn
-from RAG.src.api.security import require_api_key
+from RAG.src.api.security import require_api_key, require_json
 from RAG.src.utils.config import ApiConfig, load_api_config, load_api_key
 from RAG.src.utils.errors import (
     EmbeddingServiceError, LlmProviderMismatchError, LlmQuotaExhaustedError, LlmUnavailableError,
@@ -39,6 +39,7 @@ _MESSAGES = {
     "not_found": "Ressource inconnue.",
     "method_not_allowed": "Méthode non autorisée pour cette ressource.",
     "invalid_request": "Requête invalide.",
+    "unsupported_media_type": "Corps attendu au format JSON (Content-Type: application/json).",
 }
 
 
@@ -58,6 +59,8 @@ def _classify(exc: BaseException) -> ApiError:
     if isinstance(exc, ClientException) and exc.status_code == 400:
         # Corps JSON illisible : seule source de 400 ici, traitée comme une question invalide.
         return ApiError("invalid_question", 422)
+    if isinstance(exc, HTTPException) and exc.status_code == 415:
+        return ApiError("unsupported_media_type", 415)
     if isinstance(exc, HTTPException) and exc.status_code == 413:
         return ApiError("too_large", 413)
     if isinstance(exc, HTTPException) and exc.status_code == 404:
@@ -99,7 +102,7 @@ def ready(state: State) -> dict:
     return state.pipeline.ready()
 
 
-@post("/v1/questions", guards=[require_api_key], status_code=200)
+@post("/v1/questions", guards=[require_api_key, require_json], status_code=200)
 async def ask_question(data: QuestionIn, state: State, request: Request) -> dict:
     request_id = uuid.uuid4().hex
     request.state.request_id = request_id
@@ -130,11 +133,17 @@ async def ask_question(data: QuestionIn, state: State, request: Request) -> dict
         # Toujours consommer l'issue du fil : sinon asyncio signalerait plus tard « Future
         # exception was never retrieved », trace et message compris. Après un délai dépassé,
         # l'erreur tardive est journalisée par sa seule classe.
-        if f.cancelled():
+        if f.cancelled() or not timed_out:
             return
         exc = f.exception()
-        if exc is not None and timed_out:
+        if exc is not None:
             log_event(event="late_error", request_id=request_id, exception=type(exc).__name__)
+        else:
+            # Réponse arrivée après le délai : jamais livrée, mais son statut et son coût sont
+            # consignés (la dépense LLM a eu lieu).
+            a = f.result().answer
+            log_event(event="late_result", request_id=request_id, status=a.status, cost_usd=a.cost_usd,
+                      model=a.model, provider_name=a.provider_name)
 
     future.add_done_callback(consume)
     try:

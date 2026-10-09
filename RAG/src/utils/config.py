@@ -306,9 +306,12 @@ def load_generation_config(path: Path = DEFAULT_CONFIG_PATH) -> GenerationConfig
 def load_api_config(path: Path = DEFAULT_CONFIG_PATH) -> ApiConfig:
     try:
         api = yaml.safe_load(path.read_text(encoding="utf-8"))["api"]
+        # Vrai booléen YAML exigé : bool("false") vaudrait True et exposerait /schema sans clé.
+        if not isinstance(api["openapi"], bool):
+            raise RagConfigurationError(f"{path} : api.openapi doit valoir true ou false (booléen YAML)")
         config = ApiConfig(max_concurrency=int(api["max_concurrency"]),
                            request_timeout_s=float(api["request_timeout_s"]),
-                           max_body_bytes=int(api["max_body_bytes"]), openapi=bool(api["openapi"]))
+                           max_body_bytes=int(api["max_body_bytes"]), openapi=api["openapi"])
     except (OSError, KeyError, TypeError, ValueError, yaml.YAMLError) as exc:
         raise RagConfigurationError(f"{path} : section api illisible ou incomplète : {exc!r}") from exc
     if not 1 <= config.max_concurrency <= 16:
