@@ -4,8 +4,16 @@ from types import SimpleNamespace
 import pytest
 
 from RAG.experiments import recette_generation as rg
-from RAG.experiments.recette_generation import CachedGenerator, score_recette, summarize
+from RAG.experiments.recette_generation import CachedGenerator, ThrottleMeter, score_recette, summarize
 from RAG.src.llm.common import LlmCall
+
+
+@pytest.fixture(autouse=True)
+def _empty_control_set(tmp_path_factory, monkeypatch):
+    """Série de contrôle vide par défaut : les tests ne lisent jamais le vrai fichier."""
+    path = tmp_path_factory.mktemp("controle") / "controle.yaml"
+    path.write_text("[]\n", encoding="utf-8")
+    monkeypatch.setattr(rg, "QUESTIONS_CONTROL", path)
 
 
 def rec(status="answered", citations=("clinvar:1",), rejected=None, reason=None, total=3000.0):
@@ -303,3 +311,207 @@ def test_quota_exhaustion_still_stops_the_run(tmp_path, monkeypatch):
         rg.cmd_lancer(None)
     assert exc.value.code == 1
     assert [r["id"] for r in json.loads((tmp_path / "records.json").read_text(encoding="utf-8"))] == ["Q1"]
+
+
+# --- vague finale : attentes de limite de débit, série de contrôle, rejeu ---
+
+def test_throttle_meter_measures_wrapped_sleeps_only():
+    ticks = iter([0.0, 2.5, 10.0, 10.5])
+    meter = ThrottleMeter(clock=lambda: next(ticks))
+    slept = []
+    client = SimpleNamespace(_sleep=slept.append)
+    assert meter.install(client) is True and meter.install(SimpleNamespace()) is False and meter.install(None) is False
+    client._sleep(2.0)
+    client._sleep(0.5)
+    assert slept == [2.0, 0.5] and meter.total_ms == 3000.0
+    meter.reset()
+    assert meter.total_ms == 0.0
+
+
+def test_lancer_records_the_throttle_waits_of_each_question(tmp_path, monkeypatch):
+    import time as _time
+
+    import RAG.src.generation.pipeline as pl
+
+    class WaitingPipeline(_Pipeline):
+        def ask(self, slot, question):
+            if question == "a":
+                slot.searcher._llm._sleep(0.02)  # attente du client d'analyse
+            return super().ask(slot, question)
+
+    _setup_lancer(monkeypatch, tmp_path, [])
+    pipeline = WaitingPipeline([_result(), _result(from_llm=False), _result(from_llm=False)])
+    pipeline.slot.searcher._llm = SimpleNamespace(_sleep=_time.sleep)
+    monkeypatch.setattr(pl, "QuestionPipeline", lambda *a, **k: pipeline)
+    rg.cmd_lancer(None)
+    records = json.loads((tmp_path / "records.json").read_text(encoding="utf-8"))
+    assert records[0]["throttle_wait_ms"] >= 15.0
+    assert records[1]["throttle_wait_ms"] == 0.0 and records[2]["throttle_wait_ms"] == 0.0
+
+
+def test_latency_excludes_throttle_waits_and_flags_older_records_as_upper_bounds():
+    base = dict(rec(total=5000.0), part=2, ok=True, timings_ms={"total": 5000.0, "analysis": 0.0},
+                analysis_latency_ms=0.0, generation_from_llm=True)
+    measured = dict(base, throttle_wait_ms=4000.0)
+    s = summarize([measured])
+    assert s["latency_ms"]["median"] == 1000.0 and s["latency_with_waits_ms"]["median"] == 5000.0
+    assert s["n_upper_bound"] == 0
+    assert summarize([measured, base])["n_upper_bound"] == 1
+
+
+def _write_sets(tmp_path, monkeypatch, e2a="[]\n", dev="[]\n", control="[]\n"):
+    paths = {}
+    for name, text in (("QUESTIONS_E2A", e2a), ("QUESTIONS_E2B", dev), ("QUESTIONS_CONTROL", control)):
+        path = tmp_path / f"{name}.yaml"
+        path.write_text(text, encoding="utf-8")
+        monkeypatch.setattr(rg, name, path)
+        paths[name] = path
+    return paths
+
+
+def test_control_set_is_loaded_and_marked(tmp_path, monkeypatch):
+    _write_sets(tmp_path, monkeypatch, e2a="- {id: P2-01, part: 2, question: a}\n",
+                dev="- {id: P4-01, part: 4, question: b, expected_scope_reason: counting}\n",
+                control="- {id: C4-01, part: 4, question: c, expected_scope_reason: acmg}\n")
+    questions = {q["id"]: q for q in rg._load_questions()}
+    assert questions["P4-01"]["set"] == "developpement" and questions["C4-01"]["set"] == "controle"
+    assert "set" not in questions["P2-01"]
+
+
+def test_missing_control_file_fails_clearly(tmp_path, monkeypatch):
+    paths = _write_sets(tmp_path, monkeypatch)
+    paths["QUESTIONS_CONTROL"].unlink()
+    with pytest.raises(SystemExit, match="contrôle"):
+        rg._load_questions()
+
+
+def test_duplicate_ids_or_foreign_set_in_the_control_file_are_refused(tmp_path, monkeypatch):
+    _write_sets(tmp_path, monkeypatch, dev="- {id: P4-01, part: 4, question: b}\n",
+                control="- {id: P4-01, part: 4, question: c}\n")
+    with pytest.raises(SystemExit, match="double"):
+        rg._load_questions()
+    _write_sets(tmp_path, monkeypatch, control="- {id: C4-01, part: 4, set: developpement, question: c}\n")
+    with pytest.raises(SystemExit, match="série"):
+        rg._load_questions()
+
+
+def test_part4_threshold_counts_the_control_set_only_and_partial_is_counted_for_p2():
+    def p4(ok, which):
+        return dict(rec(status="out_of_scope", citations=()), part=4, ok=ok, set=which)
+    records = [p4(True, "controle"), p4(False, "controle"), p4(True, "developpement"), p4(True, "developpement"),
+               dict(rec(status="partial"), part=2, ok=True)]
+    s = summarize(records)
+    assert s["part4"] == (1, 2) and s["part4_dev"] == (2, 2) and s["part2_partial"] == 1
+
+
+def _complete_records(ids_parts):
+    return [dict(rec(status="out_of_scope", citations=(), reason="counting"), id=i, part=p,
+                 analysis_available=True, prompt_version="v", timings_ms={"total": 1.0}, from_cache=True)
+            for i, p in ids_parts]
+
+
+def test_evaluer_reports_control_and_development_sets_apart_and_reads_another_file(tmp_path, monkeypatch, capsys):
+    _write_sets(tmp_path, monkeypatch,
+                dev="- {id: P4-01, part: 4, question: b, expected_scope_reason: counting}\n",
+                control="- {id: C4-01, part: 4, question: c, expected_scope_reason: counting}\n")
+    truth = tmp_path / "truth.json"
+    truth.write_text(json.dumps({"manifest": {}, "relevant": {}}), encoding="utf-8")
+    monkeypatch.setattr(rg, "TRUTH_PATH", truth)
+    monkeypatch.setattr(rg, "OUT", tmp_path)
+    (tmp_path / "records_v2.json").write_text(json.dumps(_complete_records([("P4-01", 4), ("C4-01", 4)])),
+                                              encoding="utf-8")
+    rg.main(["evaluer", "--fichier", "records_v2.json"])
+    out = capsys.readouterr().out
+    assert "série de contrôle) | 1/1 | ≥ 90 % | OK" in out
+    assert "développement (ayant servi à écrire les règles) | 1/1" in out
+
+
+def test_evaluer_without_control_questions_does_not_pass_p4(tmp_path, monkeypatch, capsys):
+    _write_sets(tmp_path, monkeypatch, dev="- {id: P4-01, part: 4, question: b, expected_scope_reason: counting}\n")
+    truth = tmp_path / "truth.json"
+    truth.write_text(json.dumps({"manifest": {}, "relevant": {}}), encoding="utf-8")
+    monkeypatch.setattr(rg, "TRUTH_PATH", truth)
+    monkeypatch.setattr(rg, "OUT", tmp_path)
+    (tmp_path / "records.json").write_text(json.dumps(_complete_records([("P4-01", 4)])), encoding="utf-8")
+    rg.cmd_evaluer(None)
+    assert "série de contrôle) | 0/0 | ≥ 90 % | ÉCHEC" in capsys.readouterr().out
+
+
+def test_unverifiable_record_cites_nothing_and_keeps_transmitted_sources():
+    res = _result()
+    res.answer.status = "unverifiable"
+    r = rg.build_record({"id": "q", "part": 2}, res, replayed=False)
+    assert r["citations"] == [] and r["sources_transmises"] == ["d"]
+
+
+def test_withheld_not_in_sources_text_is_kept_for_review():
+    res = _result()
+    res.answer.status, res.answer.sources, res.answer.llm_text_withheld = "not_in_sources", [], "texte retenu"
+    assert rg.build_record({"id": "q", "part": 2}, res, replayed=False)["llm_text_withheld"] == "texte retenu"
+
+
+# Rejeu : vraie chaîne de génération (generate_answer), génération lue d'un cache.
+
+def _replay_setup():
+    from RAG.src.generation.answer import generate_answer
+    from RAG.src.generation.context import build_context
+    from RAG.src.prompts.generation import GENERATION_PROMPT_SHA, user_message
+    from RAG.tests.test_generation_answer import PROFILE, doc, ok, result
+
+    def res_for(question):
+        return result(docs=[doc()], question=question)
+
+    questions = [{"id": "Q1", "part": 2, "question": "Que sait-on de rs80357906 ?"},
+                 {"id": "Q2", "part": 4, "question": "Combien de variants pathogènes compte BRCA1 ?"},
+                 {"id": "Q3", "part": 2, "question": "Et c.5266dup ?"},
+                 {"id": "Q4", "part": 2, "question": "Pas encore posée"}]
+    cache = {}
+    for q, content in ((questions[0], ok(answer="Le variant rs80357906 n'est pas bénin, il est pathogène.")),
+                       (questions[1], ok(answer="Le gène BRCA1 compte 1 variant pathogène."))):
+        r = res_for(q["question"])
+        user = user_message(q["question"], build_context(list(r.documents)), list(r.trace.flags))
+        key = rg.cache_key(GENERATION_PROMPT_SHA, PROFILE, user, 3000)
+        cache[key] = {"content": content, "generation_id": "g", "provider_name": "Groq", "cost_usd": 0.0,
+                      "prompt_tokens": 1, "completion_tokens": 1}
+    client = rg.ReplayClient(cache, GENERATION_PROMPT_SHA)
+    v1 = [{"id": q["id"], "part": q["part"], "status": "answered", "citations": ["clinvar:32716"],
+           "timings_ms": {"total": 9.0}, "analysis_latency_ms": 5.0} for q in questions[:3]]
+    generate = lambda q, r: generate_answer(q, r, client=client, profile=PROFILE, max_tokens=3000)  # noqa: E731
+    return questions, v1, res_for, generate, client
+
+
+def test_replay_runs_cached_generations_through_the_current_checks_without_network():
+    questions, v1, res_for, generate, client = _replay_setup()
+    v2 = {r["id"]: r for r in rg.replay_records(questions, v1, search=res_for, generate=generate)}
+    assert set(v2) == {"Q1", "Q2", "Q3"}  # Q4 jamais enregistrée : pas de rejeu
+    # Q1 : la négation est désormais rejetée ; Q2 : les règles hors périmètre court-circuitent.
+    assert (v2["Q1"]["status"], v2["Q1"]["rejected"], v2["Q1"]["citations"]) == (
+        "unverifiable", "significance_not_in_sources", [])
+    assert (v2["Q2"]["status"], v2["Q2"]["scope_reason"]) == ("out_of_scope", "counting")
+    assert v2["Q1"]["replay"] == v2["Q2"]["replay"] == "replayed" and v2["Q1"]["v1_status"] == "answered"
+    assert v2["Q1"]["from_cache"] is True and v2["Q1"]["analysis_latency_ms"] == 5.0
+    # Q3 : aucune génération en cache pour ces documents, l'enregistrement d'origine est recopié.
+    assert (v2["Q3"]["status"], v2["Q3"]["replay"]) == ("answered", "generation_not_cached")
+    assert client.calls == 1
+
+
+def test_replay_keeps_the_original_record_when_the_analysis_is_not_cached():
+    questions, v1, res_for, generate, _ = _replay_setup()
+
+    def degraded(question):
+        r = res_for(question)
+        r.trace.analysis = SimpleNamespace(available=False)
+        return r
+    v2 = rg.replay_records(questions[:1], v1, search=degraded, generate=generate)
+    assert (v2[0]["status"], v2[0]["replay"]) == ("answered", "analysis_not_cached")
+
+
+def test_offline_analysis_client_never_answers():
+    from RAG.src.utils.errors import LlmUnavailableError
+    with pytest.raises(LlmUnavailableError):
+        rg.OfflineAnalysisClient().complete_json(None, system="s", user="u")
+
+
+def test_replay_client_misses_raise():
+    with pytest.raises(rg.GenerationNotCached):
+        call(rg.ReplayClient({}, "sha"))

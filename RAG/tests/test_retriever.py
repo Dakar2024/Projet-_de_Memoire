@@ -399,3 +399,31 @@ def test_searcher_close_closes_the_embedder_and_the_llm_client():
     searcher.close()
 
     assert closed == ["embedder", "llm"]
+
+
+def test_searcher_uses_an_injected_analysis_client_without_building_one(monkeypatch):
+    """Rejeu hors ligne de la recette : aucun client LLM construit, donc aucune clé exigée."""
+    from types import SimpleNamespace
+
+    from RAG.src.retrieval import retriever as r
+
+    rag = SimpleNamespace(embedding=SimpleNamespace(fingerprint="f", request_timeout_s=1.0, canary_path="c",
+                                                    canary_min_cosine=0.9))
+    config = SimpleNamespace(analysis_profile="p", llm_timeout_s=1.0, k=10, min_filtered=3, max_question_chars=1000)
+    services = SimpleNamespace(served_model_dir="d", embeddings_url="u", embeddings_api_key="k", pg_conninfo="x")
+    monkeypatch.setattr(r, "load_config", lambda path: rag)
+    monkeypatch.setattr(r, "load_search_config", lambda path, name: config)
+    monkeypatch.setattr(r, "load_service_settings", lambda env: services)
+    monkeypatch.setattr(r, "served_fingerprint", lambda d: "f")
+    monkeypatch.setattr(r, "check_served_model", lambda a, b: None)
+    monkeypatch.setattr(r, "EmbeddingClient", lambda *a, **k: SimpleNamespace(close=lambda: None))
+    monkeypatch.setattr(r, "load_canary", lambda p: None)
+    monkeypatch.setattr(r, "verify_canary", lambda *a: 1.0)
+
+    def no_client(*a, **k):
+        raise AssertionError("aucun client LLM ne doit être construit")
+
+    monkeypatch.setattr(r, "build_llm_client", no_client)
+    injected = SimpleNamespace(close=lambda: None)
+    searcher = r.Searcher(analysis_client=injected)
+    assert searcher._llm is injected
