@@ -204,3 +204,35 @@ def test_an_out_of_panel_gene_with_a_variant_identifier_still_asks_the_llm():
     answer = generate_answer(q, result(question=q, flags=["gene_out_of_panel"]), client=client, profile=PROFILE,
                              max_tokens=3000)
     assert client.calls == 1 and answer.status == "answered"
+
+
+@pytest.mark.parametrize("question,reason", [
+    ("Combien de variants pathogènes compte le gène BRCA1 dans ClinVar ?", "counting"),
+    ("Classe le variant rs80357906 de BRCA1 selon les critères ACMG.", "acmg"),
+    ("Quelle est la fréquence de rs80357906 en Europe ?", "frequency"),
+    ("Faut-il proposer une mastectomie à une porteuse de rs80357906 ?", "clinical_advice"),
+])
+def test_out_of_scope_rules_answer_with_a_fixed_message_without_calling_the_llm(question, reason):
+    client = StubClient(ok())
+    answer = generate_answer(question, result(question=question), client=client, profile=PROFILE, max_tokens=3000)
+    assert client.calls == 0
+    assert (answer.status, answer.scope_reason, answer.answer) == ("out_of_scope", reason, messages.OUT_OF_SCOPE[reason])
+    assert answer.sources == () and answer.from_llm is False
+
+
+def test_out_of_scope_rules_come_after_the_out_of_panel_and_not_found_shortcuts():
+    client = StubClient(ok())
+    q = "Combien de variants de MLH1 ?"
+    answer = generate_answer(q, result(question=q, flags=["gene_out_of_panel"]), client=client, profile=PROFILE,
+                             max_tokens=3000)
+    assert answer.scope_reason == "gene_out_of_panel"
+    q = "Quelle est la fréquence de rs9999999999 ?"
+    res = result(docs=[doc("clinvar:5")], question=q, flags=["identifier_not_found"], not_found=["rs9999999999"])
+    answer = generate_answer(q, res, client=client, profile=PROFILE, max_tokens=3000)
+    assert answer.status == "not_in_sources" and client.calls == 0
+
+
+def test_out_of_scope_rules_come_before_the_no_document_message():
+    q = "Combien de variants de BRCA1 ?"
+    answer = generate_answer(q, result(docs=[], question=q), client=StubClient(ok()), profile=PROFILE, max_tokens=3000)
+    assert (answer.status, answer.scope_reason) == ("out_of_scope", "counting")

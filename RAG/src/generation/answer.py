@@ -15,6 +15,7 @@ from RAG.src.generation.checks import (
     check_citations, check_identifiers, check_no_history_narration, check_significances,
 )
 from RAG.src.generation.context import build_context
+from RAG.src.generation.scope import detect_out_of_scope
 from RAG.src.prompts.generation import (
     GENERATION_SCHEMA, GENERATION_SCHEMA_NAME, MAX_ANSWER_CHARS, SCOPE_REASONS, STATUSES, SYSTEM_PROMPT,
     user_message,
@@ -130,13 +131,19 @@ def generate_answer(question: str, result: SearchResult, *, client, profile: Llm
                     clock: Callable[[], float] = time.perf_counter) -> Answer:
     documents, trace = list(result.documents), result.trace
     ids = trace.identifiers
-    # Cas tranchés sans LLM : gène hors panel seul, identifiants tous absents, aucun document.
+    # Cas tranchés sans LLM : gène hors panel seul, identifiants tous absents, hors périmètre
+    # par règles, aucun document.
     # Gène hors panel seul : sans identifiant de variant cité, rien à chercher dans les fiches.
     if "gene_out_of_panel" in trace.flags and not ids.genes and not ids.has_variant_identifier:
         return _fixed("out_of_scope", messages.OUT_OF_SCOPE["gene_out_of_panel"], documents, reason="gene_out_of_panel")
     cited_ids = [f"rs{r}" for r in ids.rs] + list(ids.hgvs_c) + list(ids.hgvs_p)
     if cited_ids and set(cited_ids) <= set(trace.not_found_identifiers):
         return _fixed("not_in_sources", messages.identifiers_not_found(cited_ids), documents)
+    # Hors périmètre par règles (comptage, ACMG, fréquences, conseil clinique) : message fixe
+    # sans appel au LLM. La règle du prompt reste un second filet.
+    scope = detect_out_of_scope(question)
+    if scope is not None:
+        return _fixed("out_of_scope", messages.OUT_OF_SCOPE[scope], documents, reason=scope)
     if not documents:
         return _fixed("not_in_sources", messages.NO_DOCUMENT, documents)
 
