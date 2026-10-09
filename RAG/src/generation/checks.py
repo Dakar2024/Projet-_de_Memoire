@@ -124,7 +124,9 @@ def _build_terms() -> list[tuple[str, re.Pattern]]:
     for label, fr in SIGNIFICANCE_FR.items():
         if label in ("other", "not provided"):
             continue
-        entries.append((len(label), fr, rf"\b{_spaced(label)}\b"))
+        # Libellé anglais : mots séparés par espaces, tirets ou soulignés (« Uncertain-significance »).
+        english = r"[\s_-]+".join(re.escape(word) for word in label.split())
+        entries.append((len(label), fr, rf"\b{english}\b"))
     entries.append((len("facteur de risque"), "facteur de risque", r"\bfacteurs?\s+de\s+risque\b"))
     entries.append((len("faible pénétrance"), "faible pénétrance", r"\bfaible\s+p[ée]n[ée]trance\b"))
     entries.sort(key=lambda e: e[0], reverse=True)
@@ -135,10 +137,16 @@ _TERMS = _build_terms()
 # Qualificatifs hors table : rejetés d'office, qu'ils figurent ou non dans les documents.
 _OFF_TABLE = re.compile(
     r"\bVUS\b|\bd[ée]l[ée]t[èe]res?\b|\bneutres?\b|\bind[ée]termin[ée]e?s?\b|"
-    r"\bsignification\s+inconnue\b|\bpathog[ée]niques?\b|\bvraisemblablement\b|\bà\s+risque\b",
+    r"\bsignification\s+inconnue\b|\bpathog[ée]niques?\b|\bvraisemblablement\b|\bà\s+risque\b|"
+    r"\binoffensi\w*|\banodin\w*|\bsans\s+(?:danger|risque|cons[ée]quence)\w*|\bb[ée]n[ée]fique\w*",
     re.IGNORECASE,
 )
 _NEGATIONS = {"pas", "non", "ni", "jamais", "plus", "aucun", "aucune"}
+# Négation n'importe où dans une phrase qui porte un terme de signification : la phrase est
+# rejetée sans chercher ce que la négation porte (« Il ne s'agit en aucun cas d'un variant
+# pathogène », « pathogène selon un laboratoire, mais pas selon les autres »).
+_SENTENCE_NEGATION = re.compile(
+    r"\b(?:ne|pas|aucune?s?|jamais|rien|sans|ni|non)\b|\bn'", re.IGNORECASE)
 _SENTENCES = re.compile(r"(?<=[.!?;])\s+")
 
 
@@ -148,8 +156,8 @@ def _negated(text: str, start: int) -> bool:
 
 
 def _terms_in(sentence: str) -> set[str]:
-    """Termes de signification d'une phrase, sans double compte. Une négation dans les trois
-    mots qui précèdent un terme rend la phrase invérifiable (conservateur)."""
+    """Termes de signification d'une phrase, sans double compte. Une négation dans la phrase
+    (n'importe où) la rend invérifiable dès qu'elle porte un terme (conservateur)."""
     found: set[str] = set()
     remaining = sentence
     for term, pattern in _TERMS:
@@ -158,14 +166,12 @@ def _terms_in(sentence: str) -> set[str]:
                 raise GenerationRejectedError("significance_not_in_sources")
             found.add(term)
         remaining = pattern.sub(lambda m: " " * len(m.group()), remaining)
-    # « incertaine » isolé dans une phrase qui parle de « signification » vaut « signification
-    # incertaine » (« Sa signification clinique est encore incertaine »).
-    if "signification incertaine" not in found and re.search(r"\bsignification", sentence, re.IGNORECASE):
-        lone = re.search(r"\bincertain(?:e|s|es)?\b", sentence, re.IGNORECASE)
-        if lone:
-            if _negated(sentence, lone.start()):
-                raise GenerationRejectedError("significance_not_in_sources")
-            found.add("signification incertaine")
+    # « incertain » isolé, sous toutes ses formes, vaut « signification incertaine » (« Sa
+    # signification clinique est encore incertaine », « classé incertain »).
+    if re.search(r"\bincertain\w*", remaining, re.IGNORECASE):
+        found.add("signification incertaine")
+    if found and _SENTENCE_NEGATION.search(sentence.replace("’", "'")):
+        raise GenerationRejectedError("significance_not_in_sources")
     return found
 
 
