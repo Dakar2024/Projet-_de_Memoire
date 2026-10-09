@@ -311,3 +311,45 @@ def test_narrated_history_is_rejected(answer):
 ])
 def test_neutral_answer_passes_the_history_check(answer):
     check_no_history_narration(answer)
+
+
+# --- vague finale : négation n'importe où dans la phrase, qualificatifs hors table ---
+
+PATHOGENIC = _doc_text("Clinical significance: Pathogenic.")
+
+
+@pytest.mark.parametrize("answer", [
+    "Ce variant est inoffensif.",
+    "Ce variant est sans danger.",
+    "Ce variant est sans risque pour la patiente.",
+    "Ce variant est sans conséquence.",
+    "Ce variant est anodin.",
+    "Ce variant est bénéfique.",
+    "Il ne s'agit en aucun cas d'un variant pathogène.",
+    "Ce variant n'a rien de pathogène.",
+    "Ce variant est pathogène selon un laboratoire, mais pas selon les autres.",
+    "Ce variant pathogène ne l'est que chez l'homme.",
+    "Ce variant est classé incertain.",
+    "Son effet reste incertain, il est pathogène.",
+    "Classé Uncertain-significance.",
+    "Classé Uncertain_significance.",
+    "Classé Likely-benign.",
+])
+def test_negations_anywhere_and_off_table_qualifiers_are_rejected(answer):
+    assert _reason(check_significances, answer, [PATHOGENIC]) == "significance_not_in_sources"
+
+
+@pytest.mark.parametrize("answer", [
+    "Ce variant est classé pathogène (statut de revue : reviewed by expert panel).",
+    "Le variant rs80357906 est pathogène. ClinVar ne documente pas de phénotype pour ce variant.",
+    "Pathogène selon ClinVar.",
+    "Classé Pathogenic.",
+])
+def test_typical_correct_answers_are_still_accepted(answer):
+    check_significances(answer, [PATHOGENIC])
+
+
+def test_lone_uncertain_matches_an_uncertain_document_and_english_label_with_dash():
+    uncertain = _doc_text("Clinical significance: Uncertain significance.", sig="Uncertain significance")
+    check_significances("Ce variant est classé incertain.", [uncertain])
+    check_significances("Classé Uncertain-significance.", [uncertain])
