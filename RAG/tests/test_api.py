@@ -284,3 +284,39 @@ def test_openapi_can_be_enabled_by_config():
     c, _ = client(openapi=True)
     with c:
         assert c.get("/schema/openapi.json").status_code == 200
+
+
+# --- vague finale ---
+
+@pytest.mark.parametrize("content_type", [None, "text/plain", "application/x-www-form-urlencoded",
+                                          "application/jsonx"])
+def test_a_body_that_is_not_declared_json_is_refused(content_type):
+    c, pipeline = client()
+    headers = {**H, **({"content-type": content_type} if content_type else {})}
+    with c:
+        r = c.post("/v1/questions", content=b'{"question": "Que sait-on de rs80357906 ?"}', headers=headers)
+    assert r.status_code == 415 and r.json()["error"] == "unsupported_media_type"
+    assert set(r.json()) == {"error", "message", "request_id"}
+
+
+def test_json_with_a_charset_is_accepted_and_the_key_is_checked_first():
+    c, _ = client()
+    with c:
+        r = c.post("/v1/questions", content=b'{"question": "Que sait-on de rs80357906 ?"}',
+                   headers={**H, "content-type": "application/json; charset=utf-8"})
+        assert r.status_code == 200
+        r = c.post("/v1/questions", content=b"x", headers={"content-type": "text/plain"})
+        assert r.status_code == 401
+
+
+def test_late_result_after_deadline_is_logged_with_status_and_cost_only(caplog):
+    caplog.set_level(logging.INFO)
+    gate = threading.Event()
+    c, _ = client(FakePipeline(slots=1, behaviour=lambda q: gate.wait(5)), timeout=0.3)
+    with c:
+        assert ask(c, question=SECRET_QUESTION).status_code == 503
+        gate.set()
+        wait_until(lambda: any(e.get("event") == "late_result" for e in api_events(caplog)))
+    event = next(e for e in api_events(caplog) if e.get("event") == "late_result")
+    assert event["status"] == "answered" and event["cost_usd"] == 0.0 and "request_id" in event
+    assert "confidentielle" not in "\n".join(r.getMessage() for r in caplog.records)

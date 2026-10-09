@@ -57,3 +57,10 @@ def test_api_key_must_be_long_enough_and_is_never_echoed(value):
 
 def test_api_key_is_returned_stripped():
     assert load_api_key({"RAG_API_KEY": "  " + "k" * 40 + " "}) == "k" * 40
+
+
+@pytest.mark.parametrize("value", ['"false"', '"no"', "0", "1", "null"])
+def test_openapi_must_be_a_real_boolean(tmp_path, value):
+    # bool("false") vaudrait True : une chaîne activerait /schema sans clé.
+    with pytest.raises(RagConfigurationError, match="openapi"):
+        load_api_config(_write(tmp_path, BASE.replace("openapi: false", f"openapi: {value}")))

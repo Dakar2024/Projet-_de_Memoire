@@ -522,8 +522,9 @@ services:
       - ./RAG:/opt/projet/RAG:ro
       - ./src:/opt/projet/src:ro
       - ./data/models:/opt/projet/data/models:ro
+    # `--no-access-log` : le journal JSON de l'API (une ligne par question, sans texte) suffit.
     command: ["uvicorn", "RAG.src.api.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000",
-              "--workers", "1", "--no-server-header", "--log-level", "info"]
+              "--workers", "1", "--no-server-header", "--no-access-log", "--log-level", "info"]
     # Aucun port publié : Docker n'en publie pas pour un conteneur relié seulement à
     # des réseaux internes. L'entrée passe par rag-gateway (rag-gateway-net) ; l'API
     # reste sans sortie directe (Internet uniquement par rag-proxy).
