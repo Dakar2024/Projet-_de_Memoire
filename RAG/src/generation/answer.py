@@ -22,7 +22,7 @@ from RAG.src.prompts.generation import (
 )
 from RAG.src.retrieval.retriever import RetrievedDocument, SearchResult
 from RAG.src.utils.config import LlmProfile
-from RAG.src.utils.errors import GenerationRejectedError, LlmUnavailableError
+from RAG.src.utils.errors import GenerationRejectedError, LlmTruncatedError, LlmUnavailableError
 
 _KEYS = {"status", "scope_reason", "answer", "citations"}
 # Ligne écrite par src/transformations/silver_to_gold_rag.py :
@@ -64,9 +64,13 @@ class Answer:
     latency_ms: float
     from_llm: bool
     history: tuple[str, ...] = ()
+    # Texte d'un `not_in_sources` du LLM, retenu : jamais livré ni exposé par l'API (ni ici,
+    # ni dans PipelineResult.as_dict) ; seule la recette le consigne pour examen.
+    llm_text_withheld: str | None = None
 
     def as_dict(self) -> dict:
         data = asdict(self)
+        data.pop("llm_text_withheld")
         data["sources"] = [s.as_dict() for s in self.sources]
         data["history"] = list(self.history)
         return data
@@ -148,9 +152,15 @@ def generate_answer(question: str, result: SearchResult, *, client, profile: Llm
         return _fixed("not_in_sources", messages.NO_DOCUMENT, documents)
 
     start = clock()
-    call = client.complete_json(profile, system=SYSTEM_PROMPT,
-                                user=user_message(question, build_context(documents), list(trace.flags)),
-                                schema_name=GENERATION_SCHEMA_NAME, schema=GENERATION_SCHEMA, max_tokens=max_tokens)
+    try:
+        call = client.complete_json(profile, system=SYSTEM_PROMPT,
+                                    user=user_message(question, build_context(documents), list(trace.flags)),
+                                    schema_name=GENERATION_SCHEMA_NAME, schema=GENERATION_SCHEMA,
+                                    max_tokens=max_tokens)
+    except LlmTruncatedError as exc:
+        # Génération coupée par le plafond de jetons : aucune réponse exploitable, comme une
+        # sortie hors schéma (API 503, recette `generation_unavailable`), et non une erreur 500.
+        raise LlmUnavailableError("génération coupée ou vide") from exc
     latency = (clock() - start) * 1000
     try:
         status, reason, text, citations = validate_generation(call.content)
@@ -164,17 +174,18 @@ def generate_answer(question: str, result: SearchResult, *, client, profile: Llm
         return Answer(status=status, answer=messages.OUT_OF_SCOPE[reason], sources=(), scope_reason=reason,
                       rejected=None, **meta)
     if status == "not_in_sources":
-        # Texte libre contrôlé comme une réponse, mais contre aucun document : ni identifiant,
-        # ni signification, ni historique. Sinon, message fixe et code de rejet consigné.
+        # Toujours le message fixe : le texte libre du LLM n'est jamais livré. Il reste contrôlé
+        # (contre aucun document) pour consigner un éventuel code de rejet dans la recette.
+        rejected = None
         try:
             _check_not_empty(text)
             check_identifiers(text, [], status=status)
             check_no_history_narration(text)
             check_significances(text, [])
         except GenerationRejectedError as exc:
-            return Answer(status=status, answer=messages.NO_DOCUMENT, sources=(), scope_reason=None,
-                          rejected=str(exc), **meta)
-        return Answer(status=status, answer=text, sources=(), scope_reason=None, rejected=None, **meta)
+            rejected = str(exc)
+        return Answer(status=status, answer=messages.NO_DOCUMENT, sources=(), scope_reason=None,
+                      rejected=rejected, llm_text_withheld=text, **meta)
     try:
         _check_not_empty(text)
         check_citations(citations, documents, status)

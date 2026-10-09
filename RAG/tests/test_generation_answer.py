@@ -186,10 +186,29 @@ def test_not_in_sources_text_goes_through_the_same_checks(text):
     assert answer.rejected
 
 
-def test_neutral_not_in_sources_text_is_kept():
+def test_neutral_not_in_sources_text_is_withheld_behind_the_fixed_message():
+    # Vague finale (I1) : le texte libre d'un not_in_sources n'est plus jamais livré ; il reste
+    # dans un champ interne, pour l'examen de la recette, jamais exposé par l'API.
     text = "Les fiches transmises ne répondent pas à cette question."
     answer = _generate(StubClient(ok(status="not_in_sources", answer=text, citations=())))
-    assert (answer.status, answer.answer, answer.rejected) == ("not_in_sources", text, None)
+    assert (answer.status, answer.answer, answer.rejected) == ("not_in_sources", messages.NO_DOCUMENT, None)
+    assert answer.llm_text_withheld == text
+    assert "llm_text_withheld" not in answer.as_dict()
+
+
+def test_withheld_text_never_reaches_the_api_body():
+    from RAG.src.generation.pipeline import PipelineResult
+    text = "Texte retenu du LLM."
+    answer = _generate(StubClient(ok(status="not_in_sources", answer=text, citations=())))
+    body = PipelineResult(answer, result(), {"total": 1.0}).as_dict(include_trace=True)
+    assert text not in repr(body)
+
+
+def test_truncated_generation_is_unavailable():
+    from RAG.src.utils.errors import LlmTruncatedError
+    with pytest.raises(LlmUnavailableError) as excinfo:
+        _generate(StubClient(error=LlmTruncatedError("coupée", cost_usd=0.0)))
+    assert isinstance(excinfo.value.__cause__, LlmTruncatedError)
 
 
 @pytest.mark.parametrize("status", ["answered", "partial"])
