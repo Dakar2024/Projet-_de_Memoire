@@ -349,7 +349,9 @@ class Searcher:
     client LLM du profil, le service d'embedding et la base (`rag_reader`)."""
 
     def __init__(self, *, profile_name: str | None = None, cache_path: Path | None = None,
-                 config_path: Path = DEFAULT_CONFIG_PATH, env=None) -> None:
+                 config_path: Path = DEFAULT_CONFIG_PATH, env=None, analysis_client=None) -> None:
+        """`analysis_client` remplace le client LLM du profil (rejeu hors ligne de la recette :
+        aucun client réseau construit, aucune clé exigée)."""
         rag = load_config(config_path)
         self.config: SearchConfig = load_search_config(config_path, profile_name)
         services = load_service_settings(env)
@@ -359,7 +361,8 @@ class Searcher:
         self._fingerprint = rag.embedding.fingerprint
         verify_canary(self._embedder, load_canary(rag.embedding.canary_path), rag.embedding.fingerprint,
                       rag.embedding.canary_min_cosine)
-        self._llm = build_llm_client(self.config.analysis_profile, env, self.config.llm_timeout_s)
+        self._llm = (analysis_client if analysis_client is not None
+                     else build_llm_client(self.config.analysis_profile, env, self.config.llm_timeout_s))
         self._cache = AnalysisCache(cache_path) if cache_path else None
         self._store = PgSearchStore(services.pg_conninfo)
         self._settings = SearchSettings(self.config.k, self.config.min_filtered, self.config.max_question_chars)
