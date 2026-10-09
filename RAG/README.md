@@ -345,14 +345,27 @@ seulement si :
 - **Identifiants** : tout identifiant du texte (rs, HGVS c./p., identifiant ClinVar, gène) est présent
   dans un document cité ou dans les textes transmis ; un identifiant inventé rejette la réponse.
 - **Signification actuelle** : toute signification clinique affirmée est celle du document cité ; une
-  signification d'un autre libellé, niée ou en anglais est rejetée.
+  signification d'un autre libellé ou en anglais est rejetée, de même que toute phrase qui porte un
+  terme de signification et une négation n'importe où (`ne`, `n'`, `pas`, `aucun`, `jamais`, `rien`,
+  `sans`, `ni`, `non`) et tout qualificatif hors table (« VUS », « inoffensif », « sans danger »,
+  « anodin », « bénéfique », « incertain » seul…).
 - **Historique restitué par le code** : le LLM ne raconte jamais l'historique de classification
   (« auparavant », « reclassé », « jusqu'en 2019 » sont rejetés) ; le code ajoute lui-même une phrase
   « Historique ClinVar … » depuis la ligne `Classification history` du Gold.
-- **Messages fixes** : hors périmètre (comptage, ACMG, fréquences, conseil clinique, gène hors panel),
-  document introuvable et réponse non vérifiable reçoivent un texte écrit par le code. Le texte d'un
-  `not_in_sources` produit par le LLM passe les mêmes contrôles.
+- **Hors périmètre détecté par règles, avant le LLM** (`RAG/src/generation/scope.py`) : comptage
+  (« combien », « liste complète », « le plus de »…), ACMG (« ACMG », codes PVS1, PM2…), fréquences
+  (« fréquence », « prévalence », « gnomAD »…) et conseil clinique (« faut-il », « traitement »,
+  « dépistage »…) reçoivent un message fixe sans appel au LLM ; la règle du prompt reste un second
+  filet (questions hors domaine, `other`). Règles écrites avec la seule série de développement (§9.10).
+- **Messages fixes** : hors périmètre, gène hors panel, document introuvable et réponse non vérifiable
+  reçoivent un texte écrit par le code. Un `not_in_sources` du LLM reçoit **toujours** le message fixe
+  « Aucune fiche ClinVar du panel ne correspond à cette question » : son texte libre n'est jamais livré
+  (seule la recette le consigne, `llm_text_withheld`, pour examen).
 - **Longueur** : réponse de 1 500 caractères au plus (prompt v5), 4 000 au maximum dur.
+
+**Ce qui n'est PAS vérifié par le code** : les maladies et phénotypes cités, et le reste du texte
+libre (reformulations, liens logiques). Seuls les identifiants, les citations et les significations
+le sont. La fidélité de la réponse aux fiches (*faithfulness*) sera mesurée en E3 (RAGAS).
 
 Statuts renvoyés (champ `status`) :
 
@@ -364,8 +377,9 @@ Statuts renvoyés (champ `status`) :
 | `out_of_scope` | hors périmètre, avec `scope_reason` ; message fixe |
 | `unverifiable` | le texte généré a échoué un contrôle ; il n'est **pas affiché**, seules les sources le sont |
 
-Un LLM injoignable ou hors quota ne produit pas de statut : l'API répond 503 (§9.5). La recette
-(§9.10) enregistre ce cas sous le nom `generation_unavailable`.
+Un LLM injoignable ou hors quota, une sortie hors schéma ou une génération coupée par le plafond de
+jetons ne produisent pas de statut : l'API répond 503 (§9.5). La recette (§9.10) enregistre ce cas
+sous le nom `generation_unavailable`.
 
 ### 9.3 Profils LLM provisoires
 
@@ -416,6 +430,7 @@ La réponse contient `status`, `answer`, `sources`, `disclaimer`, `request_id`, 
 | 401 | `unauthorized` | `X-API-Key` absente ou invalide (`/ready`, `/v1/questions`) |
 | 404 | `not_found` | route inconnue ; **aussi, par la passerelle, toute requête avec chaîne de requête** (`?…`) ou méthode non prévue |
 | 413 | `too_large` | corps supérieur à 8 192 octets |
+| 415 | `unsupported_media_type` | corps non déclaré JSON (`Content-Type` autre que `application/json`, paramètre `charset` admis) |
 | 422 | `invalid_question` | JSON illisible, champ inconnu, question vide ou de plus de 1 000 caractères |
 | 429 | `busy` | 4 questions déjà en cours ; **ou, par la passerelle, plus de 30 questions par minute** : la passerelle répond alors par une page HTML de nginx, pas du JSON |
 | 503 | `unavailable` / `timeout` | LLM, embedding ou base injoignable, quota épuisé (en-tête `Retry-After`), ou délai de 120 s dépassé |
@@ -424,7 +439,10 @@ La réponse contient `status`, `answer`, `sources`, `disclaimer`, `request_id`, 
 ### 9.6 Journaux
 
 Un événement JSON par question : identifiant de requête, statut, durées, coût, modèle, indicateurs de
-recherche, nombre de sources. **Ni la question, ni la réponse, ni la clé, ni l'en-tête** : la
+recherche, nombre de sources. Une réponse arrivée après le délai (jamais livrée) est consignée par
+`late_result` (statut, coût, modèle) ou `late_error` (classe de l'exception). Le journal d'accès
+d'uvicorn est coupé (`--no-access-log`) : il répéterait chaque requête. **Ni la question, ni la
+réponse, ni la clé, ni l'en-tête** : la
 passerelle journalise `méthode chemin statut durée`, sans chaîne de requête ; le proxy journalise
 l'hôte et le port, jamais l'URL complète. Les messages d'exception ne sont pas journalisés (ils
 pourraient citer un extrait de la requête).
@@ -438,19 +456,24 @@ pourraient citer un extrait de la requête).
   écrit dans `squid.conf` ET dans `docker-compose.yml` (réseau `rag-proxy-net`) : les deux doivent
   rester synchronisés**, sinon le proxy refuse tout.
 - **Passerelle sans secret, mais sur un pont non interne** (`rag-api-ingress`, nécessaire à la
-  publication du port) : elle voit donc la clé et les questions en transit. Risque résiduel accepté
-  pour une API locale sur 127.0.0.1. Elle relaie une URI fixe par route (aucun `../` ni `%2F`
+  publication du port) : elle voit donc la clé et les questions en transit, **et elle a une sortie
+  Internet** (ce pont n'est pas interne ; nginx n'y ouvre aucune connexion de lui-même). Risque
+  résiduel accepté pour une API locale sur 127.0.0.1. Elle relaie une URI fixe par route (aucun `../` ni `%2F`
   transmis), refuse toute chaîne de requête, borne le corps à 8 Ko.
 - **Limite de débit** : 30 questions par minute (rafale de 10), **partagées entre tous les clients et
   appliquées avant l'authentification**. Elle plafonne la dépense LLM si un processus local boucle,
   mais un flot local sans clé peut aussi affamer l'utilisateur légitime : limite de déni de service
-  local connue.
+  local connue. Cette limite ne vaut que par la passerelle : un conteneur relié à `rag-gateway-net`
+  (comme `rag-api-test`) joint `rag-api:8000` directement, sans `limit_req` ; la clé reste exigée.
 - **Base** (`RAG/sql/001_schema.sql`) : mots de passe lus par `\getenv` (absents de la liste des
   processus et de la ligne de commande psql ; variable manquante → erreur SQL et code de sortie 3) ;
   attributs des rôles remis à zéro à chaque amorçage (`NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS
-  NOREPLICATION`) ; `REVOKE ALL` avant chaque `GRANT` ; `REVOKE TEMPORARY, CREATE ON DATABASE rag FROM
-  PUBLIC`.
-- **Airflow** : les secrets `RAG_*` ne sont que sur le scheduler (ancre `x-rag-indexer-env`) ;
+  NOREPLICATION`) ; `REVOKE ALL` et `GRANT` dans une même transaction ; `REVOKE TEMPORARY, CREATE ON
+  DATABASE rag FROM PUBLIC` et `REVOKE CONNECT, TEMPORARY ON DATABASE postgres, template1 FROM PUBLIC` ;
+  `SET log_min_error_statement = panic` en tête du script (une instruction en échec, qui pourrait porter
+  un mot de passe, n'est jamais recopiée dans le journal du serveur).
+- **Airflow** : les secrets `RAG_*` ne sont que sur le scheduler (ancre `x-rag-indexer-env`, vérifié
+  par `RAG/tests/test_compose_security.py`, qui contrôle aussi le sous-réseau du proxy) ;
   `data/models` est monté en lecture seule ; `rag-model-export` a son propre réseau `rag-export` et un
   plafond de 4 Gio.
 - **Conteneurs** : `rag-api` ne monte ni `.env` ni le reste du dépôt ; clés LLM absentes de
@@ -483,14 +506,21 @@ docker compose --env-file .env --profile outils run --rm --no-deps -e RAG_READER
 ```
 
 `rag-api`, `rag-gateway` et `rag-proxy` doivent tourner. Ils vérifient le proxy (domaine hors liste,
-autre port, HTTP clair, IP littérale), le filtrage de la passerelle, les droits des rôles et le
-durcissement de la base. Passe rapide : `pytest -q` (logique) et `pytest tests_airflow -q`.
+autre port, HTTP clair, IP littérale), le filtrage de la passerelle, les droits des rôles (écritures
+de l'indexeur exercées dans une transaction annulée, bases `postgres` et `template1` fermées) et le
+durcissement de la base. `test_api_answers_end_to_end` pose une vraie question (un appel au LLM). Passe rapide : `pytest -q` (logique) et `pytest tests_airflow -q`.
 
 ### 9.10 Recette
 
-Jeu de 99 questions (`RAG/experiments/questions_recette_e2b.yaml`) : les 89 de E2a plus 10 hors
-périmètre validées par l'utilisateur. Seuils fixés d'avance dans la spec (§8). La recette valide la
-chaîne, elle ne choisit aucun modèle.
+Jeu de questions : les 89 de E2a (parties 1 à 3) et deux séries hors périmètre (partie 4), validées
+par l'utilisateur :
+
+- **série de développement** (`RAG/experiments/questions_recette_e2b.yaml`, 10 questions) : elle a
+  servi à écrire les règles hors périmètre ; son score est rapporté à part, **sans seuil** ;
+- **série de contrôle** (`RAG/experiments/questions_recette_e2b_controle.yaml`) : jamais consultée
+  pour écrire les règles ; le seuil de la partie 4 (≥ 90 %, spec §8) se calcule sur elle seule.
+
+Seuils fixés d'avance dans la spec (§8). La recette valide la chaîne, elle ne choisit aucun modèle.
 
 ```bash
 mkdir -p data/experiments/e2b-recette
@@ -498,20 +528,53 @@ docker compose --env-file .env --profile outils run --rm rag-search -m RAG.exper
 venv/bin/python -m RAG.experiments.recette_generation evaluer    # résumé et critères
 ```
 
-`lancer` enregistre chaque réponse (avec la version du prompt) dans `data/experiments/e2b-recette/`
-et reprend où il s'est arrêté. Le quota quotidien de Groq peut l'interrompre : relancer le lendemain.
-Un changement de prompt purge les enregistrements antérieurs, pour que tous aient la même version.
-Une génération indisponible est enregistrée (`generation_unavailable`) et non rejouée : elle compte
-comme échec du critère. Résultats et examen des rejets : `reference/recette_e2b.md`.
+`rag-search` monte `data/experiments/e2b-recette` en écriture (avec `e2a` et `e2a-essai`). `lancer`
+enregistre chaque réponse (avec la version du prompt) dans `records.json` et reprend où il s'est
+arrêté. Le quota quotidien de Groq peut l'interrompre : relancer le lendemain. Un changement de prompt
+purge les enregistrements antérieurs, pour que tous aient la même version. Une génération
+indisponible est enregistrée (`generation_unavailable`) et non rejouée : elle compte comme échec du
+critère. Une réponse `unverifiable` ne cite rien (`citations` vide) ; les documents transmis sont
+dans `sources_transmises`. En partie 2, une réponse `partial` citant un document pertinent compte
+comme réussie ; `evaluer` l'annonce.
+
+**Latences** : les attentes de limite de débit de Groq (et les relances 502/503) sont mesurées par
+question (`throttle_wait_ms`, fonction `sleep` des clients enveloppée) ; `evaluer` imprime la latence
+sans ces attentes et attentes comprises. Les enregistrements antérieurs à cette mesure n'ont pas le
+champ : leur latence « sans attentes » est une borne supérieure, et `evaluer` le signale.
+
+**Rejeu hors ligne** : après une modification des contrôles, `rejouer` repasse chaque génération déjà
+obtenue dans la chaîne actuelle, **sans aucun appel au LLM**, et écrit `records_v2.json` :
+
+```bash
+docker compose --env-file .env --profile outils run --rm --no-deps \
+  -e GROQ_API_KEY= -e OPENROUTER_API_KEY= -e HTTPS_PROXY=http://127.0.0.1:9 -e HTTP_PROXY=http://127.0.0.1:9 \
+  rag-search -m RAG.experiments.recette_generation rejouer
+venv/bin/python -m RAG.experiments.recette_generation evaluer --fichier records_v2.json
+```
+
+Les enregistrements ne contiennent pas les documents : `rejouer` refait la **recherche locale**
+(base et embedding, sans réseau extérieur), avec les analyses lues dans leur cache
+(`data/experiments/e2a-essai/cache_analyses.json`) et un client d'analyse hors ligne qui ne répond
+jamais ; la génération est relue dans `cache_generation.json` (même clé que `lancer` : prompt,
+modèle, plafond de jetons, message utilisateur exact, donc mêmes documents). Une question dont
+l'analyse ou la génération n'est pas en cache garde son enregistrement d'origine (`replay` le dit).
+Les clés vides et le proxy factice garantissent qu'aucun appel ne sort. Résultats et examen des
+rejets : `reference/recette_e2b.md`.
 
 ### 9.11 Limites connues
 
 - **Listes de phénotypes polluées** (modes de transmission, âges) dans les documents : à traiter
   après la première mesure RAGAS (E3).
-- **Contrôle de signification par motifs** : lacunes lexicales (« classé incertain » sans
-  « signification », « inoffensif », « sans danger », « Uncertain-significance » avec tiret, négation
-  placée après le terme) ; une réponse peut être rejetée à tort (`unverifiable`, sens sûr), jamais
-  acceptée avec un autre libellé connu.
+- **Contrôle de signification par motifs** : il reste lexical. Les lacunes connues ont été comblées
+  (« classé incertain », « inoffensif », « sans danger », « Uncertain-significance », négation après
+  le terme), mais une formulation nouvelle peut encore lui échapper : le contrôle n'est **pas** sûr
+  dans les deux sens. Une phrase est découpée sur `.`, `!`, `?` et `;` : « Pathogène ? Non. » sépare
+  le terme de sa négation. À l'inverse, une liste sans point final forme une seule « phrase » : un
+  « non » ou un « sans » ailleurs dans la liste (« non listées », « non sphérocytaire ») la rejette à
+  tort (7 réponses de la partie 1 au rejeu du 09/10/2026).
+- **Règles hors périmètre lexicales** : une question peut être détectée à tort (message fixe au lieu
+  d'une réponse ; aucune sur les 89 questions de E2a, hors P3-05, réellement une question de
+  fréquence) ou échapper aux règles (le LLM tranche alors).
 - **Permutation entre deux documents cités** : si deux fiches citées ont des significations
   différentes, une inversion entre elles n'est pas détectée.
 - « et N autres » (comptes de listes) n'est pas vérifié.
@@ -521,7 +584,7 @@ comme échec du critère. Résultats et examen des rejets : `reference/recette_e
   question citant `c.` et `p.` d'un même variant dont la fiche n'a qu'une forme est refusée.
 - Hors panel : un gène hors panel seul court-circuite (`out_of_scope`) seulement sans identifiant de
   variant.
-- Sessions HTTP des clients LLM non fermées ; délai de génération partagé avec `llm.request_timeout_s` ;
-  `text/plain` accepté pour le corps ; erreur d'un fil non journalisée après déconnexion du client.
+- Délai de génération partagé avec `llm.request_timeout_s` ; issue d'un fil non journalisée quand le
+  client se déconnecte avant la réponse (seul le délai dépassé l'est).
 - Le cache des analyses et les enregistrements de recette (`data/experiments/`, non versionnés)
   contiennent des questions en clair.
