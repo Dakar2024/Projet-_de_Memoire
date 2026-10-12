@@ -152,14 +152,14 @@ _SENTENCES = re.compile(r"(?<=[.!?;])\s+")
 # recopient le statut de revue ClinVar (« no conflicts », « no assertion criteria provided »),
 # la phrase imposée par le prompt pour les fiches maigres, la mention d'une liste tronquée et un
 # nom de maladie (« nonspherocytic hemolytic anemia ») : leur « aucun », « sans », « ne … pas »
-# ou « non » ne porte jamais sur la signification. Liste fermée : « non listé » seul n'y est pas
-# (« Ce variant est non listé comme pathogène » reste rejeté).
+# ou « non » ne porte jamais sur la signification. Liste fermée : seule la formule « d'autres
+# variantes non listées ici » est masquée, et pas si elle est suivie de « comme » / « en tant »
+# (« Ce variant non listé ici comme pathogène » reste rejeté, comme « non listé » seul).
 _NEUTRAL_PHRASES = re.compile(
     r"\b(?:aucun|sans)\s+conflits?\b"
     r"|\baucune?\s+crit[èe]res?\s+(?:d['’]\s*[ée]valuation\s+)?fournie?s?\b"
     r"|\bclinvar\s+ne\s+documente\s+pas\s+de\s+ph[ée]notypes?\s+pour\s+ce\s+variant\b"
-    r"|\bvariantes?\s+non\s+list[ée]es?\s+ici\b"
-    r"|\bvariants?\s+non\s+list[ée]s?\s+ici\b"
+    r"|\bautres\s+variant(?:e)?s?\s+non\s+list[ée]e?s?\s+ici\b(?!\s+(?:comme|en\s+tant))"
     r"|\bnon[- ]sph[ée]rocytaires?\b",
     re.IGNORECASE,
 )
