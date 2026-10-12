@@ -403,3 +403,62 @@ def test_non_spherocytic_disease_name_does_not_trigger_the_negation_rule():
 ])
 def test_negations_are_still_rejected_next_to_masked_phrases(answer):
     assert _reason(check_significances, answer, [REVIEWED]) == "significance_not_in_sources"
+
+
+# --- Éléments déclencheurs attachés aux rejets (diagnostic hors ligne) ---------------------
+
+def _detail(fn, *args, **kwargs):
+    with pytest.raises(GenerationRejectedError) as excinfo:
+        fn(*args, **kwargs)
+    return str(excinfo.value), excinfo.value.detail
+
+
+def test_detail_lists_the_untransmitted_citation():
+    code, detail = _detail(check_citations, ["clinvar:32716", "clinvar:999"], [doc()], "answered")
+    assert (code, detail) == ("citation_not_transmitted", ["clinvar:999"])
+
+
+def test_detail_lists_the_invented_identifiers():
+    code, detail = _detail(check_identifiers, "Le variant rs80357906 (aussi rs12345) est pathogène.", [doc()])
+    assert code == "identifier_not_in_sources"
+    assert detail == ["rs12345"]
+
+
+def test_detail_lists_the_invented_variation_id_and_gene():
+    _, detail = _detail(check_identifiers, "ClinVar Variation ID 99999 du variant.", [doc()])
+    assert detail == ["ClinVar 99999"]
+    _, detail = _detail(check_identifiers, "Le gène TP53 est concerné.", [doc()])
+    assert detail == ["gène TP53"]
+
+
+def test_detail_gives_the_sentence_with_the_negation():
+    _, detail = _detail(check_significances, "Ce variant n'est pas pathogène.", [doc()])
+    assert len(detail) == 1 and "n'est pas pathogène" in detail[0] and "négation" in detail[0]
+
+
+def test_detail_names_the_unsourced_significance_term():
+    _, detail = _detail(check_significances, "Ce variant est bénin.", [doc()])
+    assert len(detail) == 1 and "bénin" in detail[0] and "Ce variant est bénin" in detail[0]
+
+
+def test_detail_names_the_off_table_qualifier():
+    _, detail = _detail(check_significances, "Ce variant est délétère.", [doc()])
+    assert detail == ["qualificatif hors table : délétère"]
+
+
+def test_detail_names_the_history_marker():
+    _, detail = _detail(check_no_history_narration, "Il était auparavant incertain.")
+    assert detail == ["marqueur d'historique : auparavant"]
+
+
+def test_explain_rejection_matches_the_check_chain():
+    from RAG.src.generation.checks import explain_rejection
+    d = doc()
+    assert explain_rejection("Le variant est pathogène.", [d], ["clinvar:32716"], "answered") is None
+    assert explain_rejection("Le variant rs12345 est pathogène.", [d], ["clinvar:32716"], "answered") == {
+        "reason": "identifier_not_in_sources", "detail": ["rs12345"]}
+    assert explain_rejection("Aucun document.", [d], [], "answered")["reason"] == "no_citation"
+    # not_in_sources : texte libre contrôlé contre aucun document, sans exigence de citation.
+    assert explain_rejection("Voir rs80357906.", [d], [], "not_in_sources") == {
+        "reason": "identifier_not_in_sources", "detail": ["rs80357906"]}
+    assert explain_rejection("   ", [d], [], "answered") == {"reason": "empty_answer", "detail": []}

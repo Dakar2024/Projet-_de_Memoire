@@ -11,9 +11,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 
 from RAG.src.generation import messages
-from RAG.src.generation.checks import (
-    check_citations, check_identifiers, check_no_history_narration, check_significances,
-)
+from RAG.src.generation.checks import verify_answer
 from RAG.src.generation.context import build_context
 from RAG.src.generation.scope import detect_out_of_scope
 from RAG.src.prompts.generation import (
@@ -121,11 +119,6 @@ def validate_generation(content: Mapping) -> tuple[str, str | None, str, list[st
     return status, reason, text.replace("\\n", "\n").strip(), list(dict.fromkeys(citations))
 
 
-def _check_not_empty(text: str) -> None:
-    if not text.strip():
-        raise GenerationRejectedError("empty_answer")
-
-
 def _fixed(status: str, text: str, documents, *, reason: str | None = None, sources=()) -> Answer:
     """Réponse à message fixe, sans appel au LLM."""
     return Answer(status=status, answer=text, sources=tuple(sources), disclaimer=messages.disclaimer(_archive(documents)),
@@ -180,20 +173,13 @@ def generate_answer(question: str, result: SearchResult, *, client, profile: Llm
         # (contre aucun document) pour consigner un éventuel code de rejet dans la recette.
         rejected = None
         try:
-            _check_not_empty(text)
-            check_identifiers(text, [], status=status)
-            check_no_history_narration(text)
-            check_significances(text, [])
+            verify_answer(text, [], [], status)
         except GenerationRejectedError as exc:
             rejected = str(exc)
         return Answer(status=status, answer=messages.NO_DOCUMENT, sources=(), scope_reason=None,
                       rejected=rejected, llm_text_withheld=text, **meta)
     try:
-        _check_not_empty(text)
-        check_citations(citations, documents, status)
-        check_identifiers(text, documents, status=status)
-        check_no_history_narration(text)
-        check_significances(text, [by_id[c] for c in citations])
+        verify_answer(text, documents, citations, status)
     except GenerationRejectedError as exc:
         return Answer(status="unverifiable", answer=messages.UNVERIFIABLE,
                       sources=tuple(_source(d) for d in documents), scope_reason=None, rejected=str(exc), **meta)

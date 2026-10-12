@@ -161,7 +161,7 @@ def test_identifier_check_receives_the_real_status(monkeypatch):
     def spy(answer, documents, status="answered"):
         seen["status"] = status
 
-    monkeypatch.setattr("RAG.src.generation.answer.check_identifiers", spy)
+    monkeypatch.setattr("RAG.src.generation.checks.check_identifiers", spy)
     _generate(StubClient(ok(status="partial")))
     assert seen == {"status": "partial"}
 
