@@ -362,10 +362,12 @@ seulement si :
 - **Hors périmètre détecté par règles, avant le LLM** (`RAG/src/generation/scope.py`) : comptage
   (« combien », « liste complète », « le plus de », « liste les », « inventaire », « l'ensemble des
   variants »…), ACMG (« ACMG », codes PVS1, PM2, « American College of Medical Genetics », « grille de
-  classification »…), fréquences (« fréquence », « prévalence », « gnomAD », « rare », « courant »,
+  classification »…), fréquences (« fréquence », « prévalence », « gnomAD », « rare » (sauf « maladie rare »), « courant » (sauf « au courant »),
   « répandu », « MAF », « incidence »…) et conseil clinique (« faut-il », « traitement », « dépistage »,
-  « dois-je », « puis-je », « peut-il », « consulter », « indiquée », « s'inquiéter », « risque … pour
-  moi »…) reçoivent un message fixe sans appel au LLM ; « nombre de soumissionnaires » et « classé
+  « dois-je », « puis-je », « consulter », « s'inquiéter », « risque … pour moi », « ablation » (sauf
+  « ablation de l'exon / du gène / du domaine / de la région ») et, **seulement si la question contient
+  un contexte personnel** (« je », « ma », « sœur », « enfants », « patiente », « porteuse »…), « peut-il »
+  et « indiqué(e)(s) » : « Ce variant peut-il causer une anémie ? » reste une question factuelle) reçoivent un message fixe sans appel au LLM ; « nombre de soumissionnaires » et « classé
   selon les laboratoires / les soumissionnaires » (données de la fiche) ne sont pas détectés ; la règle du prompt reste un second
   filet (questions hors domaine, `other`). Règles écrites avec la seule série de développement (§9.10).
 - **Messages fixes** : hors périmètre, gène hors panel, document introuvable et réponse non vérifiable

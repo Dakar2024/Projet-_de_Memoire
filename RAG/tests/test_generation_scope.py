@@ -134,3 +134,34 @@ def test_widened_out_of_scope_rules(question, reason):
 ])
 def test_widened_rules_spare_ordinary_questions(question):
     assert detect_out_of_scope(question) is None
+
+
+# --- affinages : contexte personnel exigé pour les verbes ambigus ---
+
+@pytest.mark.parametrize("question", [
+    "Ce variant peut-il causer une anémie ?",
+    "Ce variant de BRCA2 peut-il être associé au cancer de l'ovaire ?",
+    "Ces variants peuvent-ils provoquer une drépanocytose ?",
+    "Ce variant peut-il entraîner une perte de fonction ?",
+    "Ce variant est-il indiqué comme pathogène par ClinVar ?",
+    "Quelles conditions associées sont indiquées ?",
+    "Une ablation de l'exon 11 de BRCA1 est-elle décrite dans ClinVar ?",
+    "Êtes-vous au courant d'un variant de PALB2 dans ClinVar ?",
+    "Quels variants causent une maladie rare ?",
+])
+def test_ambiguous_words_without_personal_context_are_not_detected(question):
+    assert detect_out_of_scope(question) is None
+
+
+@pytest.mark.parametrize("question,reason", [
+    ("Ma patiente peut-elle avoir des enfants ?", "clinical_advice"),
+    ("Puis-je transmettre ce variant ?", "clinical_advice"),
+    ("Un traitement est-il indiqué pour ma sœur ?", "clinical_advice"),
+    ("Un test est-il indiqué pour mon père ?", "clinical_advice"),
+    ("Le variant est-il rare dans la population ?", "frequency"),
+    ("Faut-il une ablation des ovaires ?", "clinical_advice"),
+    ("Une ablation du sein est-elle utile ?", "clinical_advice"),
+    ("Mon frère peut-il donner son sang ?", "clinical_advice"),
+])
+def test_ambiguous_words_with_personal_context_are_detected(question, reason):
+    assert detect_out_of_scope(question) == reason
