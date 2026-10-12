@@ -179,7 +179,7 @@ def test_errors_map_to_http_codes_without_internal_detail(error, code):
 
 def test_slots_are_never_shared_between_concurrent_questions():
     gate = threading.Event()
-    pipeline = FakePipeline(slots=4, behaviour=lambda q: gate.wait(2))
+    pipeline = FakePipeline(slots=4, behaviour=lambda q: gate.wait(5))
     c, _ = client(pipeline)
     codes = []
     with c:
@@ -187,6 +187,9 @@ def test_slots_are_never_shared_between_concurrent_questions():
         for t in threads:
             t.start()
         wait_until(lambda: len(pipeline.in_use) == 4)
+        # On attend les deux refus avant d'ouvrir la porte : sinon un créneau libéré
+        # pourrait servir une requête tardive en 200 au lieu de 429.
+        wait_until(lambda: len(codes) == 2 and set(codes) == {429})
         gate.set()
         for t in threads:
             t.join()
@@ -203,7 +206,7 @@ def test_deadline_returns_503_and_keeps_the_slot_busy(caplog):
         first = ask(c)
         second = ask(c)
         release.set()
-        time.sleep(0.3)
+        wait_until(lambda: pipeline.free)
         third = ask(c)
     assert first.status_code == 503 and first.json()["error"] == "timeout"
     assert second.status_code == 429
