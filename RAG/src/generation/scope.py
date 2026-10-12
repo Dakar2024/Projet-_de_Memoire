@@ -15,6 +15,14 @@ from __future__ import annotations
 import re
 import unicodedata
 
+# Contexte personnel (texte normalisé : sans accents). Les verbes ambigus « peut-il » et « indiqué »
+# ne valent conseil clinique qu'avec lui : « Ce variant peut-il causer une anémie ? » est factuelle.
+_PERSONAL = (
+    r"(?=.*(?:\b(?:je|moi|mon|ma|mes|nous|notre|nos|vous|votre|vos|soeur|mere|fille|fils|frere|"
+    r"pere|tante|oncle|cousines?|femme|mari|enfants?|famille|patiente?s?|porteu(?:r|se)s?)\b"
+    r"|\b[jm]'|\bme\b))"
+)
+
 # Ordre d'examen : du plus spécifique au plus général. « Classe selon les critères ACMG »
 # reste « acmg » même si la phrase contient aussi « nombre de ».
 _RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -37,9 +45,9 @@ _RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
         r"\bproportion\s+de\s+la\s+population\b",
         r"\bgnomad\b",
         r"\balleles?\b.*\bpopulations?\b",
-        # « rare » : aucune question de E2a ne l'emploie (pas de « maladie rare » parasite).
-        r"\brares?\b",
-        r"\bcourante?s?\b",
+        # « maladie rare » désigne une catégorie de maladies, « au courant » est une locution.
+        r"(?<!maladie )(?<!maladies )\brares?\b",
+        r"(?<!\bau )\bcourante?s?\b",
         r"\brepandue?s?\b",
         r"\bpourcentages?\b",
         r"\bmaf\b",
@@ -63,17 +71,19 @@ _RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
         r"\bdevrais[- ]je\b",
         r"\bdevrai(?:t|ent)[- ](?:il|elle|ils|elles)\b",
         r"\bpuis[- ]je\b",
-        r"\bpeu(?:t|vent)[- ](?:il|elle|ils|elles)\b",
+        r"^" + _PERSONAL + r".*\bpeu(?:t|vent)[- ](?:il|elle|ils|elles)\b",
         r"\bconsulter\b",
         # « indiquée(s) », « indiqués » ; « indiqué » masculin seulement après « est/sont » (sinon
         # « Qu'indique ClinVar » serait pris, les accents étant retirés).
-        r"\bindiquee?s\b|\bindiquee\b",
-        r"\b(?:est|sont|serai(?:t|ent))(?:[- ](?:t[- ])?(?:il|elle|ils|elles))?\s+indique\b",
+        # Seulement avec un contexte personnel (« indiqué comme pathogène par ClinVar » est une donnée).
+        r"^" + _PERSONAL + r".*\b(?:indiquees?|indiques)\b",
+        r"^" + _PERSONAL + r".*\b(?:est|sont|serai(?:t|ent))(?:[- ](?:t[- ])?(?:il|elle|ils|elles))?\s+indique\b",
         r"\b[ms]'inquieter\b",
         r"\bavoir\s+des\s+enfants\b",
         r"\brisques?\b.*\bpour\s+(?:moi|elle|lui)\b",
         r"\bretirer\b.*\bovaires?\b",
-        r"\bablations?\b",
+        # « ablation de l'exon / du gène / du domaine / de la région » est un événement génétique.
+        r"\bablations?\b(?!(?:\s+(?:de\s+l'|du|de\s+la|des))?\s*(?:exon|gene|domaine|region))",
     )),
     ("counting", (
         r"\bcombien\b",
