@@ -515,3 +515,19 @@ def test_offline_analysis_client_never_answers():
 def test_replay_client_misses_raise():
     with pytest.raises(rg.GenerationNotCached):
         call(rg.ReplayClient({}, "sha"))
+
+
+def test_diagnose_explains_the_trigger_of_each_rejection_without_network():
+    from RAG.src.generation.answer import generate_answer
+    from RAG.src.prompts.generation import GENERATION_PROMPT_SHA
+    from RAG.tests.test_generation_answer import PROFILE
+    questions, v1, res_for, _, replay_client = _replay_setup()
+    client = rg.RecordingReplayClient(replay_client._cache, GENERATION_PROMPT_SHA)
+    generate = lambda q, r: generate_answer(q, r, client=client, profile=PROFILE, max_tokens=3000)  # noqa: E731
+    diagnostics = rg.diagnose_records(questions, v1, search=res_for, generate=generate, client=client)
+    # Q1 rejetée (négation) ; Q2 hors périmètre sans LLM ; Q3 non en cache : ni l'une ni l'autre.
+    assert [d["id"] for d in diagnostics] == ["Q1"]
+    d = diagnostics[0]
+    assert d["reason"] == "significance_not_in_sources" and d["answer_status"] == "unverifiable"
+    assert any("n'est pas bénin" in item for item in d["detail"])
+    assert d["excerpt"].startswith("Le variant rs80357906") and len(d["excerpt"]) <= 200
