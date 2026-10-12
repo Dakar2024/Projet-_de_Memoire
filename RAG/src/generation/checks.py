@@ -50,8 +50,9 @@ def _clean(answer: str) -> str:
 
 def check_citations(citations: Sequence[str], documents: Sequence[RetrievedDocument], status: str) -> None:
     transmitted = {d.doc_id for d in documents}
-    if any(c not in transmitted for c in citations):
-        raise GenerationRejectedError("citation_not_transmitted")
+    unknown = [c for c in citations if c not in transmitted]
+    if unknown:
+        raise GenerationRejectedError("citation_not_transmitted", unknown)
     if status in ("answered", "partial") and not citations:
         raise GenerationRejectedError("no_citation")
 
@@ -79,9 +80,11 @@ def check_identifiers(answer: str, documents: Sequence[RetrievedDocument], statu
     for d in documents:
         allowed_vid |= set(_VARIATION_ID.findall(d.text))
     found = extract_identifiers(answer)
-    if (set(found.rs) - allowed_rs or set(found.hgvs_c) - allowed_c or set(found.hgvs_p) - allowed_p
-            or set(_VARIATION_ID.findall(answer)) - allowed_vid):
-        raise GenerationRejectedError("identifier_not_in_sources")
+    offending = ([f"rs{r}" for r in sorted(set(found.rs) - allowed_rs, key=str)]
+                 + sorted(set(found.hgvs_c) - allowed_c) + sorted(set(found.hgvs_p) - allowed_p)
+                 + [f"ClinVar {v}" for v in sorted(set(_VARIATION_ID.findall(answer)) - allowed_vid)])
+    if offending:
+        raise GenerationRejectedError("identifier_not_in_sources", offending)
     if status in _PANEL_STATUSES:
         # Symboles autorisés : ceux que les textes transmis contiennent (« group D1 », RAD51,
         # CD4 recopiés fidèlement) et les gènes des documents.
@@ -89,8 +92,9 @@ def check_identifiers(answer: str, documents: Sequence[RetrievedDocument], statu
         for d in documents:
             ids = extract_identifiers(d.text)
             allowed_genes |= set(ids.genes) | set(ids.out_of_panel)
-        if (set(found.genes) | set(found.out_of_panel)) - allowed_genes:
-            raise GenerationRejectedError("identifier_not_in_sources")
+        unknown_genes = (set(found.genes) | set(found.out_of_panel)) - allowed_genes
+        if unknown_genes:
+            raise GenerationRejectedError("identifier_not_in_sources", [f"gène {g}" for g in sorted(unknown_genes)])
 
 
 def _spaced(text: str) -> str:
@@ -178,15 +182,18 @@ def _terms_in(sentence: str) -> set[str]:
     for term, pattern in _TERMS:
         for match in pattern.finditer(remaining):
             if _negated(sentence, match.start()):
-                raise GenerationRejectedError("significance_not_in_sources")
+                raise GenerationRejectedError(
+                    "significance_not_in_sources", [f"négation devant « {match.group()} » : {sentence.strip()}"])
             found.add(term)
         remaining = pattern.sub(lambda m: " " * len(m.group()), remaining)
     # « incertain » isolé, sous toutes ses formes, vaut « signification incertaine » (« Sa
     # signification clinique est encore incertaine », « classé incertain »).
     if re.search(r"\bincertain\w*", remaining, re.IGNORECASE):
         found.add("signification incertaine")
-    if found and _SENTENCE_NEGATION.search(sentence.replace("’", "'")):
-        raise GenerationRejectedError("significance_not_in_sources")
+    negation = _SENTENCE_NEGATION.search(sentence.replace("’", "'")) if found else None
+    if negation:
+        raise GenerationRejectedError(
+            "significance_not_in_sources", [f"négation « {negation.group()} » dans la phrase : {sentence.strip()}"])
     return found
 
 
@@ -228,12 +235,17 @@ def check_significances(answer: str, cited: Sequence[RetrievedDocument]) -> None
             labels |= _labels_in(match.group(1))
         current |= _translated(labels)
     text = _clean(answer)
-    if _OFF_TABLE.search(text):
-        raise GenerationRejectedError("significance_not_in_sources")
+    off_table = _OFF_TABLE.search(text)
+    if off_table:
+        raise GenerationRejectedError("significance_not_in_sources",
+                                      [f"qualificatif hors table : {off_table.group()}"])
     text = _NEUTRAL_PHRASES.sub(lambda m: " " * len(m.group()), text)
     for sentence in _SENTENCES.split(text):
-        if _terms_in(sentence) - current:
-            raise GenerationRejectedError("significance_not_in_sources")
+        unsourced = _terms_in(sentence) - current
+        if unsourced:
+            raise GenerationRejectedError(
+                "significance_not_in_sources",
+                [f"terme absent des documents cités : {t} (phrase : {sentence.strip()})" for t in sorted(unsourced)])
 
 
 # Marqueurs d'un historique raconté. Volontairement large : « comme indiqué précédemment »
@@ -248,5 +260,40 @@ _HISTORY_NARRATION = re.compile(
 def check_no_history_narration(answer: str) -> None:
     """La réponse ne raconte pas l'historique de classification : le code le restitue
     à partir de la ligne Gold « Classification history » (voir answer.py)."""
-    if _HISTORY_NARRATION.search(_clean(answer)):
-        raise GenerationRejectedError("history_narrated")
+    match = _HISTORY_NARRATION.search(_clean(answer))
+    if match:
+        raise GenerationRejectedError("history_narrated", [f"marqueur d'historique : {match.group()}"])
+
+
+def check_not_empty(text: str) -> None:
+    if not text.strip():
+        raise GenerationRejectedError("empty_answer")
+
+
+def verify_answer(text: str, documents: Sequence[RetrievedDocument], citations: Sequence[str],
+                  status: str) -> None:
+    """Chaîne complète des contrôles, dans l'ordre : la seule définition, utilisée par la
+    génération et par le diagnostic hors ligne. Statut `not_in_sources` : le texte libre est
+    contrôlé contre aucun document (sert seulement à consigner un code de rejet)."""
+    check_not_empty(text)
+    if status == "not_in_sources":
+        check_identifiers(text, [], status=status)
+        check_no_history_narration(text)
+        check_significances(text, [])
+        return
+    by_id = {d.doc_id: d for d in documents}
+    check_citations(citations, documents, status)
+    check_identifiers(text, documents, status=status)
+    check_no_history_narration(text)
+    check_significances(text, [by_id[c] for c in citations])
+
+
+def explain_rejection(text: str, documents: Sequence[RetrievedDocument], citations: Sequence[str],
+                      status: str) -> dict | None:
+    """Pourquoi la réponse est rejetée : {"reason": code, "detail": [éléments déclencheurs]},
+    ou None si elle passe. Même chaîne que la génération (verify_answer), aucune divergence."""
+    try:
+        verify_answer(text, documents, citations, status)
+    except GenerationRejectedError as exc:
+        return {"reason": str(exc), "detail": list(exc.detail)}
+    return None

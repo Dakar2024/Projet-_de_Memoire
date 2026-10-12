@@ -83,4 +83,11 @@ class LlmTruncatedError(LlmPermanentError):
 class GenerationRejectedError(Exception):
     """Réponse du LLM de génération refusée par un contrôle déterministe (citation ou
     identifiant hors des documents transmis, signification non sourcée). Interne : la
-    réponse est remplacée par un message fixe, jamais livrée."""
+    réponse est remplacée par un message fixe, jamais livrée.
+
+    Le message reste le code court. `detail` (diagnostic hors ligne uniquement) liste ce qui a
+    déclenché le contrôle : identifiants, termes, phrase portant la négation."""
+
+    def __init__(self, code: str, detail: list[str] | None = None) -> None:
+        super().__init__(code)
+        self.detail: list[str] = list(detail or [])
