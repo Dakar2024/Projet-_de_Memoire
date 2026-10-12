@@ -5,6 +5,10 @@
   rejouer  dans rag-search, SANS appel réseau au LLM : refait la recherche locale (analyses
            lues dans leur cache), repasse chaque génération en cache dans la chaîne de
            contrôles ACTUELLE et écrit records_v2.json
+  diagnostiquer  comme `rejouer` (hors ligne, aucun appel au LLM) : pour chaque réponse
+           `unverifiable` (ou `not_in_sources` au texte retenu et rejeté), explique QUEL identifiant,
+           gène, terme de signification ou négation a déclenché le contrôle ; écrit
+           diagnostic_rejets.json
   evaluer  n'importe où : scores par partie, seuils, rejets listés ; refuse de conclure
            si des questions manquent (`--fichier records_v2.json` pour le rejeu)
 
@@ -454,6 +458,50 @@ def replay_records(questions: list[dict], v1_records: list[dict], *, search, gen
     return out
 
 
+class RecordingReplayClient(ReplayClient):
+    """ReplayClient qui garde le contenu de la dernière génération relue, pour le diagnostic."""
+
+    last_content = None
+
+    def complete_json(self, *args, **kwargs):
+        call = super().complete_json(*args, **kwargs)
+        self.last_content = call.content
+        return call
+
+
+def diagnose_records(questions: list[dict], v1_records: list[dict], *, search, generate, client) -> list[dict]:
+    """Pour chaque question dont la réponse rejouée est rejetée (`unverifiable`, ou
+    `not_in_sources` dont le texte retenu est rejeté), rejoue la chaîne de contrôles sur le
+    texte du LLM relu du cache et consigne les éléments déclencheurs (explain_rejection : même
+    chaîne que la génération). `client.last_content` est le contenu de la dernière génération."""
+    from RAG.src.generation.answer import validate_generation
+    from RAG.src.generation.checks import explain_rejection
+    from RAG.src.utils.errors import LlmUnavailableError
+    by_id = {r["id"]: r for r in v1_records}
+    out: list[dict] = []
+    for q in questions:
+        if q["id"] not in by_id:
+            continue
+        result = search(q["question"])
+        if not result.trace.analysis.available:
+            continue
+        client.last_content = None
+        try:
+            answer = generate(q["question"], result)
+        except (GenerationNotCached, LlmUnavailableError):
+            continue
+        rejected_text = answer.status == "unverifiable" or (answer.status == "not_in_sources" and answer.rejected)
+        if not rejected_text or client.last_content is None:
+            continue
+        status, _reason, text, citations = validate_generation(client.last_content)
+        explanation = explain_rejection(text, result.documents, citations, status)
+        out.append({"id": q["id"], "answer_status": answer.status, "llm_status": status,
+                    "reason": explanation["reason"] if explanation else answer.rejected,
+                    "detail": explanation["detail"] if explanation else [],
+                    "citations": citations, "excerpt": text[:200]})
+    return out
+
+
 def _status_counts(records: list[dict]) -> dict[str, int]:
     counts: dict[str, int] = {}
     for r in records:
@@ -496,11 +544,43 @@ def cmd_rejouer(args) -> None:
                   + (f" [{r['rejected']}]" if r.get("rejected") else ""))
 
 
+def cmd_diagnostiquer(args) -> None:
+    from RAG.src.generation.answer import generate_answer
+    from RAG.src.prompts.generation import GENERATION_PROMPT_SHA
+    from RAG.src.retrieval.retriever import Searcher
+    from RAG.src.utils.config import load_generation_config
+
+    questions = _load_questions()
+    v1 = _load_records(OUT / "records.json")
+    cache_path = OUT / "cache_generation.json"
+    cache = json.loads(cache_path.read_text(encoding="utf-8")) if cache_path.exists() else {}
+    g = load_generation_config()
+    client = RecordingReplayClient(cache, GENERATION_PROMPT_SHA)
+    truth_manifest = json.loads(TRUTH_PATH.read_text(encoding="utf-8"))["manifest"]
+    with Searcher(cache_path=ANALYSIS_CACHE, analysis_client=OfflineAnalysisClient()) as searcher:
+        if searcher.index_doc_ids_sha256() != truth_manifest["gold_doc_ids_sha256"]:
+            raise SystemExit("l'index ne contient pas les documents de la vérité terrain E2a : diagnostic impossible")
+        diagnostics = diagnose_records(
+            questions, v1, search=searcher.search, client=client,
+            generate=lambda q, r: generate_answer(q, r, client=client, profile=g.profile, max_tokens=g.max_tokens))
+    _write_json_atomic(OUT / "diagnostic_rejets.json", diagnostics)
+    by_reason: dict[str, int] = {}
+    for d in diagnostics:
+        by_reason[d["reason"]] = by_reason.get(d["reason"], 0) + 1
+    print(f"{len(diagnostics)} réponse(s) rejetée(s) expliquée(s) : {by_reason}")
+    for d in diagnostics:
+        print(f"\n- {d['id']} [{d['answer_status']}] {d['reason']}")
+        for item in d["detail"]:
+            print(f"    déclencheur : {item}")
+        print(f"    extrait : {d['excerpt']}")
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("lancer").set_defaults(func=cmd_lancer)
     sub.add_parser("rejouer").set_defaults(func=cmd_rejouer)
+    sub.add_parser("diagnostiquer").set_defaults(func=cmd_diagnostiquer)
     evaluer = sub.add_parser("evaluer")
     evaluer.add_argument("--fichier", default="records.json",
                          help="enregistrements à évaluer, relatifs à data/experiments/e2b-recette")
