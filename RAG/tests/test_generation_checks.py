@@ -373,6 +373,7 @@ NON_SPHEROCYTIC = _doc_text("Clinical significance: Pathogenic. "
     "Pathogène, aucun critère fourni.",
     "Pathogène, aucune critères d’évaluation fournies.",
     "Pathogène, ClinVar ne documente pas de phénotypes pour ce variant",
+    "Variants pathogènes : c.5266dup et d'autres variants non listés ici.",
 ])
 def test_clinvar_review_status_phrases_do_not_trigger_the_negation_rule(answer):
     check_significances(answer, [REVIEWED])
@@ -396,6 +397,9 @@ def test_non_spherocytic_disease_name_does_not_trigger_the_negation_rule():
     "Aucun conflit, il n'est pas pathogène.",
     "Aucun conflit : il est non pathogène.",
     "Sans conflit, ce variant n'est pas listé comme pathogène.",
+    "Ce variant non listé ici comme pathogène par ClinVar.",
+    "Ce variant est un des variants non listés ici comme pathogènes.",
+    "Les variants non listés ici comme pathogènes incluent ce variant.",
 ])
 def test_negations_are_still_rejected_next_to_masked_phrases(answer):
     assert _reason(check_significances, answer, [REVIEWED]) == "significance_not_in_sources"

@@ -352,8 +352,8 @@ seulement si :
   masquée, parce que leur négation ne porte jamais sur la signification : « aucun / sans conflit(s) »
   (statut de revue ClinVar « no conflicts »), « aucun critère (d'évaluation) fourni » (« no assertion
   criteria provided »), « ClinVar ne documente pas de phénotype pour ce variant » (phrase imposée par
-  le prompt pour les fiches maigres), « variantes non listées ici / variants non listés ici » (liste
-  tronquée) et « non sphérocytaire » (nom de maladie). « non listé » seul n'est **pas** masqué :
+  le prompt pour les fiches maigres), « d'autres variantes non listées ici » (liste tronquée ; seule cette
+  formule est masquée, et pas si elle est suivie de « comme » ou « en tant ») et « non sphérocytaire » (nom de maladie). « non listé » seul n'est **pas** masqué :
   « Ce variant est non listé comme pathogène » reste rejeté. Un « \n » littéral émis par le modèle
   est ramené à un vrai retour à la ligne avant tout contrôle.
 - **Historique restitué par le code** : le LLM ne raconte jamais l'historique de classification
@@ -584,8 +584,9 @@ rejets : `reference/recette_e2b.md`.
   « phrase » : les puces ne sont pas découpées) est rejetée dès qu'elle contient une négation qui ne
   porte pas sur la signification. Le premier rejeu du 09/10/2026 en a rejeté 7 de la partie 1 à tort,
   à cause de formules sans rapport avec la signification : le statut de revue traduit (« aucun
-  conflit »), la phrase des fiches maigres, « variantes non listées ici », « non sphérocytaire ». Ces
-  formules exactes sont désormais masquées (voir §9.2) ; il reste 2 rejets (P1-B08, P1-C03), dus à
+  conflit »), la phrase des fiches maigres, « d'autres variantes non listées ici », « non sphérocytaire ». Ces
+  formules exactes sont désormais masquées (voir §9.2), sauf B09, restaurée par la seule
+  normalisation du « \n » littéral et non par le masque ; il reste 2 rejets (P1-B08, P1-C03), dus à
   une vraie négation dans la phrase (« ClinVar ne documente pas d'autres variantes … pathogène »,
   « les documents ne mentionnent pas … »), rejet voulu par le sens prudent.
 - **Règles hors périmètre lexicales** : une question peut être détectée à tort (message fixe au lieu
