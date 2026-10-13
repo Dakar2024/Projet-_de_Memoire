@@ -848,3 +848,41 @@ def test_correct_answers_in_markup_pass(answer):
 def test_markup_removal_keeps_the_stars_and_underscores_of_hgvs(text, expected):
     from RAG.src.generation.checks import _answer_text, _text_ids
     assert expected in _text_ids(_answer_text(text))
+
+
+# --- N2 (re-relecture de la vague n° 2) : signification dans la phrase suivante ou après « ; » ---
+@pytest.mark.parametrize("answer", [
+    "Le variant c.4837A>G est cité. Il est pathogène.",
+    "Le variant c.4837A>G (rs1799966) se situe dans BRCA1. Ce variant est classé pathogène.",
+    "Le variant c.4837A>G est décrit ; il est pathogène.",
+    "Le variant c.4837A>G est décrit.\nSignification clinique : pathogène.",
+    "Variant c.4837A>G. Classification : pathogène.",
+    "- c.4837A>G.\n  Signification : pathogène.\n- c.5266dup.\n  Signification : bénin.",
+    "Le variant c.4837A>G (rs1799966) ; signification clinique : pathogène.",
+    "Les variants c.5266dup et c.4837A>G sont décrits. Tous deux sont pathogènes.",
+    "c.5266dup est pathogène ; le variant c.4837A>G aussi.",
+    "Le variant c.5266dup est pathogène. Le variant c.4837A>G l'est également.",
+    "c.5266dup est pathogène. Il en va de même pour c.4837A>G.",
+    "- c.5266dup : pathogène ;\n- c.4837A>G : idem.",
+    "Le variant c.5266dup est pathogène. De même, le variant c.4837A>G est cité.",
+])
+def test_a_significance_carried_to_the_next_sentence_is_still_paired(answer):
+    assert _verdict(answer) == "significance_not_in_sources"
+
+
+@pytest.mark.parametrize("answer", [
+    "Le variant c.5266dup est pathogène. Il est associé au cancer du sein héréditaire.",
+    "Le variant c.5266dup est décrit. Il est pathogène.",
+    "Le variant c.4837A>G est bénin. Le variant c.5266dup est pathogène.",
+    "Le variant c.4837A>G est bénin ; le variant c.5266dup est pathogène.",
+    "- c.5266dup.\n  Signification : pathogène.\n- c.4837A>G.\n  Signification : bénin.",
+    "Le variant c.4837A>G (rs1799966) ; signification clinique : bénin.",
+    "Les variants c.5266dup et c.5123C>A sont décrits. Ils sont pathogène et probablement pathogène.",
+    "c.5266dup est pathogène ; le variant rs80357906 l'est aussi.",
+    "Le variant c.5266dup est pathogène. Le variant c.4837A>G, lui, est bénin.",
+    "Le variant c.4837A>G est décrit. Il se situe dans BRCA1. D'autres variants sont pathogènes.",
+    # Une phrase sans variant ni terme coupe le contexte.
+    "Le variant c.4837A>G est décrit. BRCA1 est un gène suppresseur de tumeur. Ce variant est bénin.",
+])
+def test_correct_answers_spread_over_sentences_pass(answer):
+    assert _verdict(answer) is None

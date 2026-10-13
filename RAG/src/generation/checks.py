@@ -611,19 +611,65 @@ def check_significances(answer: str, cited: Sequence[RetrievedDocument]) -> None
     text = _mask_disease_names(text, cited)
     text = _NEUTRAL_PHRASES.sub(lambda m: " " * len(m.group()), text)
     previous_terms: list = []
+    context: list[str] = []  # variants nommés par la dernière phrase qui en nomme (N2)
     for sentence in _SENTENCES.split(text):
         if previous_terms and _REFUTATION.match(sentence):
             raise GenerationRejectedError(
                 "significance_not_in_sources", [f"réfutation après un terme de signification : {sentence.strip()}"])
         sentence = _mask_truncated_list(sentence)
-        terms = previous_terms = _term_spans(sentence)
+        terms = _term_spans(sentence)
         unsourced = {t for _, t in terms} - current
         if unsourced:
             raise GenerationRejectedError(
                 "significance_not_in_sources",
                 [f"terme absent des documents cités : {t} (phrase : {sentence.strip()})" for t in sorted(unsourced)])
-        if terms:
-            _check_variant_pairing(_unmark(sentence.translate(_TYPOGRAPHY)), terms, keyed)
+        plain = _unmark(sentence.translate(_TYPOGRAPHY))
+        named = [key for _s, _e, key in _mentions(plain) if any(key in ids for ids, _, _ in keyed)]
+        if terms and named:
+            _check_variant_pairing(plain, terms, keyed)
+        elif terms and context and not _ANAPHORA_SKIP.search(sentence):
+            _check_inherited(context, [t for _, t in terms], keyed, sentence)
+        elif named and previous_terms and _SAME.search(sentence):
+            _check_inherited(named, [t for _, t in previous_terms], keyed, sentence)
+        previous_terms = terms
+        if named:
+            context = named
+        elif not terms:
+            context = []
+
+
+# Phrase suivante (re-relecture de la vague n° 2, N2) : l'appariement est fait par phrase, et
+# « ; » coupe aussi. Sans les deux règles ci-dessous, « Le variant X est décrit. Il est
+# pathogène. » ou « Y est pathogène ; le variant X aussi. » livraient la signification d'une
+# autre fiche citée pour X.
+# 1. Une phrase qui porte des termes sans nommer de variant (« Il est pathogène »,
+#    « Signification : pathogène », « Tous deux sont pathogènes ») porte sur les variants
+#    nommés par la dernière phrase qui en nomme ; une phrase sans variant ni terme coupe ce
+#    contexte. Exception : « autres », « plusieurs », « certains » parlent d'autres variants.
+# 2. Une phrase qui nomme des variants sans terme mais avec « aussi », « également », « de
+#    même », « idem », « pareillement » ou « l'est » reprend les termes de la phrase précédente.
+# Sens prudent : une phrase générale qui suit une liste (« Les variants pathogènes de BRCA1
+# augmentent le risque ») est rejetée si l'un des variants de la liste n'a pas ce terme.
+_ANAPHORA_SKIP = re.compile(r"\bautres?\b|\bplusieurs\b|\bcertain", re.IGNORECASE)
+_SAME = re.compile(r"\b(?:aussi|[ée]galement|de\s+m[êe]me|idem|pareillement|l['’]\s*est)\b", re.IGNORECASE)
+
+
+def _check_inherited(variants: list[str], said: list[str], keyed, sentence: str) -> None:
+    """Chaque variant hérité a l'un des termes `said` dans sa fiche, et chaque terme est
+    celui d'au moins un de ces variants (même règle qu'un bloc de termes dans la phrase)."""
+    def significances(key: str) -> set[str]:
+        return {sig for ids, sigs, _ in keyed if key in ids for sig in sigs}
+
+    for key in variants:
+        if not significances(key) & set(said):
+            raise GenerationRejectedError("significance_not_in_sources", [
+                f"signification non conforme à la fiche du variant {key} (phrase voisine) : {', '.join(said)} "
+                f"(fiche : {', '.join(sorted(significances(key))) or 'aucune'} ; phrase : {sentence.strip()})"])
+    for term in said:
+        if not any(term in significances(key) for key in variants):
+            raise GenerationRejectedError("significance_not_in_sources", [
+                f"signification non conforme aux variants de la phrase voisine : {term} "
+                f"(variants : {', '.join(variants)} ; phrase : {sentence.strip()})"])
 
 
 # Marqueurs d'un historique raconté. Volontairement large : « comme indiqué précédemment »
