@@ -493,3 +493,33 @@ def test_a_label_lookalike_copied_from_the_documents_is_not_a_label():
 def test_real_variation_id_of_the_card_is_still_accepted_and_the_internal_id_rejected():
     check_identifiers("Variant (ClinVar 17677) pathogène.", [doc()])
     assert _reason(check_identifiers, "Variant (ClinVar 32716).", [doc()]) == "identifier_not_in_sources"
+
+
+# --- « pas de conflit » (statut de revue) et termes de signification dans un nom de maladie ---
+
+@pytest.mark.parametrize("answer", [
+    "Variant pathogène, statut de revue : critères fournis, plusieurs contributeurs, pas de conflit.",
+    "Variant pathogène (pas de conflits).",
+    "Variant pathogène, pas de conflit d'interprétation.",
+    "Variant pathogène, Pas de conflits d’interprétations.",
+    "Variant pathogène, sans conflit d'interprétation.",
+    "Variant pathogène, aucun conflit d'interprétation.",
+])
+def test_no_conflict_forms_of_the_review_status_do_not_trigger_the_negation_rule(answer):
+    check_significances(answer, [REVIEWED])
+
+
+@pytest.mark.parametrize("answer", [
+    "Pas de conflit, il n'est pas pathogène.",
+    "Pas de conflit : il est non pathogène.",
+    "Pas de conflit d'interprétation, ce variant n'est pas listé comme pathogène.",
+    "Sans conflits, ce variant est bénin.",
+    "Pas de conflit, ce variant est pathogène mais pas selon un laboratoire.",
+    "Ce variant n'est pas pathogène, pas de conflit.",
+    "Pas de conflit.",  # sans terme de signification : rien à contrôler, mais aucune régression
+])
+def test_no_conflict_mask_covers_only_the_phrase_itself(answer):
+    if answer == "Pas de conflit.":
+        check_significances(answer, [REVIEWED])
+        return
+    assert _reason(check_significances, answer, [REVIEWED]) == "significance_not_in_sources"
