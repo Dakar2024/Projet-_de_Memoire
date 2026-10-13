@@ -359,7 +359,10 @@ seulement si :
   En statut `answered` / `partial`, tout identifiant **de variant** (rs, c., p., Variation ID) doit en
   plus appartenir à un document **cité** (`identifier_not_cited`) : sinon le variant d'une fiche
   transmise mais non citée pourrait recevoir la signification d'une autre fiche, citée. Les gènes
-  peuvent venir de n'importe quel texte transmis.
+  peuvent venir de n'importe quel texte transmis. Les graphies voisines sont ramenées à la forme
+  extraite avant le contrôle : « dbSNP 80357999 », « rs-12345 », « p.(Gln1756Profs*74) »,
+  « c. 5266dup », « c.5266 dup » ; un HGVS mitochondrial (« m.3243A>G ») absent des textes transmis
+  est rejeté.
 - **Signification actuelle** : chaque terme de signification **reconnu** par le contrôle (termes de
   la table, en français ou en anglais) doit être une signification actuelle d'un document cité ; le
   contrôle reste **lexical** et n'attrape que les formulations qu'il connaît (limites : §9.11). Est
@@ -377,7 +380,8 @@ seulement si :
   pas pathogène » reste rejeté), « aucun critère (d'évaluation) fourni » (« no assertion
   criteria provided »), « ClinVar ne documente pas de phénotype pour ce variant » (phrase imposée par
   le prompt pour les fiches maigres), « d'autres variantes non listées ici » (liste tronquée ; seule cette
-  formule est masquée, et pas si elle est suivie de « comme » ou « en tant ») et « non sphérocytaire » (nom de maladie). **Noms de maladie** : un terme de signification inclus dans
+  formule est masquée, et pas si elle est suivie de « comme » ou « en tant », ni d'un terme de
+  signification dans la même phrase : « d'autres variantes non listées ici sont pathogènes » est rejeté) et « non sphérocytaire » (nom de maladie). **Noms de maladie** : un terme de signification inclus dans
   un nom de maladie ou de phénotype des documents **cités** (lignes `Associated conditions` /
   `Related phenotypes`), recopié mot pour mot (insensible à la casse, au moins deux mots), n'est pas
   compté ; seule cette portion exacte est neutralisée (une traduction du modèle, comme « excroissances
