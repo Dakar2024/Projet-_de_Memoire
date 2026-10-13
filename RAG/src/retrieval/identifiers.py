@@ -111,3 +111,16 @@ def extract_identifiers(question: str) -> Identifiers:
     suspects += [match.group(1) for match in coding if match.group(1)]
     out_of_panel = _unique(token for token in suspects if token.upper() not in _PANEL)
     return Identifiers(rs=rs, hgvs_c=hgvs_c, hgvs_p=hgvs_p, genes=genes, out_of_panel=out_of_panel)
+
+
+def variant_spans(text: str) -> list[tuple[int, int, str]]:
+    """Début, fin et forme normalisée (« rs123 », « c.… », « p.… ») de chaque identifiant de
+    variant du texte, dans l'ordre d'apparition. Mêmes motifs et mêmes normalisations
+    qu'extract_identifiers : sert aux contrôles de la génération, qui doivent relier une
+    signification au variant nommé à côté d'elle."""
+    spans = [(m.start(), m.end(), f"rs{int(m.group(1))}") for m in _RS.finditer(text)]
+    spans += [(m.start(), m.end(), _normalize_c(m.group(2))) for m in _HGVS_C.finditer(text)]
+    spans += [(m.start(), m.end(), _normalize_p3(m.group(1))) for m in _HGVS_P3.finditer(text)]
+    spans += [(m.start(), m.end(), f"p.{_AA3[m.group(1)]}{m.group(2)}{_AA3[m.group(3)]}")
+              for m in _HGVS_P1.finditer(text)]
+    return sorted(spans)

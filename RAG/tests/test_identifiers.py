@@ -119,3 +119,15 @@ def test_genes_keep_their_order_of_appearance_with_a_prefix():
     ids = extract_identifiers("HBB puis NM_007294.4(BRCA1):c.68_69delAG et brca2")
 
     assert ids.genes == ("HBB", "BRCA1", "BRCA2")
+
+
+def test_variant_spans_give_positions_and_normalized_forms():
+    from RAG.src.retrieval.identifiers import variant_spans
+    text = "NM_007294.4(BRCA1):c.5266dupC (p.Gln1756fs), rs80357906 ; p.R1443*"
+    spans = variant_spans(text)
+    assert [form for _, _, form in spans] == ["c.5266dup", "p.Gln1756fs", "rs80357906", "p.Arg1443Ter"]
+    assert spans == sorted(spans)
+    assert [text[start:end].rstrip(")") for start, end, _ in spans][1:3] == ["p.Gln1756fs", "rs80357906"]
+    # Formes identiques à celles d'extract_identifiers.
+    ids = extract_identifiers(text)
+    assert {f for _, _, f in spans} == {f"rs{r}" for r in ids.rs} | set(ids.hgvs_c) | set(ids.hgvs_p)
