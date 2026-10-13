@@ -523,3 +523,48 @@ def test_no_conflict_mask_covers_only_the_phrase_itself(answer):
         check_significances(answer, [REVIEWED])
         return
     assert _reason(check_significances, answer, [REVIEWED]) == "significance_not_in_sources"
+
+
+BENIGN_NAME = _doc_text(
+    "Clinical significance: Pathogenic.\nAssociated conditions: Benign familial hematuria (OMIM 141200, "
+    "inheritance: Autosomal dominant); Cowden syndrome.\nRelated phenotypes (HPO): Hematuria; Benign "
+    "hereditary chorea.")
+
+
+@pytest.mark.parametrize("answer", [
+    "Variant pathogène associé à Benign familial hematuria et au syndrome de Cowden.",
+    "Variant pathogène, condition : benign familial hematuria.",
+    "Variant pathogène, phénotypes : Hematuria, Benign hereditary chorea.",
+    "Variant pathogène associé à BENIGN  FAMILIAL   HEMATURIA.",
+])
+def test_a_significance_term_inside_a_verbatim_disease_name_is_not_counted(answer):
+    check_significances(answer, [BENIGN_NAME])
+
+
+@pytest.mark.parametrize("answer", [
+    "Ce variant est bénin et associé à Benign familial hematuria.",
+    "Variant pathogène associé à Benign familial hematuria ; il est bénin.",
+    "Variant pathogène, condition : Benign familial.",  # nom incomplet : non neutralisé
+    "Variant pathogène, condition : syndrome familial bénin d'hématurie.",  # traduction : non neutralisée
+    "Variant pathogène, condition : Benign.",  # un mot isolé ne neutralise rien
+    "Variant pathogène associé à Benign familial hematuria, qui n'est pas bénin.",
+    "Variant pathogène associé à non-Benign familial hematuria.",
+])
+def test_only_the_exact_disease_name_portion_is_neutralised(answer):
+    assert _reason(check_significances, answer, [BENIGN_NAME]) == "significance_not_in_sources"
+
+
+def test_a_disease_name_of_an_uncited_document_neutralises_nothing():
+    other = _doc_text("Clinical significance: Pathogenic.", doc_id="clinvar:2")
+    assert _reason(check_significances, "Variant pathogène associé à Benign familial hematuria.",
+                   [other]) == "significance_not_in_sources"
+
+
+def test_the_translated_name_of_case_c20_stays_rejected():
+    # P1-C20 : « excroissances bénignes » est une traduction du modèle, absente des fiches
+    # (Macrocephaly-autism syndrome) : correctement rejetée, la règle ne porte que sur le mot à mot.
+    d = _doc_text("Clinical significance: Uncertain significance. Associated conditions: Macrocephaly-autism "
+                  "syndrome; Cowden syndrome.", sig="Uncertain significance", gene="PTEN")
+    answer = ("Variantes de signification incertaine, associées au syndrome d'excroissances bénignes avec "
+              "macrocéphalie (Macrocephaly-autism syndrome).")
+    assert _reason(check_significances, answer, [d]) == "significance_not_in_sources"
