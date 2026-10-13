@@ -186,10 +186,17 @@ def create_app(pipeline_factory: Callable[[], object] | None = None, *, api_conf
             # Le drapeau précède la fermeture : un fil encore actif qui rend son emplacement
             # après coup sait que l'erreur de `release` vient de l'arrêt.
             app.state.closing.set()
-            try:
-                pipeline.__exit__(None, None, None)
-            finally:
-                app.state.executor.shutdown(wait=False)
+            # Les fils actifs sont attendus AVANT de fermer les connexions : psycopg ferme une
+            # connexion sans prendre son verrou, alors qu'un fil peut être dans libpq. Attente
+            # bornée par le délai d'une question ; au-delà (fil bloqué), fermeture quand même,
+            # consignée, et le rendu tardif est toléré (release_after_shutdown).
+            waiter = threading.Thread(target=app.state.executor.shutdown,
+                                      kwargs={"wait": True, "cancel_futures": True}, daemon=True)
+            waiter.start()
+            await asyncio.get_running_loop().run_in_executor(None, waiter.join, config.request_timeout_s)
+            if waiter.is_alive():
+                log_event(event="shutdown_threads_active")
+            pipeline.__exit__(None, None, None)
 
     configure_logging()
     return Litestar(
