@@ -83,3 +83,19 @@ def test_gateway_body_limit_matches_the_api_limit():
              for name in ("client_max_body_size", "client_body_buffer_size")}
     assert sizes == {"client_max_body_size": [api], "client_body_buffer_size": [api]}
     assert _nginx_size("8k") == 8192 and _nginx_size("1M") == 1048576
+
+
+def _seconds(value: str) -> int:
+    """Durée Compose simple (« 250s », « 4m10s ») en secondes."""
+    parts = re.fullmatch(r"(?:(\d+)m)?(?:(\d+)s)?", value)
+    assert parts and value, value
+    return int(parts.group(1) or 0) * 60 + int(parts.group(2) or 0)
+
+
+def test_api_stop_grace_period_covers_the_shutdown_wait():
+    """Re-relecture de la vague n° 2, N7 : à l'arrêt, uvicorn laisse finir les requêtes en cours
+    (chacune bornée par api.request_timeout_s), puis le lifespan attend les fils actifs au plus
+    request_timeout_s avant de fermer les connexions. Sans délai suffisant, Docker tue le
+    processus au bout de 10 s (SIGKILL) et cette attente n'a jamais lieu."""
+    timeout = yaml.safe_load((ROOT / "RAG" / "config.yaml").read_text(encoding="utf-8"))["api"]["request_timeout_s"]
+    assert _seconds(SERVICES["rag-api"]["stop_grace_period"]) >= 2 * timeout + 5
