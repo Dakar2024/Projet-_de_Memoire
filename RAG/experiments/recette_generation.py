@@ -476,6 +476,7 @@ def diagnose_records(questions: list[dict], v1_records: list[dict], *, search, g
     chaîne que la génération). `client.last_content` est le contenu de la dernière génération."""
     from RAG.src.generation.answer import validate_generation
     from RAG.src.generation.checks import explain_rejection
+    from RAG.src.generation.context import resolve_citations
     from RAG.src.utils.errors import LlmUnavailableError
     by_id = {r["id"]: r for r in v1_records}
     out: list[dict] = []
@@ -494,7 +495,8 @@ def diagnose_records(questions: list[dict], v1_records: list[dict], *, search, g
         if not rejected_text or client.last_content is None:
             continue
         status, _reason, text, citations = validate_generation(client.last_content)
-        explanation = explain_rejection(text, result.documents, citations, status)
+        explanation = explain_rejection(text, result.documents,
+                                        resolve_citations(citations, result.documents), status)
         out.append({"id": q["id"], "answer_status": answer.status, "llm_status": status,
                     "reason": explanation["reason"] if explanation else answer.rejected,
                     "detail": explanation["detail"] if explanation else [],
