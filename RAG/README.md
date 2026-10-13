@@ -350,8 +350,10 @@ seulement si :
   (`citation_not_transmitted`), jamais une erreur. La liste affichée des sources vient du code.
 - **Étiquette dans le texte** : une étiquette `Dk` transmise écrite dans la réponse est **rejetée**
   (`document_label_in_text`), non retirée : un retrait par le code pourrait laisser une phrase tronquée
-  ou en changer le sens. Exception : un symbole identique présent tel quel dans les fiches
-  (« complementation group D1 »). Le Variation ID réel de la fiche reste accepté s'il est écrit.
+  ou en changer le sens. Seuls les emplois en référence sont rejetés : entre parenthèses ou crochets,
+  seule ou en liste (« (D1) », « [D2] », « (D1, D2) », « (voir D2) »), derrière un mot de renvoi
+  (document, source, fiche, voir, selon, cf.), ou en tête de phrase suivie de « : » ; espace (« D 1 ») et
+  casse (« d1 ») compris. Le vocabulaire médical (« cycline D1 », « vitamine D3 », « groupe D ») passe. Le Variation ID réel de la fiche reste accepté s'il est écrit.
 - **Identifiants** : tout identifiant du texte (rs, HGVS c./p., identifiant ClinVar, gène) est présent
   dans un document cité ou dans les textes transmis ; un identifiant inventé rejette la réponse.
 - **Signification actuelle** : toute signification clinique affirmée est celle du document cité ; une
@@ -373,7 +375,9 @@ seulement si :
   est ramené à un vrai retour à la ligne avant tout contrôle.
 - **Historique restitué par le code** : le LLM ne raconte jamais l'historique de classification
   (« auparavant », « reclassé », « jusqu'en 2019 » sont rejetés) ; le code ajoute lui-même une phrase
-  « Historique ClinVar … » depuis la ligne `Classification history` du Gold.
+  « Historique ClinVar … » depuis la ligne `Classification history` du Gold. Le variant y est désigné par
+  son nom HGVS (`hgvs_c`, sinon `hgvs_p`) et son « Variation ID » ClinVar, issus de la fiche ; l'AlleleID
+  interne (`doc_id`) n'est jamais affiché ; sans l'un ni l'autre, la phrase n'a pas de parenthèse.
 - **Hors périmètre détecté par règles, avant le LLM** (`RAG/src/generation/scope.py`) : comptage
   (« combien », « liste complète », « le plus de », « liste les », « inventaire », « l'ensemble des
   variants »…), ACMG (« ACMG », codes PVS1, PM2, « American College of Medical Genetics », « grille de
