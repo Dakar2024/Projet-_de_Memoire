@@ -661,6 +661,9 @@ services:
 # RAG — proxy sortant filtrant (Squid) : seule sortie Internet du RAG
 #----------------------------------
   rag-proxy:
+    # Image Squid de Canonical (Ubuntu 24.04 LTS), canal « edge » ; le tag annonce 6.6, le binaire
+    # vérifié est Squid 6.14. Seule l'empreinte compte : à rafraîchir à chaque avis de sécurité
+    # Squid (procédure : RAG/README.md §9.7).
     image: ubuntu/squid:6.6-24.04_edge@sha256:8a3baed477e2c282ab8aa5edad442f69873246964f225c5c2ae8364b6610963c
     container_name: genomique-rag-proxy
     restart: unless-stopped
