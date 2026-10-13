@@ -61,10 +61,17 @@ _NO_ANSWER = {"not_in_sources", "out_of_scope"}
 
 
 def _write_json_atomic(path: Path, data) -> None:
-    """Écriture atomique : un arrêt en cours d'écriture ne corrompt jamais le fichier."""
+    """Écriture atomique : un arrêt du processus en cours d'écriture ne corrompt jamais le
+    fichier (os.replace), et le contenu est vidé sur disque (fsync) avant le remplacement, pour
+    qu'une coupure de courant ne laisse pas un fichier remplacé mais vide. Le répertoire n'est
+    pas synchronisé : après une coupure, on peut retrouver l'ancienne version, jamais un fichier
+    tronqué."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".part")
-    tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(json.dumps(data, ensure_ascii=False))
+        f.flush()
+        os.fsync(f.fileno())
     os.replace(tmp, path)
 
 

@@ -531,3 +531,20 @@ def test_diagnose_explains_the_trigger_of_each_rejection_without_network():
     assert d["reason"] == "significance_not_in_sources" and d["answer_status"] == "unverifiable"
     assert any("n'est pas bénin" in item for item in d["detail"])
     assert d["excerpt"].startswith("Le variant rs80357906") and len(d["excerpt"]) <= 200
+
+
+def test_atomic_write_flushes_to_disk_before_replacing(tmp_path, monkeypatch):
+    """Revue finale n° 2, m5 : os.replace seul protège d'un arrêt du processus, pas d'une coupure
+    de courant ; le fichier temporaire est vidé sur disque (fsync) avant le remplacement."""
+    import os
+
+    from RAG.experiments import recette_generation as R
+    calls = []
+    real_fsync, real_replace = os.fsync, os.replace
+    monkeypatch.setattr(R.os, "fsync", lambda fd: (calls.append("fsync"), real_fsync(fd))[1])
+    monkeypatch.setattr(R.os, "replace", lambda a, b: (calls.append("replace"), real_replace(a, b))[1])
+    target = tmp_path / "records.json"
+    R._write_json_atomic(target, {"a": "é"})
+    assert calls[:2] == ["fsync", "replace"]
+    assert target.read_text(encoding="utf-8") == '{"a": "é"}'
+    assert not (tmp_path / "records.json.part").exists()
