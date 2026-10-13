@@ -16,9 +16,10 @@ import html
 import re
 import unicodedata
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 from RAG.src.generation.messages import SIGNIFICANCE_FR, significance_terms_fr, translate_significance
-from RAG.src.retrieval.identifiers import extract_identifiers
+from RAG.src.retrieval.identifiers import extract_identifiers, variant_spans
 from RAG.src.retrieval.retriever import RetrievedDocument
 from RAG.src.utils.errors import GenerationRejectedError
 
@@ -57,32 +58,61 @@ def check_citations(citations: Sequence[str], documents: Sequence[RetrievedDocum
         raise GenerationRejectedError("no_citation")
 
 
-def _identifiers_of(texts: Sequence[str]) -> tuple[set, set, set]:
-    rs, c, p = set(), set(), set()
-    for text in texts:
-        ids = extract_identifiers(text)
-        rs |= set(ids.rs)
-        c |= set(ids.hgvs_c)
-        p |= set(ids.hgvs_p)
-    return rs, c, p
+@dataclass(frozen=True)
+class _VariantIds:
+    """Identifiants de variant d'un texte ou d'un document, sous forme normalisée
+    (« rs123 », « c.… », « p.… », Variation ID en chiffres)."""
+    rs: frozenset = frozenset()
+    c: frozenset = frozenset()
+    p: frozenset = frozenset()
+    vid: frozenset = frozenset()
+
+    def __or__(self, other: "_VariantIds") -> "_VariantIds":
+        return _VariantIds(self.rs | other.rs, self.c | other.c, self.p | other.p, self.vid | other.vid)
+
+    def __contains__(self, key: str) -> bool:
+        return key in self.rs or key in self.c or key in self.p or key in self.vid
+
+
+def _text_ids(text: str) -> _VariantIds:
+    ids = extract_identifiers(text)
+    return _VariantIds(frozenset(f"rs{r}" for r in ids.rs), frozenset(ids.hgvs_c), frozenset(ids.hgvs_p),
+                       frozenset(_VARIATION_ID.findall(text)))
+
+
+def _doc_ids(d: RetrievedDocument) -> _VariantIds:
+    """Identifiants que porte un document : ceux de son texte et ceux de ses champs."""
+    fields = _VariantIds(frozenset({f"rs{d.rs_dbsnp}"} if d.rs_dbsnp is not None else ()),
+                         frozenset({d.hgvs_c} if d.hgvs_c else ()), frozenset({d.hgvs_p} if d.hgvs_p else ()),
+                         frozenset({d.clinvar_variation_id} if d.clinvar_variation_id else ()))
+    return _text_ids(d.text) | fields
+
+
+def _docs_ids(documents: Sequence[RetrievedDocument]) -> _VariantIds:
+    out = _VariantIds()
+    for d in documents:
+        out |= _doc_ids(d)
+    return out
+
+
+def _missing(found: _VariantIds, allowed: _VariantIds) -> list[str]:
+    return (sorted(found.rs - allowed.rs, key=lambda r: r[2:]) + sorted(found.c - allowed.c)
+            + sorted(found.p - allowed.p) + [f"ClinVar {v}" for v in sorted(found.vid - allowed.vid)])
+
+
+def _answer_text(answer: str) -> str:
+    """Réponse prête pour l'extraction des identifiants : nettoyée, typographie française
+    (guillemets, apostrophe, espaces insécables) ramenée à des espaces."""
+    return _clean(answer).translate(_TYPOGRAPHY)
 
 
 def check_identifiers(answer: str, documents: Sequence[RetrievedDocument], status: str = "answered") -> None:
     """Tout identifiant de la réponse (rs, HGVS, ClinVar, gène) figure dans les documents
     transmis. La typographie française (guillemets, apostrophe, espaces insécables) est
     ramenée à des espaces avant extraction : elle ne doit pas cacher un identifiant inventé."""
-    answer = _clean(answer).translate(_TYPOGRAPHY)
-    allowed_rs, allowed_c, allowed_p = _identifiers_of([d.text for d in documents])
-    allowed_rs |= {d.rs_dbsnp for d in documents if d.rs_dbsnp is not None}
-    allowed_c |= {d.hgvs_c for d in documents if d.hgvs_c}
-    allowed_p |= {d.hgvs_p for d in documents if d.hgvs_p}
-    allowed_vid = {d.clinvar_variation_id for d in documents if d.clinvar_variation_id}
-    for d in documents:
-        allowed_vid |= set(_VARIATION_ID.findall(d.text))
+    answer = _answer_text(answer)
     found = extract_identifiers(answer)
-    offending = ([f"rs{r}" for r in sorted(set(found.rs) - allowed_rs, key=str)]
-                 + sorted(set(found.hgvs_c) - allowed_c) + sorted(set(found.hgvs_p) - allowed_p)
-                 + [f"ClinVar {v}" for v in sorted(set(_VARIATION_ID.findall(answer)) - allowed_vid)])
+    offending = _missing(_text_ids(answer), _docs_ids(documents))
     if offending:
         raise GenerationRejectedError("identifier_not_in_sources", offending)
     if status in _PANEL_STATUSES:
@@ -95,6 +125,17 @@ def check_identifiers(answer: str, documents: Sequence[RetrievedDocument], statu
         unknown_genes = (set(found.genes) | set(found.out_of_panel)) - allowed_genes
         if unknown_genes:
             raise GenerationRejectedError("identifier_not_in_sources", [f"gène {g}" for g in sorted(unknown_genes)])
+
+
+def check_identifiers_cited(answer: str, cited: Sequence[RetrievedDocument]) -> None:
+    """Statuts `answered` / `partial` : tout identifiant DE VARIANT de la réponse (rs, c., p.,
+    Variation ID) appartient à un document CITÉ. Sinon un variant d'une fiche transmise mais non
+    citée pourrait recevoir la signification d'une autre fiche, citée, sans que rien ne le
+    relie à sa propre fiche (revue finale n° 2, C1). Les gènes restent contrôlés contre les
+    textes transmis (check_identifiers)."""
+    offending = _missing(_text_ids(_answer_text(answer)), _docs_ids(cited))
+    if offending:
+        raise GenerationRejectedError("identifier_not_cited", offending)
 
 
 # Une étiquette (D1, « D 1 », « d1 ») n'est une référence que dans trois emplois : entre
@@ -205,27 +246,32 @@ def _negated(text: str, start: int) -> bool:
     return any(word in _NEGATIONS for word in words)
 
 
-def _terms_in(sentence: str) -> set[str]:
-    """Termes de signification d'une phrase, sans double compte. Une négation dans la phrase
-    (n'importe où) la rend invérifiable dès qu'elle porte un terme (conservateur)."""
-    found: set[str] = set()
+def _term_spans(sentence: str) -> list[tuple[int, str]]:
+    """Termes de signification d'une phrase avec leur position, sans double compte. Une
+    négation dans la phrase (n'importe où) la rend invérifiable dès qu'elle porte un terme
+    (conservateur)."""
+    found: list[tuple[int, str]] = []
     remaining = sentence
     for term, pattern in _TERMS:
         for match in pattern.finditer(remaining):
             if _negated(sentence, match.start()):
                 raise GenerationRejectedError(
                     "significance_not_in_sources", [f"négation devant « {match.group()} » : {sentence.strip()}"])
-            found.add(term)
+            found.append((match.start(), term))
         remaining = pattern.sub(lambda m: " " * len(m.group()), remaining)
     # « incertain » isolé, sous toutes ses formes, vaut « signification incertaine » (« Sa
     # signification clinique est encore incertaine », « classé incertain »).
-    if re.search(r"\bincertain\w*", remaining, re.IGNORECASE):
-        found.add("signification incertaine")
+    for match in re.finditer(r"\bincertain\w*", remaining, re.IGNORECASE):
+        found.append((match.start(), "signification incertaine"))
     negation = _SENTENCE_NEGATION.search(sentence.replace("’", "'")) if found else None
     if negation:
         raise GenerationRejectedError(
             "significance_not_in_sources", [f"négation « {negation.group()} » dans la phrase : {sentence.strip()}"])
-    return found
+    return sorted(found)
+
+
+def _terms_in(sentence: str) -> set[str]:
+    return {term for _, term in _term_spans(sentence)}
 
 
 def _labels_in(text: str) -> set[str]:
@@ -283,17 +329,162 @@ def _translated(labels: set[str]) -> set[str]:
     return out
 
 
+def _current(d: RetrievedDocument) -> set[str]:
+    """Significations actuelles d'un document, en français : champ `clinical_significance` et
+    ligne « Clinical significance » (jamais la ligne « Classification history »)."""
+    labels = {d.clinical_significance} if d.clinical_significance else set()
+    for match in _CURRENT_LINE.finditer(d.text):
+        labels |= _labels_in(match.group(1))
+    return _translated(labels)
+
+
+def _mentions(sentence: str) -> list[tuple[int, int, str]]:
+    """Identifiants de variant d'une phrase (début, fin, forme) : rs, c., p. et Variation ID."""
+    spans = variant_spans(sentence) + [(m.start(), m.end(), m.group(1)) for m in _VARIATION_ID.finditer(sentence)]
+    return sorted(spans)
+
+
+_RESPECTIVELY = re.compile(r"\brespectivement\b", re.IGNORECASE)
+# Terme placé dans une parenthèse ouverte juste après le variant : « W (signification incertaine) ».
+_INSIDE_PARENTHESIS = re.compile(r"[(\[][^()\[\]]*$")
+_OTHERS = re.compile(r"\bautres?\b", re.IGNORECASE)
+_TERM_BREAK = re.compile(r"[()\[\]]|\bautres?\b", re.IGNORECASE)
+
+
+def _check_variant_pairing(sentence: str, terms: list[tuple[int, str]],
+                           keyed: Sequence[tuple[_VariantIds, set[str], str]]) -> None:
+    """Relie chaque terme de signification au(x) variant(s) nommé(s) à côté de lui dans la phrase.
+
+    Les identifiants d'une même fiche qui se suivent (« c.4837A>G (p.Ser1613Gly, rs1799966) »)
+    forment un variant. La phrase est découpée, dans l'ordre, en blocs alternés : suites de
+    variants et suites de termes (« pathogène », « pathogène ou probablement pathogène »).
+
+    1. Signification propre : un bloc de termes porte sur la suite de variants qui le PRÉCÈDE
+       (« X : pathogène », « X est pathogène, tandis que Y est bénin », « X, Y et Z sont
+       pathogènes ») ; placé dans une parenthèse ouverte juste après un variant (« X, Y, W
+       (signification incertaine) »), sur ce seul variant. Chaque variant visé doit avoir l'un
+       des termes du bloc parmi les significations actuelles de sa fiche citée, et chaque terme
+       doit être celui d'au moins un des variants visés. Avec « respectivement » et autant de
+       termes que de variants, appariement dans l'ordre.
+    2. En-tête : un bloc de termes en tête de phrase, sans variant avant lui (« Les variants
+       pathogènes sont X, Y », « répertoriés comme pathogènes sont : - X – probablement
+       pathogène »), vaut pour les variants de la phrase qui n'ont pas de signification propre.
+    3. Sans en-tête, un variant sans signification propre reçoit celle du bloc « d'autres … »
+       qui le suit (« X et d'autres variants pathogènes »), sinon celle du bloc de termes qui le
+       précède (« X est pathogène, de même que Y »).
+    4. Un bloc de termes détaché du précédent par une parenthèse vise les mêmes variants
+       (« X : pathogène (bénin selon …) ») ; détaché par « autres », il porte sur des variants
+       non nommés (« W (bénin) et d'autres variantes probablement pathogènes ») et reste soumis
+       à la seule règle des documents cités.
+
+    Raison du sens « termes après le variant » : c'est la forme de toutes les listes acceptées
+    de la recette ; regarder des deux côtés laisserait passer une permutation entre voisins
+    (« X1 pathogène, X2 bénin, X3 pathogène » avec X2 et X3 inversés). Sens prudent : une
+    construction mêlée (« le variant pathogène X et le variant bénin Y ») est rejetée.
+
+    `keyed` : pour chaque document cité, (identifiants, significations actuelles, doc_id)."""
+
+    def docs_of(key: str) -> frozenset[str]:
+        return frozenset(doc_id for ids, _, doc_id in keyed if key in ids)
+
+    def significances(variant: list[str]) -> set[str]:
+        return {sig for key in variant for ids, sigs, _ in keyed if key in ids for sig in sigs}
+
+    def reject(variant: list[str], said) -> None:
+        raise GenerationRejectedError("significance_not_in_sources", [
+            f"signification non conforme à la fiche du variant {variant[0]} : {', '.join(said)} "
+            f"(fiche : {', '.join(sorted(significances(variant))) or 'aucune'} ; phrase : {sentence.strip()})"])
+
+    def check(variants: list[list[str]], group: list[str], *, every_term: bool) -> None:
+        for variant in variants:
+            if not significances(variant) & set(group):
+                reject(variant, group)
+        if every_term:
+            for term in group:
+                if not any(term in significances(v) for v in variants):
+                    reject(variants[-1], [term])
+
+    # Un identifiant qu'aucune fiche citée ne porte relève des contrôles d'identifiants
+    # (check_identifiers_cited, appelé avant dans verify_answer) : ignoré ici.
+    mentions = [(start, end, key) for start, end, key in _mentions(sentence) if docs_of(key)]
+    if not mentions:
+        return
+    events = sorted([(start, end, "v", key) for start, end, key in mentions]
+                    + [(pos, pos, "t", term) for pos, term in terms])
+    # Blocs : ("v", [variants], [début de chaque variant]) ou ("t", [termes], [position de chaque terme]).
+    blocks: list[list] = []
+    for start, _end, kind, value in events:
+        # Deux termes séparés par une parenthèse ou par « autres » ne forment pas un même bloc :
+        # « W (bénin) et d'autres variantes probablement pathogènes ».
+        split = (kind == "t" and blocks and blocks[-1][0] == "t"
+                 and _TERM_BREAK.search(sentence[blocks[-1][2][-1]:start]))
+        if not blocks or blocks[-1][0] != kind or split:
+            blocks.append([kind, [], []])
+        block = blocks[-1]
+        if kind == "t":
+            block[1].append(value)
+            block[2].append(start)
+        elif block[1] and docs_of(value) & docs_of(block[1][-1][-1]):
+            block[1][-1].append(value)
+        else:
+            block[1].append([value])
+            block[2].append(start)
+    header = blocks[0][1] if blocks[0][0] == "t" else None
+    own: set[int] = set()  # variants (id()) ayant une signification propre
+    others: dict[int, list[str]] = {}  # suite de variants -> bloc « d'autres … » qui la suit
+    scopes: dict[int, list[list[str]]] = {}  # bloc de termes -> variants visés
+    for i, (kind, group, positions) in enumerate(blocks):
+        if kind != "t" or i == 0:
+            continue
+        if blocks[i - 1][0] == "t":
+            # Bloc détaché du précédent par une parenthèse (« X : pathogène (bénin) ») : mêmes
+            # variants que lui ; détaché par « autres » : d'autres variants, non nommés (règle
+            # des documents cités seulement).
+            previous = scopes.get(i - 1)
+            if previous and not _OTHERS.search(sentence[blocks[i - 1][2][-1]:positions[0]]):
+                scopes[i] = previous
+                check(previous, group, every_term=True)
+            continue
+        _, variants, starts = blocks[i - 1]
+        between = sentence[starts[-1]:positions[0]]
+        last_end = max(end for start, end, _ in mentions if starts[-1] <= start < positions[0])
+        if _OTHERS.search(sentence[last_end:positions[0]]):
+            # « X et d'autres duplications de signification incertaine » : le terme porte sur
+            # d'autres variants, non nommés ; X reçoit l'en-tête, à défaut ce bloc (« X et
+            # d'autres variants pathogènes » : X doit être pathogène).
+            others[i - 1] = group
+            continue
+        if _INSIDE_PARENTHESIS.search(between):
+            variants = variants[-1:]
+        scopes[i] = variants
+        own |= {id(v) for v in variants}
+        if _RESPECTIVELY.search(sentence) and len(group) >= 2 and len(group) == len(variants):
+            for variant, term in zip(variants, group):
+                if term not in significances(variant):
+                    reject(variant, [term])
+            continue
+        check(variants, group, every_term=True)
+    previous_terms = None
+    for i, (kind, group, _) in enumerate(blocks):
+        if kind == "t":
+            previous_terms = group
+            continue
+        orphans = [v for v in group if id(v) not in own]
+        governing = header if header is not None else others.get(i, previous_terms)
+        if orphans and governing is not None:
+            check(orphans, governing, every_term=False)
+
+
 def check_significances(answer: str, cited: Sequence[RetrievedDocument]) -> None:
     """Chaque signification de la réponse est la signification actuelle d'un document cité
-    (champ `clinical_significance` et ligne « Clinical significance »). Un libellé de la ligne
-    « Classification history » est rejeté : l'historique est restitué par le code. Limite
-    connue : deux documents cités peuvent permuter leurs significations sans être détectés."""
+    (champ `clinical_significance` et ligne « Clinical significance ») ; dans une phrase qui
+    nomme des variants, elle est en plus celle de la fiche du variant auquel elle se rapporte
+    (_check_variant_pairing). Un libellé de la ligne « Classification history » est rejeté :
+    l'historique est restitué par le code."""
+    keyed = [(_doc_ids(d), _current(d), d.doc_id) for d in cited]
     current: set[str] = set()
-    for d in cited:
-        labels = {d.clinical_significance} if d.clinical_significance else set()
-        for match in _CURRENT_LINE.finditer(d.text):
-            labels |= _labels_in(match.group(1))
-        current |= _translated(labels)
+    for _ids, sigs, _doc_id in keyed:
+        current |= sigs
     text = _clean(answer)
     off_table = _OFF_TABLE.search(text)
     if off_table:
@@ -302,11 +493,14 @@ def check_significances(answer: str, cited: Sequence[RetrievedDocument]) -> None
     text = _mask_disease_names(text, cited)
     text = _NEUTRAL_PHRASES.sub(lambda m: " " * len(m.group()), text)
     for sentence in _SENTENCES.split(text):
-        unsourced = _terms_in(sentence) - current
+        terms = _term_spans(sentence)
+        unsourced = {t for _, t in terms} - current
         if unsourced:
             raise GenerationRejectedError(
                 "significance_not_in_sources",
                 [f"terme absent des documents cités : {t} (phrase : {sentence.strip()})" for t in sorted(unsourced)])
+        if terms:
+            _check_variant_pairing(sentence.translate(_TYPOGRAPHY), terms, keyed)
 
 
 # Marqueurs d'un historique raconté. Volontairement large : « comme indiqué précédemment »
@@ -346,8 +540,10 @@ def verify_answer(text: str, documents: Sequence[RetrievedDocument], citations: 
     check_citations(citations, documents, status)
     check_document_labels(text, documents)
     check_identifiers(text, documents, status=status)
+    cited = [by_id[c] for c in citations]
+    check_identifiers_cited(text, cited)
     check_no_history_narration(text)
-    check_significances(text, [by_id[c] for c in citations])
+    check_significances(text, cited)
 
 
 def explain_rejection(text: str, documents: Sequence[RetrievedDocument], citations: Sequence[str],

@@ -317,3 +317,25 @@ def test_the_llm_receives_neutral_labels_only():
 def test_a_document_label_in_the_text_is_rejected(text):
     answer = _generate(StubClient(ok(answer=text)))
     assert (answer.status, answer.rejected) == ("unverifiable", "document_label_in_text")
+
+
+def test_a_benign_variant_called_pathogenic_with_another_card_cited_is_never_delivered():
+    """Sonde de la revue finale n° 2 (C1), de bout en bout : deux fiches transmises, D1 pathogène
+    (c.5266dup), D2 bénigne (c.4837A>G) ; le modèle affirme le variant de D2 pathogène en citant D1."""
+    benign = RetrievedDocument(
+        doc_id="clinvar:999", doc_type="variant", gene_symbol="BRCA1", clinical_significance="Benign",
+        text=("Variant NM_007294.4(BRCA1):c.4837A>G (p.Ser1613Gly), gene BRCA1. dbSNP rs1799966. "
+              "ClinVar Variation ID 41818. Clinical significance: Benign."),
+        review_status=None, rs_dbsnp=1799966, hgvs_c="c.4837A>G", hgvs_p="p.Ser1613Gly",
+        clinvar_variation_id="41818", clinvar_url=None, source_version="2026-09", similarity=0.9, stage="exact")
+    question = "Le variant rs1799966 de BRCA1 est-il pathogène ?"
+    res = result([doc(), benign], question=question)
+    wrong = ok(answer="Le variant c.4837A>G (rs1799966) est pathogène.", citations=("D1",))
+    answer = generate_answer(question, res, client=StubClient(wrong), profile=PROFILE, max_tokens=3000)
+    assert (answer.status, answer.answer, answer.rejected) == ("unverifiable", messages.UNVERIFIABLE, "identifier_not_cited")
+    both = ok(answer="Le variant c.4837A>G (rs1799966) est pathogène.", citations=("D1", "D2"))
+    answer = generate_answer(question, res, client=StubClient(both), profile=PROFILE, max_tokens=3000)
+    assert (answer.status, answer.rejected) == ("unverifiable", "significance_not_in_sources")
+    right = ok(answer="Le variant c.4837A>G (rs1799966) est bénin.", citations=("D2",))
+    answer = generate_answer(question, res, client=StubClient(right), profile=PROFILE, max_tokens=3000)
+    assert (answer.status, [s.significance for s in answer.sources]) == ("answered", ["Benign"])

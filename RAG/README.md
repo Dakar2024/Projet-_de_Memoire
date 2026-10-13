@@ -355,7 +355,11 @@ seulement si :
   (document, source, fiche, voir, selon, cf.), ou en tête de phrase suivie de « : » ; espace (« D 1 ») et
   casse (« d1 ») compris. Le vocabulaire médical (« cycline D1 », « vitamine D3 », « groupe D ») passe. Le Variation ID réel de la fiche reste accepté s'il est écrit.
 - **Identifiants** : tout identifiant du texte (rs, HGVS c./p., identifiant ClinVar, gène) est présent
-  dans un document cité ou dans les textes transmis ; un identifiant inventé rejette la réponse.
+  dans les textes transmis ; un identifiant inventé rejette la réponse (`identifier_not_in_sources`).
+  En statut `answered` / `partial`, tout identifiant **de variant** (rs, c., p., Variation ID) doit en
+  plus appartenir à un document **cité** (`identifier_not_cited`) : sinon le variant d'une fiche
+  transmise mais non citée pourrait recevoir la signification d'une autre fiche, citée. Les gènes
+  peuvent venir de n'importe quel texte transmis.
 - **Signification actuelle** : toute signification clinique affirmée est celle du document cité ; une
   signification d'un autre libellé ou en anglais est rejetée, de même que toute phrase qui porte un
   terme de signification et une négation n'importe où (`ne`, `n'`, `pas`, `aucun`, `jamais`, `rien`,
@@ -373,6 +377,20 @@ seulement si :
   bénignes » pour *Macrocephaly-autism syndrome*, ne l'est pas). « non listé » seul n'est **pas** masqué :
   « Ce variant est non listé comme pathogène » reste rejeté. Un « \n » littéral émis par le modèle
   est ramené à un vrai retour à la ligne avant tout contrôle.
+- **Variant ↔ signification** : dans une phrase qui nomme des variants (rs, c., p., Variation ID),
+  chaque terme de signification est relié au variant voisin et doit être une signification actuelle
+  de **la fiche de ce variant**, pas seulement d'une fiche citée. Les identifiants consécutifs d'une
+  même fiche (« c.4837A>G (p.Ser1613Gly, rs1799966) ») forment un variant. Règle d'appariement
+  (`checks._check_variant_pairing`) : un terme porte sur les variants qui le **précèdent** (« X :
+  pathogène », « X est pathogène, tandis que Y est bénin », « X, Y et Z sont pathogènes ») ; entre
+  parenthèses juste après un variant (« X, Y, W (signification incertaine) »), sur ce seul variant ;
+  « respectivement » avec autant de termes que de variants apparie dans l'ordre ; un terme en tête de
+  phrase (« Les variants pathogènes sont X, Y ») vaut pour les variants sans signification propre ;
+  « X et d'autres variants pathogènes » oblige X à être pathogène, mais « W (bénin) et d'autres
+  variantes probablement pathogènes » ne relie pas le second terme à W. Le sens « après le variant »
+  est celui de toutes les listes acceptées de la recette ; regarder des deux côtés laisserait passer
+  une permutation entre voisins. Une phrase sans identifiant de variant (« Ce variant est
+  pathogène ») garde la règle des documents cités.
 - **Historique restitué par le code** : le LLM ne raconte jamais l'historique de classification
   (« auparavant », « reclassé », « jusqu'en 2019 » sont rejetés) ; le code ajoute lui-même une phrase
   « Historique ClinVar … » depuis la ligne `Classification history` du Gold. Le variant y est désigné par
@@ -613,8 +631,12 @@ rejets : `reference/recette_e2b.md`.
 - **Règles hors périmètre lexicales** : une question peut être détectée à tort (message fixe au lieu
   d'une réponse ; aucune sur les 89 questions de E2a, hors P3-05, réellement une question de
   fréquence) ou échapper aux règles (le LLM tranche alors).
-- **Permutation entre deux documents cités** : si deux fiches citées ont des significations
-  différentes, une inversion entre elles n'est pas détectée.
+- **Permutation entre deux documents cités** : détectée dès que la phrase écrit l'identifiant du
+  variant (appariement variant ↔ signification, §9.2) ; **non détectée** quand la phrase ne le nomme
+  pas (« Ce variant est pathogène », « Le premier est bénin ») et que plusieurs fiches citées ont des
+  significations différentes. Sens prudent de l'appariement : une construction mêlée (« le variant
+  pathogène X et le variant bénin Y », terme avant le variant puis après) est rejetée à tort ; un
+  variant nommé sans aucun terme dans sa phrase n'a rien à contrôler.
 - « et N autres » (comptes de listes) n'est pas vérifié.
 - Noms historiques de variants (« 5382insC », « Glu6Val ») non reconnus ; un symbole du type « CD4 »
   peut être pris pour un gène hors panel (§8.6).

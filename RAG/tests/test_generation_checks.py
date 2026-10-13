@@ -580,3 +580,122 @@ def test_the_translated_name_of_case_c20_stays_rejected():
     answer = ("Variantes de signification incertaine, associées au syndrome d'excroissances bénignes avec "
               "macrocéphalie (Macrocephaly-autism syndrome).")
     assert _reason(check_significances, answer, [d]) == "significance_not_in_sources"
+
+
+# --- C1 (revue finale n° 2) : identifiant ↔ document cité ↔ signification -------------------
+# Deux fiches de variants distincts : c.5266dup pathogène (doc()), c.4837A>G bénin, et une
+# troisième probablement pathogène. Réponses réalistes, sur le modèle des réponses acceptées de
+# la recette (listes à puces « X – signification clinique : … », « tandis que », « respectivement »).
+BENIGN_TEXT = ("Variant NM_007294.4(BRCA1):c.4837A>G (p.Ser1613Gly), gene BRCA1. dbSNP rs1799966. "
+               "ClinVar Variation ID 41818. Clinical significance: Benign.")
+LIKELY_TEXT = ("Variant NM_007294.4(BRCA1):c.5123C>A (p.Ala1708Glu), gene BRCA1. dbSNP rs28897696. "
+               "ClinVar Variation ID 55449. Clinical significance: Likely pathogenic.")
+
+
+def variant_doc(doc_id, text, sig, hgvs_c, hgvs_p, rs, vid):
+    return RetrievedDocument(doc_id=doc_id, doc_type="variant", text=text, gene_symbol="BRCA1",
+                             clinical_significance=sig, review_status=None, rs_dbsnp=rs,
+                             hgvs_c=hgvs_c, hgvs_p=hgvs_p, clinvar_variation_id=vid,
+                             clinvar_url=None, source_version="2026-09", similarity=0.9, stage="exact")
+
+
+PATHO = doc()
+BENIGN = variant_doc("clinvar:999", BENIGN_TEXT, "Benign", "c.4837A>G", "p.Ser1613Gly", 1799966, "41818")
+LIKELY = variant_doc("clinvar:888", LIKELY_TEXT, "Likely pathogenic", "c.5123C>A", "p.Ala1708Glu", 28897696, "55449")
+ALL3 = [PATHO, BENIGN, LIKELY]
+ALL3_IDS = [d.doc_id for d in ALL3]
+
+
+def _verdict(answer, documents=ALL3, citations=ALL3_IDS, status="answered"):
+    from RAG.src.generation.checks import explain_rejection
+    explanation = explain_rejection(answer, documents, citations, status)
+    return explanation and explanation["reason"]
+
+
+def test_reviewer_probe_benign_variant_called_pathogenic_with_the_other_card_cited_is_rejected():
+    """Sonde probe5 : le variant nommé vient d'un document transmis mais NON cité."""
+    answer = "Le variant c.4837A>G (rs1799966) est pathogène."
+    assert _verdict(answer, [PATHO, BENIGN], [PATHO.doc_id]) == "identifier_not_cited"
+
+
+@pytest.mark.parametrize("answer", [
+    "Le variant c.4837A>G (rs1799966) est pathogène.",
+    "Le variant rs1799966 est pathogène.",
+    "Le variant p.Ser1613Gly est pathogène.",
+    "Le variant ClinVar Variation ID 41818 est pathogène.",
+])
+def test_every_variant_identifier_must_belong_to_a_cited_document(answer):
+    assert _verdict(answer, [PATHO, BENIGN], [PATHO.doc_id]) == "identifier_not_cited"
+
+
+def test_the_same_answer_citing_its_own_card_with_its_own_significance_passes():
+    assert _verdict("Le variant c.4837A>G (rs1799966) est bénin.", [PATHO, BENIGN], [BENIGN.doc_id]) is None
+
+
+def test_a_named_variant_with_the_significance_of_another_cited_card_is_rejected():
+    """Les deux fiches sont citées : « pathogène » est bien dans les documents cités, mais pas
+    dans celui du variant nommé."""
+    answer = "Le variant c.4837A>G (rs1799966) est pathogène."
+    assert _verdict(answer, [PATHO, BENIGN], [PATHO.doc_id, BENIGN.doc_id]) == "significance_not_in_sources"
+
+
+def test_genes_may_still_come_from_transmitted_documents_only():
+    gene_doc = RetrievedDocument(doc_id="gene:BRCA1", doc_type="gene", text="Gene BRCA1 interacts with RAD51.",
+                                 gene_symbol="BRCA1", clinical_significance=None, review_status=None,
+                                 rs_dbsnp=None, hgvs_c=None, hgvs_p=None, clinvar_variation_id=None,
+                                 clinvar_url=None, source_version="2026-09", similarity=0.9, stage="exact")
+    assert _verdict("Le variant c.5266dup de BRCA1 est pathogène ; BRCA1 interagit avec RAD51.",
+                    [PATHO, gene_doc], [PATHO.doc_id]) is None
+
+
+@pytest.mark.parametrize("answer", [
+    # Liste à puces, un variant et sa signification par ligne (forme des réponses de la recette).
+    "Variants répertoriés :\n- NM_007294.4(BRCA1):c.5266dup (p.Gln1756fs) – signification clinique : pathogène – "
+    "statut de révision : reviewed by expert panel.\n- NM_007294.4(BRCA1):c.4837A>G (p.Ser1613Gly) – "
+    "signification clinique : bénin.\n- NM_007294.4(BRCA1):c.5123C>A (p.Ala1708Glu) – probablement pathogène.",
+    # Même liste sans point final : une seule « phrase », les puces ne sont pas découpées.
+    "Variants :\n- c.5266dup : pathogène\n- c.4837A>G : bénin\n- c.5123C>A : probablement pathogène",
+    "Le variant c.5266dup (pathogène) et le variant c.4837A>G (bénin) sont cités.",
+    "Le variant c.5266dup est pathogène, tandis que le variant c.4837A>G (rs1799966) est bénin.",
+    "Une variante (c.4837A>G, rs1799966) est classée bénin, tandis que les variantes c.5266dup (p.Gln1756fs) "
+    "et c.5123C>A sont respectivement classées pathogène et probablement pathogène.",
+    "Les variants c.5266dup et c.4837A>G sont respectivement pathogène et bénin.",
+    "Les variants c.5266dup et c.5123C>A sont pathogène ou probablement pathogène.",
+    "Les variantes classées comme pathogène ou probablement pathogène sont :\n- c.5123C>A – signification "
+    "clinique : probablement pathogène ;\n- c.5266dup – signification clinique : pathogène.",
+    "Les variants pathogènes sont c.5266dup (rs80357906).",
+    "Le variant c.5266dup est un variant pathogène, c.4837A>G un variant bénin.",
+    # Forme de la recette P1-B02 : en-tête, un variant annoté entre parenthèses, puis « d'autres ».
+    "Les variantes répertoriées comme pathogènes sont : NM_007294.4(BRCA1):c.5266dup (p.Gln1756fs), "
+    "c.4837A>G (p.Ser1613Gly, bénin) et d'autres variantes probablement pathogènes.",
+    "Les variantes répertoriées comme pathogènes sont : c.5266dup, c.4837A>G (bénin), rs80357906.",
+])
+def test_correct_multi_variant_answers_pass(answer):
+    assert _verdict(answer) is None
+
+
+@pytest.mark.parametrize("answer", [
+    "Variants :\n- c.5266dup : bénin\n- c.4837A>G : pathogène",
+    "Variants répertoriés :\n- NM_007294.4(BRCA1):c.5266dup – signification clinique : pathogène.\n"
+    "- NM_007294.4(BRCA1):c.4837A>G – signification clinique : pathogène.",
+    "Le variant c.5266dup (bénin) et le variant c.4837A>G (pathogène) sont cités.",
+    "Le variant c.5266dup est bénin, tandis que le variant c.4837A>G (rs1799966) est pathogène.",
+    "Les variants c.5266dup et c.4837A>G sont respectivement bénin et pathogène.",
+    "Les variants c.5266dup et c.4837A>G sont pathogènes.",
+    "Les variants pathogènes sont c.5266dup et c.4837A>G.",
+    "Le variant c.5266dup est pathogène, de même que c.4837A>G.",
+    # Permutation entre deux fiches citées dès que les identifiants sont écrits.
+    "Le variant c.5123C>A est pathogène et le variant c.5266dup est probablement pathogène.",
+    "Les variantes répertoriées comme pathogènes sont : c.4837A>G, c.5266dup (pathogène).",
+    "Le variant c.4837A>G et d'autres variantes pathogènes sont décrits.",
+    "Le variant c.5266dup est pathogène (bénin selon certains).",
+    "Les variantes répertoriées comme pathogènes sont : c.5266dup (p.Gln1756fs) et d'autres variantes "
+    "de signification incertaine, dont c.4837A>G.",
+])
+def test_inverted_or_misattributed_multi_variant_answers_are_rejected(answer):
+    assert _verdict(answer) == "significance_not_in_sources"
+
+
+def test_a_sentence_without_variant_keeps_the_cited_documents_rule():
+    assert _verdict("Ces variants sont pathogènes ou bénins.") is None
+    assert _verdict("Ces variants sont de signification incertaine.") == "significance_not_in_sources"
