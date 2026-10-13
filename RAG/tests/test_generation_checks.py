@@ -471,6 +471,9 @@ from RAG.src.generation.checks import check_document_labels  # noqa: E402
 @pytest.mark.parametrize("answer", [
     "Le variant est pathogène (D1).", "Selon le document D2, il est pathogène.", "d1 : pathogène.",
     "Voir D1, D2 et D3.", "Source : [D1]",
+    "Le variant est pathogène (D1, D2).", "Pathogène (D1 ; D3).", "Pathogène (voir D2).", "Pathogène [D2].",
+    "Selon la fiche D 1, il est pathogène.", "D'après les documents D1 et D2.", "Cf. D3.", "Pathogène (d1).",
+    "Les sources D1, D2 le disent.", "Pathogène ( D 2 ).",
 ])
 def test_document_label_in_text_is_rejected(answer):
     assert _reason(check_document_labels, answer, [doc(), doc("clinvar:2"), doc("clinvar:3")]) == "document_label_in_text"
@@ -482,6 +485,15 @@ def test_document_label_in_text_is_rejected(answer):
 ])
 def test_text_without_a_transmitted_label_passes(answer):
     check_document_labels(answer, [doc()])
+
+
+@pytest.mark.parametrize("answer", [
+    "La cycline D1 est surexprimée.", "Un déficit en vitamine D3.", "Le récepteur D2 de la dopamine.",
+    "Le groupe D de complémentation.", "Variant p.Asp1 et p.Asp12 hors sujet.", "La protéine D1 régule le cycle.",
+    "Fanconi anemia complementation group D1 et D2.",
+])
+def test_medical_terms_that_look_like_labels_are_not_rejected(answer):
+    check_document_labels(answer, [doc(), doc("clinvar:2"), doc("clinvar:3")])
 
 
 def test_a_label_lookalike_copied_from_the_documents_is_not_a_label():
