@@ -886,3 +886,40 @@ def test_a_significance_carried_to_the_next_sentence_is_still_paired(answer):
 ])
 def test_correct_answers_spread_over_sentences_pass(answer):
     assert _verdict(answer) is None
+
+
+# --- N3 (re-relecture de la vague n° 2) : terme écrit AVANT son variant ------------------------
+@pytest.mark.parametrize("answer", [
+    "- pathogène : c.4837A>G\n- bénin : c.5266dup",
+    "Le variant pathogène c.4837A>G et le variant bénin c.5266dup.",
+    "Les variants pathogènes c.5266dup et c.4837A>G sont décrits.",
+    "Variants pathogènes :\n- c.4837A>G\nVariants bénins :\n- c.5266dup",
+    "### Variants pathogènes\n- c.4837A>G\n### Variants bénins\n- c.5266dup",
+    "Pathogène : c.4837A>G, bénin : c.5266dup",
+    "Un variant pathogène (c.4837A>G) est décrit.",
+    "c.4837A>G : pathogène (c.5266dup).",
+    "1. pathogène : c.4837A>G\n2. bénin : c.5266dup",
+])
+def test_a_significance_written_before_its_variant_binds_to_that_variant(answer):
+    assert _verdict(answer) == "significance_not_in_sources"
+
+
+@pytest.mark.parametrize("answer", [
+    "- pathogène : c.5266dup\n- bénin : c.4837A>G",
+    "Le variant pathogène c.5266dup et le variant bénin c.4837A>G sont cités.",
+    "Les variants pathogènes c.5266dup et rs80357906 sont décrits.",
+    "Variants pathogènes :\n- c.5266dup\nVariants bénins :\n- c.4837A>G",
+    "### Variants pathogènes\n- c.5266dup\n### Variants bénins\n- c.4837A>G",
+    "Pathogène : c.5266dup, bénin : c.4837A>G",
+    "Un variant pathogène (c.5266dup) est décrit.",
+    "c.5266dup : pathogène (rs80357906).",
+    "1. pathogène : c.5266dup\n2. bénin : c.4837A>G",
+    "- c.5266dup\n  Signification : pathogène\n- c.4837A>G\n  Signification : bénin",
+])
+def test_correct_forms_with_the_significance_before_the_variant_pass(answer):
+    assert _verdict(answer) is None
+
+
+def test_a_value_line_after_its_variant_still_binds_backwards():
+    answer = "- c.4837A>G\n  Signification : pathogène\n- c.5266dup\n  Signification : bénin"
+    assert _verdict(answer) == "significance_not_in_sources"
