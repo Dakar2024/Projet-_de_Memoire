@@ -748,3 +748,45 @@ def test_inversions_softenings_and_abbreviations_are_rejected(answer):
 ])
 def test_ordinary_wording_near_these_words_is_still_accepted(answer):
     check_significances(answer, [doc()])
+
+
+# --- m1 / m2 (revue finale n° 2) -------------------------------------------------------------
+@pytest.mark.parametrize("answer", [
+    "dbSNP 80357999 est pathogène.",
+    "Le variant dbSNP rs80357999 est pathogène.",
+    "Le variant rs-12345 est pathogène.",
+    "Le variant rs – 12345 est pathogène.",
+    "Le variant p.(Arg1699Trp) est pathogène.",
+    "Le variant m.3243A>G est pathogène.",
+    "Le variant c. 68A>G est pathogène.",
+    "Le variant c.5266 del est pathogène.",
+])
+def test_identifier_forms_outside_the_usual_spelling_are_still_checked(answer):
+    assert _reason(check_identifiers, answer, [doc()]) == "identifier_not_in_sources"
+
+
+@pytest.mark.parametrize("answer", [
+    "dbSNP 80357906 : pathogène.",
+    "Le variant rs-80357906 est pathogène.",
+    "Le variant p.(Gln1756Profs*74) est pathogène.",
+    "Le variant c. 5266dup est pathogène.",
+    "Le variant c.5266 dup est pathogène.",
+])
+def test_the_same_forms_naming_the_document_variant_pass(answer):
+    check_identifiers(answer, [doc()])
+
+
+def test_a_dbsnp_number_of_an_uncited_card_is_not_cited():
+    assert _verdict("Le variant dbSNP 1799966 est pathogène.", [PATHO, BENIGN], [PATHO.doc_id]) == "identifier_not_cited"
+
+
+@pytest.mark.parametrize("answer", [
+    "D'autres variantes non listées ici sont pathogènes.",
+    "Il est pathogène et d'autres variantes non listées ici sont bénignes.",
+])
+def test_the_truncated_list_formula_does_not_cover_a_significance_after_it(answer):
+    assert _reason(check_significances, answer, [doc()]) == "significance_not_in_sources"
+
+
+def test_the_truncated_list_formula_is_still_masked_at_the_end_of_a_list():
+    check_significances("Le variant c.5266dup est pathogène (et d'autres variantes non listées ici).", [doc()])

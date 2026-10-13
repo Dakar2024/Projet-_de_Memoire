@@ -74,10 +74,34 @@ class _VariantIds:
         return key in self.rs or key in self.c or key in self.p or key in self.vid
 
 
+# Formes d'identifiants ramenées à la forme extraite (revue finale n° 2, m1) : « dbSNP 80357999 »
+# (numéro sans « rs »), « rs-12345 », protéine prédite entre parenthèses « p.(Gln1756Profs*74) »,
+# espaces parasites « c. 5266dup » / « c.5266 dup ». Sans cela, un identifiant inventé écrit ainsi
+# échapperait à l'extraction.
+_VARIANT_FORMS = (
+    (re.compile(r"\bdbSNP\s*[:#]?\s*(?:rs\s*)?(\d+)", re.IGNORECASE), r"rs\1"),
+    (re.compile(r"\brs\s*-\s*(\d+)", re.IGNORECASE), r"rs\1"),
+    (re.compile(r"\bp\.\s*\(([^()\s]+)\)"), r"p.\1"),
+    (re.compile(r"\b([cp])\.\s+(?=[\d*+-]|[A-Z][a-z]{2}\d)"), r"\1."),
+    (re.compile(r"\b(c\.[0-9_+*-]+)\s+(?=(?:del|dup|ins)|[ACGT]>)", re.IGNORECASE), r"\1"),
+)
+# HGVS mitochondrial (« m.3243A>G ») : aucun gène du panel n'est mitochondrial ; contrôlé comme
+# un c. (présent dans un texte transmis, sinon rejeté), sous sa propre forme.
+_MITO = re.compile(r"\bm\.\d+(?:_\d+)?(?:[ACGT]>[ACGT]|del[ACGT]*|dup[ACGT]*|ins[ACGT]+)", re.IGNORECASE)
+
+
+def _normalize_variant_forms(text: str) -> str:
+    for pattern, replacement in _VARIANT_FORMS:
+        text = pattern.sub(replacement, text)
+    return text
+
+
 def _text_ids(text: str) -> _VariantIds:
+    text = _normalize_variant_forms(text)
     ids = extract_identifiers(text)
-    return _VariantIds(frozenset(f"rs{r}" for r in ids.rs), frozenset(ids.hgvs_c), frozenset(ids.hgvs_p),
-                       frozenset(_VARIATION_ID.findall(text)))
+    return _VariantIds(frozenset(f"rs{r}" for r in ids.rs),
+                       frozenset(ids.hgvs_c) | frozenset(m.group() for m in _MITO.finditer(text)),
+                       frozenset(ids.hgvs_p), frozenset(_VARIATION_ID.findall(text)))
 
 
 def _doc_ids(d: RetrievedDocument) -> _VariantIds:
@@ -254,17 +278,33 @@ _SENTENCES = re.compile(r"(?<=[.!?;])\s+")
 # recopient le statut de revue ClinVar (« no conflicts », « no assertion criteria provided »),
 # la phrase imposée par le prompt pour les fiches maigres, la mention d'une liste tronquée et un
 # nom de maladie (« nonspherocytic hemolytic anemia ») : leur « aucun », « sans », « ne … pas »
-# ou « non » ne porte jamais sur la signification. Liste fermée : seule la formule « d'autres
-# variantes non listées ici » est masquée, et pas si elle est suivie de « comme » / « en tant »
-# (« Ce variant non listé ici comme pathogène » reste rejeté, comme « non listé » seul).
+# ou « non » ne porte jamais sur la signification. Liste fermée. La formule de liste tronquée
+# (« d'autres variantes non listées ici ») est masquée à part, phrase par phrase
+# (_mask_truncated_list).
 _NEUTRAL_PHRASES = re.compile(
     r"\b(?:aucun|sans|pas\s+de)\s+conflits?(?:\s+d['’]\s*interpr[ée]tations?)?\b"
     r"|\baucune?\s+crit[èe]res?\s+(?:d['’]\s*[ée]valuation\s+)?fournie?s?\b"
     r"|\bclinvar\s+ne\s+documente\s+pas\s+de\s+ph[ée]notypes?\s+pour\s+ce\s+variant\b"
-    r"|\bautres\s+variant(?:e)?s?\s+non\s+list[ée]e?s?\s+ici\b(?!\s+(?:comme|en\s+tant))"
     r"|\bnon[- ]sph[ée]rocytaires?\b",
     re.IGNORECASE,
 )
+
+
+# Liste tronquée : masquée seulement si suivie ni de « comme » / « en tant » (« Ce variant non
+# listé ici comme pathogène » reste rejeté, comme « non listé » seul), ni d'un terme de
+# signification dans la même phrase : « d'autres variantes non listées ici sont pathogènes »
+# affirmerait la signification de variants qu'aucune fiche transmise ne décrit.
+_TRUNCATED_LIST = re.compile(
+    r"\bautres\s+variant(?:e)?s?\s+non\s+list[ée]e?s?\s+ici\b(?!\s+(?:comme|en\s+tant))", re.IGNORECASE)
+
+
+def _mask_truncated_list(sentence: str) -> str:
+    for match in reversed(list(_TRUNCATED_LIST.finditer(sentence))):
+        tail = sentence[match.end():]
+        if any(pattern.search(tail) for _, pattern in _TERMS) or re.search(r"\bincertain", tail, re.IGNORECASE):
+            continue
+        sentence = sentence[:match.start()] + " " * (match.end() - match.start()) + sentence[match.end():]
+    return sentence
 
 
 def _negated(text: str, start: int) -> bool:
@@ -515,7 +555,7 @@ def check_significances(answer: str, cited: Sequence[RetrievedDocument]) -> None
     current: set[str] = set()
     for _ids, sigs, _doc_id in keyed:
         current |= sigs
-    text = _clean(answer)
+    text = _normalize_variant_forms(_clean(answer))
     off_table = _OFF_TABLE.search(text) or _ABBREVIATIONS.search(text)
     if off_table:
         raise GenerationRejectedError("significance_not_in_sources",
@@ -527,6 +567,7 @@ def check_significances(answer: str, cited: Sequence[RetrievedDocument]) -> None
         if previous_terms and _REFUTATION.match(sentence):
             raise GenerationRejectedError(
                 "significance_not_in_sources", [f"réfutation après un terme de signification : {sentence.strip()}"])
+        sentence = _mask_truncated_list(sentence)
         terms = previous_terms = _term_spans(sentence)
         unsourced = {t for _, t in terms} - current
         if unsourced:
