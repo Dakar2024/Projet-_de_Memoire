@@ -224,6 +224,35 @@ def _labels_in(text: str) -> set[str]:
     return found
 
 
+_NAME_LISTS = re.compile(r"^(?:Associated conditions|Related phenotypes \(HPO\)):\s*(.+)$", re.MULTILINE)
+_TRAILING_DETAILS = re.compile(r"\s*\([^()]*\)\s*$")
+
+
+def _disease_names(cited: Sequence[RetrievedDocument]) -> list[str]:
+    """Noms de maladie ou de phénotype des documents cités qui contiennent eux-mêmes un terme
+    de signification (« Benign familial hematuria »), du plus long au plus court. Séparateur
+    Gold « ; », détails entre parenthèses (OMIM, hérédité) retirés. Au moins deux mots : un
+    mot isolé (« benign ») ne doit jamais neutraliser un terme."""
+    names: set[str] = set()
+    for d in cited:
+        for line in _NAME_LISTS.findall(d.text):
+            for raw in line.rstrip(".").split("; "):
+                name = _TRAILING_DETAILS.sub("", raw).strip().rstrip(".")
+                if len(name.split()) >= 2 and any(p.search(name) for _, p in _TERMS):
+                    names.add(name)
+    return sorted(names, key=len, reverse=True)
+
+
+def _mask_disease_names(text: str, cited: Sequence[RetrievedDocument]) -> str:
+    """Remplace par des espaces les occurrences exactes (insensibles à la casse) d'un nom de
+    maladie des documents cités qui contient un terme de signification : seule cette portion
+    est neutralisée, le reste de la phrase reste contrôlé."""
+    for name in _disease_names(cited):
+        pattern = re.compile(rf"(?<!\w){_spaced(_clean(name))}(?!\w)", re.IGNORECASE)
+        text = pattern.sub(lambda m: " " * len(m.group()), text)
+    return text
+
+
 # Ligne de la signification actuelle ; elle s'arrête avant une éventuelle ligne d'historique.
 _CURRENT_LINE = re.compile(r"Clinical significance:\s*(.*?)(?:\.(?:\s|$)|\n|Classification history:|$)")
 
@@ -256,6 +285,7 @@ def check_significances(answer: str, cited: Sequence[RetrievedDocument]) -> None
     if off_table:
         raise GenerationRejectedError("significance_not_in_sources",
                                       [f"qualificatif hors table : {off_table.group()}"])
+    text = _mask_disease_names(text, cited)
     text = _NEUTRAL_PHRASES.sub(lambda m: " " * len(m.group()), text)
     for sentence in _SENTENCES.split(text):
         unsourced = _terms_in(sentence) - current
