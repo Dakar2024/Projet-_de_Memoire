@@ -467,6 +467,25 @@ _RESPECTIVELY = re.compile(r"\brespectivement\b", re.IGNORECASE)
 _INSIDE_PARENTHESIS = re.compile(r"[(\[][^()\[\]]*$")
 _OTHERS = re.compile(r"\bautres?\b", re.IGNORECASE)
 _TERM_BREAK = re.compile(r"[()\[\]]|\bautres?\b", re.IGNORECASE)
+# Terme écrit AVANT son variant (re-relecture de la vague n° 2, N3) : début de ligne (puce,
+# numéro, titre), écart réduit à des espaces, « : » ou « ( » jusqu'au variant, nom porteur
+# (« le variant pathogène X »), en-tête de section (« Variants bénins : » seul sur sa ligne).
+_LINE_PREFIX = re.compile(r"[\s\-+#>\d.)]*")
+_FORWARD_GAP = re.compile(r"[ \t]*:?[ \t]*\(?[ \t]*")
+_CARRIER_NOUN = re.compile(
+    r"\b(?:variant|variante|mutation|all[èe]le|substitution|d[ée]l[ée]tion|duplication|insertion)s?\s*$",
+    re.IGNORECASE)
+_SECTION_TAIL = re.compile(r"[ \t]*:?[ \t]*")
+_SECTION_NOUN = re.compile(r"#|\b(?:variant|variante|mutation)s?\b", re.IGNORECASE)
+_INCERTAIN = re.compile(r"\bincertain\w*", re.IGNORECASE)
+
+
+def _term_end(sentence: str, pos: int) -> int:
+    """Fin du terme de signification qui commence à `pos` (le plus long qui y correspond)."""
+    ends = [m.end() for _, pattern in _TERMS if (m := pattern.match(sentence, pos))]
+    if (m := _INCERTAIN.match(sentence, pos)):
+        ends.append(m.end())
+    return max(ends, default=pos)
 
 
 def _check_variant_pairing(sentence: str, terms: list[tuple[int, str]],
@@ -495,10 +514,17 @@ def _check_variant_pairing(sentence: str, terms: list[tuple[int, str]],
        non nommés (« W (bénin) et d'autres variantes probablement pathogènes ») et reste soumis
        à la seule règle des documents cités.
 
-    Raison du sens « termes après le variant » : c'est la forme de toutes les listes acceptées
-    de la recette ; regarder des deux côtés laisserait passer une permutation entre voisins
-    (« X1 pathogène, X2 bénin, X3 pathogène » avec X2 et X3 inversés). Sens prudent : une
-    construction mêlée (« le variant pathogène X et le variant bénin Y ») est rejetée.
+    5. Terme AVANT son variant sur la même ligne (« - pathogène : X », « le variant pathogène
+       X et le variant bénin Y », « Pathogène : X, bénin : Y ») : il porte sur la suite de
+       variants qui le suit (détail dans le code).
+    6. En-tête de section seul sur sa ligne (« Variants bénins : ») : il vaut pour les variants
+       qui le suivent sans signification propre, jusqu'à l'en-tête suivant.
+
+    Raison du sens « termes après le variant » par défaut : c'est la forme de toutes les listes
+    acceptées de la recette ; regarder des deux côtés laisserait passer une permutation entre
+    voisins (« X1 pathogène, X2 bénin, X3 pathogène » avec X2 et X3 inversés). Le sens « avant »
+    n'est retenu que sur les formes 5 et 6 ; quand un terme peut porter sur les deux voisins
+    (« X : pathogène (Y) »), les deux doivent concorder.
 
     `keyed` : pour chaque document cité, (identifiants, significations actuelles, doc_id)."""
 
@@ -522,6 +548,16 @@ def _check_variant_pairing(sentence: str, terms: list[tuple[int, str]],
                 if not any(term in significances(v) for v in variants):
                     reject(variants[-1], [term])
 
+    def pair(variants: list[list[str]], group: list[str]) -> None:
+        """Bloc de termes appliqué à une suite de variants ; « respectivement » avec autant
+        de termes que de variants : dans l'ordre."""
+        if _RESPECTIVELY.search(sentence) and len(group) >= 2 and len(group) == len(variants):
+            for variant, term in zip(variants, group):
+                if term not in significances(variant):
+                    reject(variant, [term])
+            return
+        check(variants, group, every_term=True)
+
     # Un identifiant qu'aucune fiche citée ne porte relève des contrôles d'identifiants
     # (check_identifiers_cited, appelé avant dans verify_answer) : ignoré ici.
     mentions = [(start, end, key) for start, end, key in _mentions(sentence) if docs_of(key)]
@@ -529,16 +565,18 @@ def _check_variant_pairing(sentence: str, terms: list[tuple[int, str]],
         return
     events = sorted([(start, end, "v", key) for start, end, key in mentions]
                     + [(pos, pos, "t", term) for pos, term in terms])
-    # Blocs : ("v", [variants], [début de chaque variant]) ou ("t", [termes], [position de chaque terme]).
+    # Blocs : ("v", [variants], [début de chaque variant], fin du dernier identifiant) ou
+    # ("t", [termes], [position de chaque terme], fin du dernier terme).
     blocks: list[list] = []
-    for start, _end, kind, value in events:
+    for start, end, kind, value in events:
         # Deux termes séparés par une parenthèse ou par « autres » ne forment pas un même bloc :
         # « W (bénin) et d'autres variantes probablement pathogènes ».
         split = (kind == "t" and blocks and blocks[-1][0] == "t"
                  and _TERM_BREAK.search(sentence[blocks[-1][2][-1]:start]))
         if not blocks or blocks[-1][0] != kind or split:
-            blocks.append([kind, [], []])
+            blocks.append([kind, [], [], end])
         block = blocks[-1]
+        block[3] = _term_end(sentence, start) if kind == "t" else max(block[3], end)
         if kind == "t":
             block[1].append(value)
             block[2].append(start)
@@ -551,8 +589,43 @@ def _check_variant_pairing(sentence: str, terms: list[tuple[int, str]],
     own: set[int] = set()  # variants (id()) ayant une signification propre
     others: dict[int, list[str]] = {}  # suite de variants -> bloc « d'autres … » qui la suit
     scopes: dict[int, list[list[str]]] = {}  # bloc de termes -> variants visés
-    for i, (kind, group, positions) in enumerate(blocks):
-        if kind != "t" or i == 0:
+    sections: set[int] = set()  # blocs de termes en-têtes de section
+    for i, (kind, group, positions, end) in enumerate(blocks):
+        if kind != "t":
+            continue
+        line_start = sentence.rfind("\n", 0, positions[0]) + 1
+        line_end = sentence.find("\n", end)
+        line_end = len(sentence) if line_end < 0 else line_end
+        before, after = sentence[line_start:positions[0]], sentence[end:line_end]
+        previous_run = blocks[i - 1] if i and blocks[i - 1][0] == "v" else None
+        next_run = blocks[i + 1] if i + 1 < len(blocks) and blocks[i + 1][0] == "v" else None
+        line_head = _LINE_PREFIX.fullmatch(before) is not None
+        # 5. Terme AVANT son variant, sur la même ligne : en début de ligne (« - pathogène :
+        #    X »), ou séparé du variant par des espaces, « : » ou « ( » seulement (« le variant
+        #    pathogène X », « bénin : Y »). Il porte sur la suite de variants qui le SUIT. Il
+        #    porte aussi sur celle qui le précède (les deux doivent concorder : « X : pathogène
+        #    (Y) »), sauf en début de ligne, après un nom porteur (« le variant ») ou si cette
+        #    suite a déjà sa propre signification (« Pathogène : X, bénin : Y »).
+        if next_run is not None and next_run[2][0] < line_end and (
+                line_head or _FORWARD_GAP.fullmatch(sentence[end:next_run[2][0]])):
+            targets = next_run[1]
+            scopes[i] = targets
+            pair(targets, group)
+            forward_only = (previous_run is None or line_head
+                            or _CARRIER_NOUN.search(sentence[previous_run[3]:positions[0]])
+                            or all(id(v) in own for v in previous_run[1]))
+            own |= {id(v) for v in targets}
+            if forward_only:
+                continue
+        # 6. En-tête de section (« Variants bénins : », « ### Variants pathogènes ») : seul
+        #    sur sa ligne avec un nom ou un titre, sans « : » avant lui ; il ne porte pas sur
+        #    le variant qui le précède, il vaut en-tête pour les variants qui le suivent.
+        elif (i and next_run is not None and ":" not in before and _SECTION_TAIL.fullmatch(after)
+              and _SECTION_NOUN.search(before)
+              and not any(line_start <= start < line_end for start, _, _ in mentions)):
+            sections.add(i)
+            continue
+        if i == 0:
             continue
         if blocks[i - 1][0] == "t":
             # Bloc détaché du précédent par une parenthèse (« X : pathogène (bénin) ») : mêmes
@@ -563,9 +636,8 @@ def _check_variant_pairing(sentence: str, terms: list[tuple[int, str]],
                 scopes[i] = previous
                 check(previous, group, every_term=True)
             continue
-        _, variants, starts = blocks[i - 1]
+        _, variants, starts, last_end = blocks[i - 1]
         between = sentence[starts[-1]:positions[0]]
-        last_end = max(end for start, end, _ in mentions if starts[-1] <= start < positions[0])
         if _OTHERS.search(sentence[last_end:positions[0]]):
             # « X et d'autres duplications de signification incertaine » : le terme porte sur
             # d'autres variants, non nommés ; X reçoit l'en-tête, à défaut ce bloc (« X et
@@ -574,21 +646,18 @@ def _check_variant_pairing(sentence: str, terms: list[tuple[int, str]],
             continue
         if _INSIDE_PARENTHESIS.search(between):
             variants = variants[-1:]
-        scopes[i] = variants
+        scopes.setdefault(i, variants)
         own |= {id(v) for v in variants}
-        if _RESPECTIVELY.search(sentence) and len(group) >= 2 and len(group) == len(variants):
-            for variant, term in zip(variants, group):
-                if term not in significances(variant):
-                    reject(variant, [term])
-            continue
-        check(variants, group, every_term=True)
-    previous_terms = None
-    for i, (kind, group, _) in enumerate(blocks):
+        pair(variants, group)
+    previous_terms, governing_header = None, header
+    for i, (kind, group, _, _) in enumerate(blocks):
         if kind == "t":
             previous_terms = group
+            if i in sections:
+                governing_header = group
             continue
         orphans = [v for v in group if id(v) not in own]
-        governing = header if header is not None else others.get(i, previous_terms)
+        governing = governing_header if governing_header is not None else others.get(i, previous_terms)
         if orphans and governing is not None:
             check(orphans, governing, every_term=False)
 
