@@ -177,7 +177,7 @@ _SENTENCES = re.compile(r"(?<=[.!?;])\s+")
 # variantes non listées ici » est masquée, et pas si elle est suivie de « comme » / « en tant »
 # (« Ce variant non listé ici comme pathogène » reste rejeté, comme « non listé » seul).
 _NEUTRAL_PHRASES = re.compile(
-    r"\b(?:aucun|sans)\s+conflits?\b"
+    r"\b(?:aucun|sans|pas\s+de)\s+conflits?(?:\s+d['’]\s*interpr[ée]tations?)?\b"
     r"|\baucune?\s+crit[èe]res?\s+(?:d['’]\s*[ée]valuation\s+)?fournie?s?\b"
     r"|\bclinvar\s+ne\s+documente\s+pas\s+de\s+ph[ée]notypes?\s+pour\s+ce\s+variant\b"
     r"|\bautres\s+variant(?:e)?s?\s+non\s+list[ée]e?s?\s+ici\b(?!\s+(?:comme|en\s+tant))"
