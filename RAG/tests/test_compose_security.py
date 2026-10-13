@@ -66,3 +66,20 @@ def test_the_gateway_and_the_proxy_hold_no_secret():
 def test_uvicorn_access_log_is_disabled():
     # Le journal JSON de l'API suffit ; celui d'uvicorn répéterait chaque requête.
     assert "--no-access-log" in SERVICES["rag-api"]["command"]
+
+
+def _nginx_size(value: str) -> int:
+    """Taille nginx (« 8k », « 1m », « 8192 ») en octets."""
+    number, unit = re.fullmatch(r"(\d+)([kKmM]?)", value).groups()
+    return int(number) * {"": 1, "k": 1024, "m": 1024 * 1024}[unit.lower()]
+
+
+def test_gateway_body_limit_matches_the_api_limit():
+    """Revue finale n° 2, m6 : le plafond de corps de la passerelle et celui de l'API
+    (api.max_body_bytes) doivent rester égaux ; seul un commentaire les liait."""
+    nginx = (ROOT / "docker" / "rag-gateway" / "nginx.conf").read_text(encoding="utf-8")
+    api = yaml.safe_load((ROOT / "RAG" / "config.yaml").read_text(encoding="utf-8"))["api"]["max_body_bytes"]
+    sizes = {name: [_nginx_size(v) for v in re.findall(rf"^\s*{name}\s+(\S+);", nginx, re.MULTILINE)]
+             for name in ("client_max_body_size", "client_body_buffer_size")}
+    assert sizes == {"client_max_body_size": [api], "client_body_buffer_size": [api]}
+    assert _nginx_size("8k") == 8192 and _nginx_size("1M") == 1048576
