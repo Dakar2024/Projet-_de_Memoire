@@ -97,19 +97,33 @@ def check_identifiers(answer: str, documents: Sequence[RetrievedDocument], statu
             raise GenerationRejectedError("identifier_not_in_sources", [f"gène {g}" for g in sorted(unknown_genes)])
 
 
+# Une étiquette (D1, « D 1 », « d1 ») n'est une référence que dans trois emplois : entre
+# parenthèses ou crochets (seule ou en liste), derrière un mot de renvoi (document, source,
+# fiche, voir, selon, cf.), ou en tête de phrase suivie de « : ». Ailleurs (« cycline D1 »,
+# « vitamine D3 », « récepteur D2 », « groupe D ») c'est du vocabulaire médical.
+_LABEL = r"D\s?\d+"
+_LABEL_LIST = rf"{_LABEL}(?:\s*(?:[,;]|et|ou|and)\s*{_LABEL})*"
+_LABEL_REFERENCE = re.compile(
+    rf"[(\[]\s*(?:(?:voir|cf\.?|selon)\s+)?(?P<paren>{_LABEL_LIST})\s*[)\]]"
+    rf"|(?<![\w-])(?:documents?|sources?|fiches?|voir|selon|cf\.?)\s+(?P<keyword>{_LABEL_LIST})(?![\w-])"
+    rf"|(?:^|[.!?]\s+)(?P<head>{_LABEL})\s*:",
+    re.IGNORECASE | re.MULTILINE)
+
+
 def check_document_labels(answer: str, documents: Sequence[RetrievedDocument]) -> None:
-    """Un identifiant neutre de document (D1, D2… transmis au LLM) écrit dans le texte de la
-    réponse est rejeté, pas retiré : le retrait par le code pourrait laisser une phrase
-    tronquée ou changer son sens, et un lecteur ne doit jamais voir une étiquette interne.
-    Exception : un symbole identique figurant tel quel dans les fiches (« complementation
-    group D1 » recopié fidèlement) n'est pas une étiquette."""
+    """Un identifiant neutre de document (D1, D2… transmis au LLM) utilisé comme référence dans
+    le texte de la réponse est rejeté, pas retiré : le retrait par le code pourrait laisser une
+    phrase tronquée ou changer son sens, et un lecteur ne doit jamais voir une étiquette interne.
+    Seuls les emplois en référence comptent (voir _LABEL_REFERENCE) : « cycline D1 » ou
+    « vitamine D3 » sont du vocabulaire, pas des étiquettes."""
     labels = {f"D{index}" for index in range(1, len(documents) + 1)}
     if not labels:
         return
-    own_text = "\n".join(_clean(d.text) for d in documents)
-    in_sources = {m.upper() for m in re.findall(r"(?<![\w-])D\d+(?![\w-])", own_text, re.IGNORECASE)}
-    found = {m.upper() for m in re.findall(r"(?<![\w-])D\d+(?![\w-])", _clean(answer), re.IGNORECASE)}
-    offending = sorted((found & labels) - in_sources)
+    found: set[str] = set()
+    for match in _LABEL_REFERENCE.finditer(_clean(answer)):
+        group = match.group("paren") or match.group("keyword") or match.group("head")
+        found |= {re.sub(r"\s", "", m).upper() for m in re.findall(_LABEL, group, re.IGNORECASE)}
+    offending = sorted(found & labels)
     if offending:
         raise GenerationRejectedError("document_label_in_text", offending)
 
