@@ -88,6 +88,8 @@ _VARIANT_FORMS = (
 # HGVS mitochondrial (« m.3243A>G ») : aucun gène du panel n'est mitochondrial ; contrôlé comme
 # un c. (présent dans un texte transmis, sinon rejeté), sous sa propre forme.
 _MITO = re.compile(r"\bm\.\d+(?:_\d+)?(?:[ACGT]>[ACGT]|del[ACGT]*|dup[ACGT]*|ins[ACGT]+)", re.IGNORECASE)
+# Notation de répétition (« c.569CTC[1] ») : ses crochets ne sont pas de la mise en forme.
+_REPEAT = re.compile(r"\bc\.[0-9_+*-]+[ACGT]+\[\d+\]", re.IGNORECASE)
 
 
 def _normalize_variant_forms(text: str) -> str:
@@ -124,10 +126,56 @@ def _missing(found: _VariantIds, allowed: _VariantIds) -> list[str]:
             + sorted(found.p - allowed.p) + [f"ClinVar {v}" for v in sorted(found.vid - allowed.vid)])
 
 
+# Mise en forme collée à un identifiant (re-relecture de la vague n° 2, N1) : l'extraction
+# (retrieval/identifiers.py, mesurée en E2a et non modifiée) n'accepte après un identifiant
+# qu'une espace ou une ponctuation courante ; « **c.9999A>G** », « `c.9999A>G` »,
+# « "c.9999A>G" », « [c.9999A>G] » ou « c.9999A>G</b> » n'étaient donc pas extraits, et un
+# identifiant inventé ou une signification d'une autre fiche passaient. Ici, dans les seuls
+# contrôles, tout caractère hors d'une liste blanche (lettres, chiffres, espaces, ponctuation
+# courante et signes du HGVS) devient une espace, ainsi que les « * » et « _ » de mise en forme
+# (gras, italique) ; ceux du HGVS restent (« c.*123A>G », « p.Arg337* », « fs*74 », « c.68_69del »).
+# Remplacement caractère pour caractère : les positions des termes et des identifiants ne
+# bougent pas. La notation de répétition (« c.569CTC[1] ») garde ses crochets.
+_MARKUP_KEEP = set(".,;:?!()/+-*>=%#°'’_")
+_MARKUP_STARS = re.compile(r"\*{2,}|_{2,}")
+_ITALIC_OPEN = re.compile(r"(?<![\w.*])[*_](?=\S)")
+_ITALIC_CLOSE = re.compile(r"(?<=[A-Za-zÀ-ÿ>)\]])[*_](?![\w*])")
+# Apostrophe ASCII qui n'est pas entre deux lettres (« 'c.9999A>G' ») : guillemet simple.
+_QUOTE = re.compile(r"(?<![A-Za-zÀ-ÿ])'|'(?![A-Za-zÀ-ÿ])")
+
+
+def _blank(match: re.Match) -> str:
+    return " " * len(match.group())
+
+
+def _stars(match: re.Match) -> str:
+    """Gras fermé juste après un « p.Arg337* » (« **p.Arg337*** ») : l'étoile du HGVS reste."""
+    run = match.group()
+    before = match.string[match.start() - 1] if match.start() else ""
+    if run[0] == "*" and before.isdigit() and len(run) % 2:
+        return "*" + " " * (len(run) - 1)
+    return " " * len(run)
+
+
+def _unmark(text: str, *, quotes: bool = True) -> str:
+    """Délimiteurs de mise en forme ramenés à des espaces (longueur inchangée). `quotes` :
+    l'apostrophe ASCII hors d'un mot l'est aussi (pas pour le test de négation, où « n' »
+    doit rester)."""
+    protected = {i for m in _REPEAT.finditer(text) for i in range(m.start(), m.end())}
+    chars = [c if (c.isalnum() or c.isspace() or c in _MARKUP_KEEP or i in protected) else " "
+             for i, c in enumerate(text)]
+    text = "".join(chars)
+    text = _MARKUP_STARS.sub(_stars, text)
+    text = _ITALIC_OPEN.sub(_blank, text)
+    text = _ITALIC_CLOSE.sub(_blank, text)
+    return _QUOTE.sub(_blank, text) if quotes else text
+
+
 def _answer_text(answer: str) -> str:
     """Réponse prête pour l'extraction des identifiants : nettoyée, typographie française
-    (guillemets, apostrophe, espaces insécables) ramenée à des espaces."""
-    return _clean(answer).translate(_TYPOGRAPHY)
+    (guillemets, apostrophe, espaces insécables) et mise en forme (_unmark) ramenées à des
+    espaces."""
+    return _unmark(_clean(answer).translate(_TYPOGRAPHY))
 
 
 def check_identifiers(answer: str, documents: Sequence[RetrievedDocument], status: str = "answered") -> None:
@@ -378,7 +426,7 @@ def _mask_disease_names(text: str, cited: Sequence[RetrievedDocument]) -> str:
     maladie des documents cités qui contient un terme de signification : seule cette portion
     est neutralisée, le reste de la phrase reste contrôlé."""
     for name in _disease_names(cited):
-        pattern = re.compile(rf"(?<!\w){_spaced(_clean(name))}(?!\w)", re.IGNORECASE)
+        pattern = re.compile(rf"(?<!\w){_spaced(_unmark(_clean(name), quotes=False))}(?!\w)", re.IGNORECASE)
         text = pattern.sub(lambda m: " " * len(m.group()), text)
     return text
 
@@ -555,7 +603,7 @@ def check_significances(answer: str, cited: Sequence[RetrievedDocument]) -> None
     current: set[str] = set()
     for _ids, sigs, _doc_id in keyed:
         current |= sigs
-    text = _normalize_variant_forms(_clean(answer))
+    text = _normalize_variant_forms(_unmark(_clean(answer), quotes=False))
     off_table = _OFF_TABLE.search(text) or _ABBREVIATIONS.search(text)
     if off_table:
         raise GenerationRejectedError("significance_not_in_sources",
@@ -575,7 +623,7 @@ def check_significances(answer: str, cited: Sequence[RetrievedDocument]) -> None
                 "significance_not_in_sources",
                 [f"terme absent des documents cités : {t} (phrase : {sentence.strip()})" for t in sorted(unsourced)])
         if terms:
-            _check_variant_pairing(sentence.translate(_TYPOGRAPHY), terms, keyed)
+            _check_variant_pairing(_unmark(sentence.translate(_TYPOGRAPHY)), terms, keyed)
 
 
 # Marqueurs d'un historique raconté. Volontairement large : « comme indiqué précédemment »
