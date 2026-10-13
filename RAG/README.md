@@ -519,6 +519,21 @@ pourraient citer un extrait de la requête).
   est refusée. Aucun cache, aucune inspection du contenu. **Le sous-réseau fixe `172.31.250.0/24` est
   écrit dans `squid.conf` ET dans `docker-compose.yml` (réseau `rag-proxy-net`) : les deux doivent
   rester synchronisés**, sinon le proxy refuse tout.
+- **Image du proxy** : `ubuntu/squid:6.6-24.04_edge`, épinglée par empreinte (`@sha256:…`) dans
+  `docker-compose.yml`. Image de Canonical sur Ubuntu 24.04 LTS ; `_edge` désigne son canal de
+  publication le plus récent (celui retenu par le plan de E2b, aucun tag d'un canal plus stable n'a
+  été évalué). Le tag annonce 6.6, mais le binaire vérifié le 08/10/2026 est **Squid 6.14** : ne pas
+  se fier au tag, seule l'empreinte fixe ce qui tourne. Squid publie régulièrement des correctifs de
+  sécurité : rafraîchir l'empreinte à chaque avis de sécurité Squid/Ubuntu (USN), et au moins à
+  chaque reprise du projet :
+  1. relever les tags `ubuntu/squid` en 24.04 (préférer un canal stable s'il existe) ;
+  2. `docker pull ubuntu/squid:<tag>` puis
+     `docker image inspect ubuntu/squid:<tag> --format '{{json .RepoDigests}} {{.Config.User}}'` ;
+  3. `docker run --rm --entrypoint sh ubuntu/squid:<tag> -c 'squid -v | head -1'` (version réelle) ;
+  4. remplacer l'empreinte (et la version vérifiée dans le commentaire) dans `docker-compose.yml`,
+     puis `docker compose --env-file .env up -d rag-proxy` ;
+  5. relancer les tests d'intégration du proxy (§9.9, `test_hardening_integration.py`) : domaine hors
+     liste, autre port, HTTP clair et IP littérale toujours refusés, Groq et OpenRouter joignables.
 - **Passerelle sans secret, mais sur un pont non interne** (`rag-api-ingress`, nécessaire à la
   publication du port) : elle voit donc la clé et les questions en transit, **et elle a une sortie
   Internet** (ce pont n'est pas interne ; nginx n'y ouvre aucune connexion de lui-même). Risque
