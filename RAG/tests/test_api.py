@@ -240,7 +240,23 @@ def test_release_after_shutdown_is_logged_without_text(caplog):
     assert r.status_code == 503 and pipeline.closed
     gate.set()
     wait_until(lambda: any(e.get("event") == "release_after_shutdown" for e in api_events(caplog)))
+    assert any(e.get("event") == "shutdown_threads_active" for e in api_events(caplog))
     assert all("confidentielle" not in json.dumps(e) for e in api_events(caplog))
+
+
+def test_shutdown_waits_for_an_active_thread_before_closing_the_pipeline(caplog):
+    """Revue finale n° 2, m3 : fermer les connexions sous un fil encore actif (dans libpq) est
+    dangereux. L'arrêt attend les fils (borné par request_timeout_s) AVANT de fermer : un fil qui
+    se termine pendant cette attente rend son emplacement à un pipeline encore ouvert."""
+    caplog.set_level(logging.INFO)
+    gate = threading.Event()
+    pipeline = StrictPipeline(slots=1, behaviour=lambda q: gate.wait(5))
+    c, _ = client(pipeline, timeout=0.5)
+    with c:
+        assert ask(c).status_code == 503
+        threading.Timer(0.05, gate.set).start()
+    assert pipeline.closed and pipeline.free == [0]
+    assert not any(e.get("event") == "release_after_shutdown" for e in api_events(caplog))
 
 
 def test_double_release_on_an_open_pipeline_is_not_swallowed(caplog):

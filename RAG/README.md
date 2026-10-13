@@ -501,7 +501,10 @@ La réponse contient `status`, `answer`, `sources`, `disclaimer`, `request_id`, 
 
 Un événement JSON par question : identifiant de requête, statut, durées, coût, modèle, indicateurs de
 recherche, nombre de sources. Une réponse arrivée après le délai (jamais livrée) est consignée par
-`late_result` (statut, coût, modèle) ou `late_error` (classe de l'exception). Le journal d'accès
+`late_result` (statut, coût, modèle) ou `late_error` (classe de l'exception). À l'arrêt, l'API attend
+les fils encore actifs (au plus `request_timeout_s`) avant de fermer ses connexions à la base ; un fil
+toujours actif après ce délai est signalé par `shutdown_threads_active`, et son rendu d'emplacement
+tardif par `release_after_shutdown`. Le journal d'accès
 d'uvicorn est coupé (`--no-access-log`) : il répéterait chaque requête. **Ni la question, ni la
 réponse, ni la clé, ni l'en-tête** : la
 passerelle journalise `méthode chemin statut durée`, sans chaîne de requête ; le proxy journalise
