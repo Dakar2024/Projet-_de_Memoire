@@ -699,3 +699,52 @@ def test_inverted_or_misattributed_multi_variant_answers_are_rejected(answer):
 def test_a_sentence_without_variant_keeps_the_cited_documents_rule():
     assert _verdict("Ces variants sont pathogènes ou bénins.") is None
     assert _verdict("Ces variants sont de signification incertaine.") == "significance_not_in_sources"
+
+
+# --- I1 (revue finale n° 2) : inversions, atténuations, abréviations ------------------------
+@pytest.mark.parametrize("answer", [
+    "Ce variant est loin d'être pathogène.",
+    "Ce variant est tout sauf pathogène.",
+    "Il est peu probable que ce variant soit pathogène.",
+    "Il est improbable que ce variant soit pathogène.",
+    "L'hypothèse d'un variant pathogène a été écartée.",
+    "Ce variant a été exclu des variants pathogènes.",
+    "Ce variant était considéré comme pathogène à tort.",
+    "Il est faussement présenté comme pathogène.",
+    "Le caractère pathogène est faux.",
+    "Contrairement aux attentes, il est pathogène.",
+    "Le caractère pathogène a été réfuté.",
+    "Le caractère pathogène a été infirmé.",
+    "Ce variant est pathogène ? Faux.",
+    "Ce variant est pathogène ? Non.",
+    "Ce variant est pathogène. Inexact.",
+    "Ce variant est potentiellement pathogène.",
+    "Ce variant est possiblement pathogène.",
+    "Ce variant est éventuellement pathogène.",
+    "Ce variant est hautement pathogène.",
+    "Ce variant est peut-être pathogène.",
+    "Ce variant pourrait être pathogène.",
+    "Ce variant est P/LP.",
+    "Ce variant est classé LP.",
+    "Ce variant est classé B.",
+    "Ce variant est LB.",
+    "Ce variant est classé P.",
+    "Ce variant (B) est décrit.",
+    "Classe 5 (pathogène).",
+    "Ce variant est classé en classe 3.",
+    "Classe ACMG 4.",
+])
+def test_inversions_softenings_and_abbreviations_are_rejected(answer):
+    assert _reason(check_significances, answer, [doc()]) == "significance_not_in_sources"
+
+
+@pytest.mark.parametrize("answer", [
+    "Le variant c.5266dup (p.Gln1756fs) est pathogène.",
+    "Il est associé exclusivement au cancer du sein et il est pathogène.",
+    "Ce variant pathogène est décrit par une infirmière.",
+    "Les lymphocytes B et la vitamine B12 ne sont pas concernés.",
+    "Le gène code une protéine de classe I.",
+    "Il est pathogène. Non sans raison, ClinVar le documente.",
+])
+def test_ordinary_wording_near_these_words_is_still_accepted(answer):
+    check_significances(answer, [doc()])
