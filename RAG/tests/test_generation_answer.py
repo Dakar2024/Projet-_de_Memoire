@@ -32,16 +32,17 @@ def result(docs=None, question="Que sait-on de rs80357906 ?", flags=None, not_fo
 
 class StubClient:
     def __init__(self, content=None, error=None):
-        self.content, self.error, self.calls = content, error, 0
+        self.content, self.error, self.calls, self.user = content, error, 0, None
 
     def complete_json(self, profile, **kwargs):
         self.calls += 1
+        self.user = kwargs.get("user")
         if self.error:
             raise self.error
         return LlmCall(self.content, "gen-1", "Groq", 0.0, 900, 200)
 
 
-def ok(status="answered", answer="Le variant rs80357906 est pathogène.", citations=("clinvar:32716",), reason=None):
+def ok(status="answered", answer="Le variant rs80357906 est pathogène.", citations=("D1",), reason=None):
     return {"status": status, "scope_reason": reason, "answer": answer, "citations": list(citations)}
 
 
@@ -263,3 +264,36 @@ def test_literal_backslash_n_becomes_a_real_line_break():
     _, _, text, _ = validate_generation(content)
     assert text == "Variants pathogènes :\n- c.5266dup\n- c.68A>G"
     assert "\\n" not in text
+
+
+def test_a_real_doc_id_copied_as_citation_is_rejected_like_an_unknown_label():
+    # Seules les étiquettes D_k sont des citations valides : « clinvar:32716 » n'est plus transmis.
+    answer = _generate(StubClient(ok(citations=("clinvar:32716",))))
+    assert (answer.status, answer.rejected) == ("unverifiable", "citation_not_transmitted")
+
+
+@pytest.mark.parametrize("citations", [("D2",), ("D0",), ("D1", "D9"), ("",), ("d1",)])
+def test_an_unknown_label_is_a_rejection_never_a_crash(citations):
+    answer = _generate(StubClient(ok(citations=citations)))
+    assert (answer.status, answer.rejected) == ("unverifiable", "citation_not_transmitted")
+
+
+def test_labels_map_to_the_real_documents_in_transmission_order():
+    docs = [doc(), doc("clinvar:7", text=HISTORY_TEXT)]
+    answer = _generate(StubClient(ok(citations=("D2",))), result(docs=docs))
+    assert answer.status == "answered" and [s.doc_id for s in answer.sources] == ["clinvar:7"]
+
+
+def test_the_llm_receives_neutral_labels_only():
+    client = StubClient(ok())
+    _generate(client)
+    assert 'id="D1"' in client.user and "clinvar:32716" not in client.user
+
+
+@pytest.mark.parametrize("text", [
+    "Le variant rs80357906 est pathogène (document D1).",
+    "Selon D1, le variant rs80357906 est pathogène.",
+])
+def test_a_document_label_in_the_text_is_rejected(text):
+    answer = _generate(StubClient(ok(answer=text)))
+    assert (answer.status, answer.rejected) == ("unverifiable", "document_label_in_text")

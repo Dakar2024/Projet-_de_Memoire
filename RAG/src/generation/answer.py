@@ -12,7 +12,7 @@ from dataclasses import asdict, dataclass
 
 from RAG.src.generation import messages
 from RAG.src.generation.checks import verify_answer
-from RAG.src.generation.context import build_context
+from RAG.src.generation.context import build_context, resolve_citations
 from RAG.src.generation.scope import detect_out_of_scope
 from RAG.src.prompts.generation import (
     GENERATION_SCHEMA, GENERATION_SCHEMA_NAME, MAX_ANSWER_CHARS, SCOPE_REASONS, STATUSES, SYSTEM_PROMPT,
@@ -162,7 +162,6 @@ def generate_answer(question: str, result: SearchResult, *, client, profile: Llm
     except ValueError as exc:
         raise LlmUnavailableError(f"réponse de génération hors schéma : {exc}") from exc
 
-    by_id = {d.doc_id: d for d in documents}
     meta = dict(provider_name=call.provider_name, model=profile.model, cost_usd=call.cost_usd,
                 latency_ms=latency, from_llm=True, disclaimer=messages.disclaimer(_archive(documents)))
     if status == "out_of_scope":
@@ -178,11 +177,15 @@ def generate_answer(question: str, result: SearchResult, *, client, profile: Llm
             rejected = str(exc)
         return Answer(status=status, answer=messages.NO_DOCUMENT, sources=(), scope_reason=None,
                       rejected=rejected, llm_text_withheld=text, **meta)
+    # Citations D_k -> doc_id réels (table construite par le code) ; une étiquette inconnue est
+    # rejetée par les contrôles (citation_not_transmitted), jamais une erreur d'index.
+    resolved = resolve_citations(citations, documents)
     try:
-        verify_answer(text, documents, citations, status)
+        verify_answer(text, documents, resolved, status)
     except GenerationRejectedError as exc:
         return Answer(status="unverifiable", answer=messages.UNVERIFIABLE,
                       sources=tuple(_source(d) for d in documents), scope_reason=None, rejected=str(exc), **meta)
-    sources = tuple(_source(by_id[c]) for c in citations)
+    by_id = {d.doc_id: d for d in documents}
+    sources = tuple(_source(by_id[c]) for c in dict.fromkeys(resolved))
     return Answer(status=status, answer=text, sources=sources, scope_reason=None, rejected=None,
                   history=_history(sources), **meta)

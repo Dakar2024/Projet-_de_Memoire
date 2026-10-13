@@ -462,3 +462,34 @@ def test_explain_rejection_matches_the_check_chain():
     assert explain_rejection("Voir rs80357906.", [d], [], "not_in_sources") == {
         "reason": "identifier_not_in_sources", "detail": ["rs80357906"]}
     assert explain_rejection("   ", [d], [], "answered") == {"reason": "empty_answer", "detail": []}
+
+
+# --- Étiquettes de documents (D1, D2…) dans le texte ---------------------------------------
+from RAG.src.generation.checks import check_document_labels  # noqa: E402
+
+
+@pytest.mark.parametrize("answer", [
+    "Le variant est pathogène (D1).", "Selon le document D2, il est pathogène.", "d1 : pathogène.",
+    "Voir D1, D2 et D3.", "Source : [D1]",
+])
+def test_document_label_in_text_is_rejected(answer):
+    assert _reason(check_document_labels, answer, [doc(), doc("clinvar:2"), doc("clinvar:3")]) == "document_label_in_text"
+
+
+@pytest.mark.parametrize("answer", [
+    "Le variant est pathogène.", "Taille 1D3 non concernée.", "Le gène RAD51D est cité.",
+    "Vitamine D3 hors sujet.",  # D3 n'est pas une étiquette quand un seul document est transmis
+])
+def test_text_without_a_transmitted_label_passes(answer):
+    check_document_labels(answer, [doc()])
+
+
+def test_a_label_lookalike_copied_from_the_documents_is_not_a_label():
+    d = doc(text=TEXT + " Associated conditions: Fanconi anemia complementation group D1.")
+    check_document_labels("Fanconi anemia complementation group D1.", [d])
+    assert _reason(check_document_labels, "Voir D1.", [doc()]) == "document_label_in_text"
+
+
+def test_real_variation_id_of_the_card_is_still_accepted_and_the_internal_id_rejected():
+    check_identifiers("Variant (ClinVar 17677) pathogène.", [doc()])
+    assert _reason(check_identifiers, "Variant (ClinVar 32716).", [doc()]) == "identifier_not_in_sources"

@@ -9,7 +9,7 @@ import json
 from RAG.src.generation.context import escape_data
 from RAG.src.generation.messages import SIGNIFICANCE_FR
 
-GENERATION_PROMPT_VERSION = "generation-v5"
+GENERATION_PROMPT_VERSION = "generation-v6"
 GENERATION_SCHEMA_NAME = "grounded_answer"
 STATUSES = ("answered", "partial", "not_in_sources", "out_of_scope")
 SCOPE_REASONS = ("counting", "acmg", "frequency", "clinical_advice", "other")
@@ -50,8 +50,9 @@ pour ce variant". Use status "partial" when part of the question cannot be answe
 ones: status "out_of_scope", scope_reason "counting". Population frequencies are not in the \
 sources: "out_of_scope", "frequency".
 7. If the documents do not answer the question: status "not_in_sources".
-8. List in "citations" the id of every document a statement comes from. Cite only ids present \
-in the documents. "answered" and "partial" require at least one citation.
+8. List in "citations" the id (D1, D2…) of every document a statement comes from. Cite only ids \
+present in the documents. "answered" and "partial" require at least one citation. Cite documents \
+only in the "citations" field; never write a document id (D1, D2…) in the answer text.
 9. State each clinical significance positively, exactly as in the table; never negate a \
 significance (do not write 'not benign', 'n'est pas pathogène'). Never use abbreviations such as \
 VUS; write the table term.

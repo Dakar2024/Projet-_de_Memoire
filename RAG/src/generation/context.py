@@ -21,12 +21,32 @@ def _attr(value: str | None, missing: str) -> str:
     return escape(value, quote=True) if value else missing
 
 
-def render_document(doc: RetrievedDocument) -> str:
-    header = (f'<document id="{_attr(doc.doc_id, "none")}" gene="{_attr(doc.gene_symbol, "none")}" '
+def document_labels(documents: Sequence[RetrievedDocument]) -> dict[str, str]:
+    """Table identifiant neutre -> doc_id réel, construite par le code seul, dans l'ordre de
+    transmission (D1, D2…). Le LLM ne voit jamais les doc_id réels : ils ressemblent à un
+    identifiant ClinVar (« clinvar:NNN » est l'AlleleID interne, pas le Variation ID affiché)
+    et il les recopiait dans ses réponses."""
+    return {f"D{index}": doc.doc_id for index, doc in enumerate(documents, start=1)}
+
+
+UNKNOWN_CITATION_PREFIX = "<inconnue>:"
+
+
+def resolve_citations(citations: Sequence[str], documents: Sequence[RetrievedDocument]) -> list[str]:
+    """Convertit les citations du LLM (D_k) en doc_id réels. Une citation qui n'est pas une
+    étiquette transmise (inconnue, ou un doc_id réel recopié) devient une valeur inutilisable
+    comme doc_id : elle sera rejetée par check_citations, jamais une erreur d'index."""
+    mapping = document_labels(documents)
+    return [mapping.get(c, UNKNOWN_CITATION_PREFIX + c) for c in citations]
+
+
+def render_document(doc: RetrievedDocument, label: str) -> str:
+    """Bloc d'un document ; `label` (D_k) est produit par le code (document_labels)."""
+    header = (f'<document id="{label}" gene="{_attr(doc.gene_symbol, "none")}" '
               f'significance="{_attr(doc.clinical_significance, "none")}" '
               f'archive="{_attr(doc.source_version, "unknown")}">')
     return f"{header}\n{escape_data(doc.text)}\n</document>"
 
 
 def build_context(documents: Sequence[RetrievedDocument]) -> str:
-    return "\n".join(render_document(doc) for doc in documents)
+    return "\n".join(render_document(doc, f"D{index}") for index, doc in enumerate(documents, start=1))

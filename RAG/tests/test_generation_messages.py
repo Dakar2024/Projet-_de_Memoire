@@ -83,8 +83,8 @@ def test_question_keeps_gt_and_identifiers_intact():
     assert "c.68A>G &amp; rs334" in message
 
 
-def test_prompt_version_is_v5_and_sha_covers_escaping():
-    assert prompt.GENERATION_PROMPT_VERSION == "generation-v5"
+def test_prompt_version_is_v6_and_sha_covers_escaping():
+    assert prompt.GENERATION_PROMPT_VERSION == "generation-v6"
 
 
 def test_system_prompt_asks_for_concise_answers_and_short_lists():
@@ -102,3 +102,7 @@ def test_history_sentence_is_written_by_the_code():
     assert messages.history_sentence("clinvar:32716", "signification incertaine", "2015-01") == (
         "Historique ClinVar (clinvar:32716) : classé « signification incertaine » jusqu'au 2015-01, "
         "avant la classification actuelle.")
+
+
+def test_system_prompt_forbids_document_ids_in_the_text():
+    assert "never write a document id (D1, D2…) in the answer text" in prompt.SYSTEM_PROMPT

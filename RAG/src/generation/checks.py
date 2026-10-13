@@ -97,6 +97,23 @@ def check_identifiers(answer: str, documents: Sequence[RetrievedDocument], statu
             raise GenerationRejectedError("identifier_not_in_sources", [f"gène {g}" for g in sorted(unknown_genes)])
 
 
+def check_document_labels(answer: str, documents: Sequence[RetrievedDocument]) -> None:
+    """Un identifiant neutre de document (D1, D2… transmis au LLM) écrit dans le texte de la
+    réponse est rejeté, pas retiré : le retrait par le code pourrait laisser une phrase
+    tronquée ou changer son sens, et un lecteur ne doit jamais voir une étiquette interne.
+    Exception : un symbole identique figurant tel quel dans les fiches (« complementation
+    group D1 » recopié fidèlement) n'est pas une étiquette."""
+    labels = {f"D{index}" for index in range(1, len(documents) + 1)}
+    if not labels:
+        return
+    own_text = "\n".join(_clean(d.text) for d in documents)
+    in_sources = {m.upper() for m in re.findall(r"(?<![\w-])D\d+(?![\w-])", own_text, re.IGNORECASE)}
+    found = {m.upper() for m in re.findall(r"(?<![\w-])D\d+(?![\w-])", _clean(answer), re.IGNORECASE)}
+    offending = sorted((found & labels) - in_sources)
+    if offending:
+        raise GenerationRejectedError("document_label_in_text", offending)
+
+
 def _spaced(text: str) -> str:
     """Motif d'une expression : les espaces deviennent \\s+ (plusieurs espaces tolérés)."""
     return r"\s+".join(re.escape(word) for word in text.split())
@@ -283,6 +300,7 @@ def verify_answer(text: str, documents: Sequence[RetrievedDocument], citations: 
         return
     by_id = {d.doc_id: d for d in documents}
     check_citations(citations, documents, status)
+    check_document_labels(text, documents)
     check_identifiers(text, documents, status=status)
     check_no_history_narration(text)
     check_significances(text, [by_id[c] for c in citations])
