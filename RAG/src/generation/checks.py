@@ -214,15 +214,41 @@ _TERMS = _build_terms()
 _OFF_TABLE = re.compile(
     r"\bVUS\b|\bd[ée]l[ée]t[èe]res?\b|\bneutres?\b|\bind[ée]termin[ée]e?s?\b|"
     r"\bsignification\s+inconnue\b|\bpathog[ée]niques?\b|\bvraisemblablement\b|\bà\s+risque\b|"
-    r"\binoffensi\w*|\banodin\w*|\bsans\s+(?:danger|risque|cons[ée]quence)\w*|\bb[ée]n[ée]fique\w*",
+    r"\binoffensi\w*|\banodin\w*|\bsans\s+(?:danger|risque|cons[ée]quence)\w*|\bb[ée]n[ée]fique\w*|"
+    # Classes ACMG chiffrées (« classe 5 », « classé en classe 3 », « classe ACMG 4 »).
+    r"\bclasse\s+(?:ACMG\s+)?[1-5]\b",
     re.IGNORECASE,
+)
+# Abréviations de signification (P, LP, B, LB, P/LP, B/LB), hors table et sans terme reconnu :
+# sans ce motif, « classé B » pour un variant pathogène passerait. Sensible à la casse ; une
+# lettre seule ne compte qu'après un verbe de classement ou entre parenthèses (« lymphocytes B »,
+# « vitamine B12 » passent).
+_ABBREVIATIONS = re.compile(
+    r"(?<![\w./-])(?:P/LP|LP/P|B/LB|LB/B|LP|LB)(?![\w/-])"
+    r"|(?:\b(?:class[ée]e?s?|cat[ée]goris[ée]e?s?|est|sont)|:)\s+(?:en\s+|comme\s+)?[PB](?![\w/-]|\.\w)"
+    r"|\(\s*[PB]\s*\)"
 )
 _NEGATIONS = {"pas", "non", "ni", "jamais", "plus", "aucun", "aucune"}
 # Négation n'importe où dans une phrase qui porte un terme de signification : la phrase est
 # rejetée sans chercher ce que la négation porte (« Il ne s'agit en aucun cas d'un variant
 # pathogène », « pathogène selon un laboratoire, mais pas selon les autres »).
 _SENTENCE_NEGATION = re.compile(
-    r"\b(?:ne|pas|aucune?s?|jamais|rien|sans|ni|non)\b|\bn'", re.IGNORECASE)
+    r"\b(?:ne|pas|aucune?s?|jamais|rien|sans|ni|non)\b|\bn'"
+    # Inversions lexicales (revue finale n° 2) : « loin d'être », « tout sauf », « peu probable »,
+    # « écarté », « exclu » (pas « exclusivement »), « à tort », « faux / faussement »,
+    # « contrairement », « réfuté », « infirmé » (pas « infirmière »).
+    r"|\bloin\s+d|\btout\s+sauf\b|\bpeu\s+probable\w*|\bimprobable\w*|\b[ée]cart[ée]\w*"
+    r"|\bexclu(?!sivement)\w*|\bà\s+tort\b|\bfaux\b|\bfausse\w*|\bcontrairement\b"
+    r"|\br[ée]fut\w*|\binfirm(?!i[eè]r)\w*",
+    re.IGNORECASE)
+# Atténuations : une signification ClinVar est affirmée telle quelle, jamais rétrogradée en
+# hypothèse (« potentiellement pathogène ») ni renforcée (« hautement pathogène »).
+_SENTENCE_HEDGE = re.compile(
+    r"\b(?:potentiellement|possiblement|[ée]ventuellement|hautement|pourrai\w*)\b|\bpeut[- ]être\b",
+    re.IGNORECASE)
+# Phrase réduite à une réfutation (« Pathogène ? Non. », « … Faux. ») : le découpage sur « ? »
+# sépare le terme de sa négation ; elle est rejetée quand la phrase précédente porte un terme.
+_REFUTATION = re.compile(r"^\W*(?:non|faux|fausse|inexact\w*|incorrect\w*|erron[ée]\w*)\W*$", re.IGNORECASE)
 _SENTENCES = re.compile(r"(?<=[.!?;])\s+")
 # Formules exactes masquées (remplacées par des espaces) avant le test de négation. Elles
 # recopient le statut de revue ClinVar (« no conflicts », « no assertion criteria provided »),
@@ -267,6 +293,10 @@ def _term_spans(sentence: str) -> list[tuple[int, str]]:
     if negation:
         raise GenerationRejectedError(
             "significance_not_in_sources", [f"négation « {negation.group()} » dans la phrase : {sentence.strip()}"])
+    hedge = _SENTENCE_HEDGE.search(sentence) if found else None
+    if hedge:
+        raise GenerationRejectedError(
+            "significance_not_in_sources", [f"atténuation « {hedge.group()} » dans la phrase : {sentence.strip()}"])
     return sorted(found)
 
 
@@ -486,14 +516,18 @@ def check_significances(answer: str, cited: Sequence[RetrievedDocument]) -> None
     for _ids, sigs, _doc_id in keyed:
         current |= sigs
     text = _clean(answer)
-    off_table = _OFF_TABLE.search(text)
+    off_table = _OFF_TABLE.search(text) or _ABBREVIATIONS.search(text)
     if off_table:
         raise GenerationRejectedError("significance_not_in_sources",
                                       [f"qualificatif hors table : {off_table.group()}"])
     text = _mask_disease_names(text, cited)
     text = _NEUTRAL_PHRASES.sub(lambda m: " " * len(m.group()), text)
+    previous_terms: list = []
     for sentence in _SENTENCES.split(text):
-        terms = _term_spans(sentence)
+        if previous_terms and _REFUTATION.match(sentence):
+            raise GenerationRejectedError(
+                "significance_not_in_sources", [f"réfutation après un terme de signification : {sentence.strip()}"])
+        terms = previous_terms = _term_spans(sentence)
         unsourced = {t for _, t in terms} - current
         if unsourced:
             raise GenerationRejectedError(

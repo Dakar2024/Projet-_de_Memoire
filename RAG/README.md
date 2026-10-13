@@ -360,11 +360,18 @@ seulement si :
   plus appartenir à un document **cité** (`identifier_not_cited`) : sinon le variant d'une fiche
   transmise mais non citée pourrait recevoir la signification d'une autre fiche, citée. Les gènes
   peuvent venir de n'importe quel texte transmis.
-- **Signification actuelle** : toute signification clinique affirmée est celle du document cité ; une
-  signification d'un autre libellé ou en anglais est rejetée, de même que toute phrase qui porte un
-  terme de signification et une négation n'importe où (`ne`, `n'`, `pas`, `aucun`, `jamais`, `rien`,
-  `sans`, `ni`, `non`) et tout qualificatif hors table (« VUS », « inoffensif », « sans danger »,
-  « anodin », « bénéfique », « incertain » seul…). Avant ce test, une **liste fermée** de formules est
+- **Signification actuelle** : chaque terme de signification **reconnu** par le contrôle (termes de
+  la table, en français ou en anglais) doit être une signification actuelle d'un document cité ; le
+  contrôle reste **lexical** et n'attrape que les formulations qu'il connaît (limites : §9.11). Est
+  rejetée toute phrase qui porte un terme de signification et une négation ou une inversion n'importe
+  où (`ne`, `n'`, `pas`, `aucun`, `jamais`, `rien`, `sans`, `ni`, `non`, « loin d'être », « tout
+  sauf », « peu probable », « improbable », « écarté », « exclu », « à tort », « faux / faussement »,
+  « contrairement », « réfuté », « infirmé »), ou une atténuation (« potentiellement »,
+  « possiblement », « éventuellement », « hautement », « peut-être », « pourrait ») ; une phrase
+  réduite à « Non. », « Faux. », « Inexact. » après une phrase qui porte un terme ; tout qualificatif
+  hors table (« VUS », « inoffensif », « sans danger », « anodin », « bénéfique », « incertain »
+  seul…), les abréviations (« P », « LP », « B », « LB », « P/LP », « B/LB » après un verbe de
+  classement ou entre parenthèses) et les classes ACMG chiffrées (« classe 5 »). Avant ce test, une **liste fermée** de formules est
   masquée, parce que leur négation ne porte jamais sur la signification : « aucun / sans / pas de conflit(s) (d'interprétation(s)) »
   (statut de revue ClinVar « no conflicts » ; seule l'expression est masquée, « pas de conflit, il n'est
   pas pathogène » reste rejeté), « aucun critère (d'évaluation) fourni » (« no assertion
@@ -618,8 +625,9 @@ rejets : `reference/recette_e2b.md`.
 - **Contrôle de signification par motifs** : il reste lexical. Les lacunes connues ont été comblées
   (« classé incertain », « inoffensif », « sans danger », « Uncertain-significance », négation après
   le terme), mais une formulation nouvelle peut encore lui échapper : le contrôle n'est **pas** sûr
-  dans les deux sens. Une phrase est découpée sur `.`, `!`, `?` et `;` : « Pathogène ? Non. » sépare
-  le terme de sa négation. À l'inverse, une phrase (ou une liste sans point final, qui forme une seule
+  dans les deux sens. Une phrase est découpée sur `.`, `!`, `?` et `;` : une réfutation détachée
+  (« Pathogène ? Non. ») n'est rejetée que sous les formes connues (« Non. », « Faux. »,
+  « Inexact. »…). À l'inverse, une phrase (ou une liste sans point final, qui forme une seule
   « phrase » : les puces ne sont pas découpées) est rejetée dès qu'elle contient une négation qui ne
   porte pas sur la signification. Le premier rejeu du 09/10/2026 en a rejeté 7 de la partie 1 à tort,
   à cause de formules sans rapport avec la signification : le statut de revue traduit (« aucun
