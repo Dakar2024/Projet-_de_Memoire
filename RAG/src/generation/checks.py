@@ -90,6 +90,18 @@ _VARIANT_FORMS = (
 _MITO = re.compile(r"\bm\.\d+(?:_\d+)?(?:[ACGT]>[ACGT]|del[ACGT]*|dup[ACGT]*|ins[ACGT]+)", re.IGNORECASE)
 # Notation de répétition (« c.569CTC[1] ») : ses crochets ne sont pas de la mise en forme.
 _REPEAT = re.compile(r"\bc\.[0-9_+*-]+[ACGT]+\[\d+\]", re.IGNORECASE)
+# Délétion, duplication ou insertion protéique en phase (« p.Pro191del », « p.Val218_Ile219del »,
+# « p.Leu230_Ser231insTer ») : non extraites par retrieval/identifiers.py (re-relecture de la
+# vague n° 2, N5) ; contrôlées ici sous leur forme écrite, comme la répétition.
+_P_INFRAME = re.compile(
+    r"\bp\.\(?([A-Z][a-z]{2}\d+(?:_[A-Z][a-z]{2}\d+)?(?:delins(?:[A-Z][a-z]{2})+|del|dup|ins(?:[A-Z][a-z]{2})+))"
+    r"\)?(?![\w*])")
+
+
+def _local_spans(text: str) -> list[tuple[int, int, str]]:
+    """Répétitions et délétions protéiques en phase : (début, fin, forme), bases en majuscules."""
+    return ([(m.start(), m.end(), "c." + m.group()[2:].upper()) for m in _REPEAT.finditer(text)]
+            + [(m.start(), m.end(), "p." + m.group(1)) for m in _P_INFRAME.finditer(text)])
 
 
 def _normalize_variant_forms(text: str) -> str:
@@ -101,9 +113,12 @@ def _normalize_variant_forms(text: str) -> str:
 def _text_ids(text: str) -> _VariantIds:
     text = _normalize_variant_forms(text)
     ids = extract_identifiers(text)
+    local = _local_spans(text)
     return _VariantIds(frozenset(f"rs{r}" for r in ids.rs),
-                       frozenset(ids.hgvs_c) | frozenset(m.group() for m in _MITO.finditer(text)),
-                       frozenset(ids.hgvs_p), frozenset(_VARIATION_ID.findall(text)))
+                       frozenset(ids.hgvs_c) | frozenset(m.group() for m in _MITO.finditer(text))
+                       | frozenset(key for _, _, key in local if key.startswith("c.")),
+                       frozenset(ids.hgvs_p) | frozenset(key for _, _, key in local if key.startswith("p.")),
+                       frozenset(_VARIATION_ID.findall(text)))
 
 
 def _doc_ids(d: RetrievedDocument) -> _VariantIds:
@@ -288,7 +303,10 @@ _OFF_TABLE = re.compile(
     r"\bsignification\s+inconnue\b|\bpathog[ée]niques?\b|\bvraisemblablement\b|\bà\s+risque\b|"
     r"\binoffensi\w*|\banodin\w*|\bsans\s+(?:danger|risque|cons[ée]quence)\w*|\bb[ée]n[ée]fique\w*|"
     # Classes ACMG chiffrées (« classe 5 », « classé en classe 3 », « classe ACMG 4 »).
-    r"\bclasse\s+(?:ACMG\s+)?[1-5]\b",
+    r"\bclasse\s+(?:ACMG\s+)?[1-5]\b"
+    # N4 : « classé 5 », « classé V », « classé en classe V », « de classe V » (« classe I » reste :
+    # vocabulaire de biologie, « protéine de classe I »).
+    r"|\bclass(?:é|ee)e?s?\s+(?:en\s+)?(?:classe\s+)?(?:[1-5]|IV|V|I{1,3})\b|\bclasse\s+(?:IV|V)\b",
     re.IGNORECASE,
 )
 # Abréviations de signification (P, LP, B, LB, P/LP, B/LB), hors table et sans terme reconnu :
@@ -299,6 +317,8 @@ _ABBREVIATIONS = re.compile(
     r"(?<![\w./-])(?:P/LP|LP/P|B/LB|LB/B|LP|LB)(?![\w/-])"
     r"|(?:\b(?:class[ée]e?s?|cat[ée]goris[ée]e?s?|est|sont)|:)\s+(?:en\s+|comme\s+)?[PB](?![\w/-]|\.\w)"
     r"|\(\s*[PB]\s*\)"
+    # N4 : « classé b » (minuscule) après un verbe de classement.
+    r"|(?i:\bclass[ée]e?s?\s+(?:en\s+|comme\s+)?[pb])(?![\w/-]|\.\w)"
 )
 _NEGATIONS = {"pas", "non", "ni", "jamais", "plus", "aucun", "aucune"}
 # Négation n'importe où dans une phrase qui porte un terme de signification : la phrase est
@@ -311,16 +331,36 @@ _SENTENCE_NEGATION = re.compile(
     # « contrairement », « réfuté », « infirmé » (pas « infirmière »).
     r"|\bloin\s+d|\btout\s+sauf\b|\bpeu\s+probable\w*|\bimprobable\w*|\b[ée]cart[ée]\w*"
     r"|\bexclu(?!sivement)\w*|\bà\s+tort\b|\bfaux\b|\bfausse\w*|\bcontrairement\b"
-    r"|\br[ée]fut\w*|\binfirm(?!i[eè]r)\w*",
+    r"|\br[ée]fut\w*|\binfirm(?!i[eè]r)\w*"
+    # Re-relecture de la vague n° 2 (N4) : « erreur », « contesté », « discutable », « douteux »,
+    # « remis en cause », « obsolète », « ancien(ne) » (classification).
+    r"|\berreur\w*|\bcontest\w*|\bdiscutable\w*|\bdouteu\w*|\bremis\w*\s+en\s+cause"
+    r"|\bobsol[èe]te\w*|\bancien(?:ne)?s?\b",
     re.IGNORECASE)
 # Atténuations : une signification ClinVar est affirmée telle quelle, jamais rétrogradée en
 # hypothèse (« potentiellement pathogène ») ni renforcée (« hautement pathogène »).
 _SENTENCE_HEDGE = re.compile(
-    r"\b(?:potentiellement|possiblement|[ée]ventuellement|hautement|pourrai\w*)\b|\bpeut[- ]être\b",
+    r"\b(?:potentiellement|possiblement|[ée]ventuellement|hautement|pourrai\w*)\b|\bpeut[- ]être\b"
+    # N4 : « présumé », « supposé », « suspecté », « semble », « serait », « faiblement »,
+    # « plutôt », « a priori ».
+    r"|\bpr[ée]sum\w*|\bsuppos\w*|\bsuspect\w*|\bsembl\w*|\bserai\w*|\bfaiblement\b"
+    r"|\bplut[ôo]t\b|\ba\s+priori\b",
     re.IGNORECASE)
+# N6 : « pourrait » sur une CONSÉQUENCE, écrit après tous les termes de la phrase (« X est
+# pathogène et pourrait augmenter le risque de cancer ») ne porte pas sur la signification.
+# Liste fermée de verbes ; « pourrait l'être », « pourrait être », ou « pourrait » avant le
+# terme restent rejetés.
+_CONSEQUENCE_COULD = re.compile(
+    r"\bpourrai\w*\s+(?:augmenter|accro[îi]tre|favoriser|entra[îi]ner|contribuer|expliquer|pr[ée]disposer)\b",
+    re.IGNORECASE)
+# Temps passé dans une phrase qui porte un terme (N4) : « était pathogène », « On a longtemps
+# cru… » raconteraient une classification passée ; l'historique est restitué par le code.
+_SENTENCE_PAST = re.compile(r"\b(?:[ée]tai(?:t|ent)|fut|furent|longtemps)\b", re.IGNORECASE)
 # Phrase réduite à une réfutation (« Pathogène ? Non. », « … Faux. ») : le découpage sur « ? »
 # sépare le terme de sa négation ; elle est rejetée quand la phrase précédente porte un terme.
-_REFUTATION = re.compile(r"^\W*(?:non|faux|fausse|inexact\w*|incorrect\w*|erron[ée]\w*)\W*$", re.IGNORECASE)
+_REFUTATION = re.compile(
+    r"^\W*(?:(?:absolument|totalement|compl[èe]tement|tout\s+[àa]\s+fait|c['’]est)\s+)?"
+    r"(?:non|faux|fausse|inexact\w*|incorrect\w*|erron[ée]\w*|(?:que\s+)?nenni|ou\s+pas)\W*$", re.IGNORECASE)
 _SENTENCES = re.compile(r"(?<=[.!?;])\s+")
 # Formules exactes masquées (remplacées par des espaces) avant le test de négation. Elles
 # recopient le statut de revue ClinVar (« no conflicts », « no assertion criteria provided »),
@@ -381,10 +421,18 @@ def _term_spans(sentence: str) -> list[tuple[int, str]]:
     if negation:
         raise GenerationRejectedError(
             "significance_not_in_sources", [f"négation « {negation.group()} » dans la phrase : {sentence.strip()}"])
-    hedge = _SENTENCE_HEDGE.search(sentence) if found else None
+    last_term = max((pos for pos, _ in found), default=-1)
+    consequence = [m.span() for m in _CONSEQUENCE_COULD.finditer(sentence) if m.start() > last_term]
+    hedges = [m for m in _SENTENCE_HEDGE.finditer(sentence)
+              if not any(start <= m.start() < end for start, end in consequence)] if found else []
+    hedge = hedges[0] if hedges else None
     if hedge:
         raise GenerationRejectedError(
             "significance_not_in_sources", [f"atténuation « {hedge.group()} » dans la phrase : {sentence.strip()}"])
+    past = _SENTENCE_PAST.search(sentence) if found else None
+    if past:
+        raise GenerationRejectedError(
+            "significance_not_in_sources", [f"temps passé « {past.group()} » dans la phrase : {sentence.strip()}"])
     return sorted(found)
 
 
@@ -458,7 +506,8 @@ def _current(d: RetrievedDocument) -> set[str]:
 
 def _mentions(sentence: str) -> list[tuple[int, int, str]]:
     """Identifiants de variant d'une phrase (début, fin, forme) : rs, c., p. et Variation ID."""
-    spans = variant_spans(sentence) + [(m.start(), m.end(), m.group(1)) for m in _VARIATION_ID.finditer(sentence)]
+    spans = (variant_spans(sentence) + _local_spans(sentence)
+             + [(m.start(), m.end(), m.group(1)) for m in _VARIATION_ID.finditer(sentence)])
     return sorted(spans)
 
 
@@ -478,6 +527,7 @@ _CARRIER_NOUN = re.compile(
 _SECTION_TAIL = re.compile(r"[ \t]*:?[ \t]*")
 _SECTION_NOUN = re.compile(r"#|\b(?:variant|variante|mutation)s?\b", re.IGNORECASE)
 _INCERTAIN = re.compile(r"\bincertain\w*", re.IGNORECASE)
+_PLURAL_TERM = re.compile(r"\b(?:pathog[èe]nes|b[ée]nins|b[ée]nignes|incertaines)\b", re.IGNORECASE)
 
 
 def _term_end(sentence: str, pos: int) -> int:
@@ -551,8 +601,18 @@ def _check_variant_pairing(sentence: str, terms: list[tuple[int, str]],
     def pair(variants: list[list[str]], group: list[str]) -> None:
         """Bloc de termes appliqué à une suite de variants ; « respectivement » avec autant
         de termes que de variants : dans l'ordre."""
-        if _RESPECTIVELY.search(sentence) and len(group) >= 2 and len(group) == len(variants):
-            for variant, term in zip(variants, group):
+        # Variants comptés par fiche (N5) : un rs d'une autre fiche intercalé (« X et Y (rs de X) »)
+        # ne doit pas fausser le compte.
+        cards: list[list] = []
+        for variant in variants:
+            docs = frozenset().union(*(docs_of(key) for key in variant))
+            same = next((card for card in cards if card[0] & docs), None)
+            if same is None:
+                cards.append([docs, list(variant)])
+            else:
+                same[1].extend(variant)
+        if _RESPECTIVELY.search(sentence) and len(group) >= 2 and len(group) == len(cards):
+            for (_, variant), term in zip(cards, group):
                 if term not in significances(variant):
                     reject(variant, [term])
             return
@@ -644,7 +704,10 @@ def _check_variant_pairing(sentence: str, terms: list[tuple[int, str]],
             # d'autres variants pathogènes » : X doit être pathogène).
             others[i - 1] = group
             continue
-        if _INSIDE_PARENTHESIS.search(between):
+        # Parenthèse juste après un variant : ce seul variant, sauf terme au pluriel après une
+        # liste (« X et Y (pathogènes) », N5) : toute la suite.
+        if _INSIDE_PARENTHESIS.search(between) and not any(
+                _PLURAL_TERM.search(sentence[pos:_term_end(sentence, pos)]) for pos in positions):
             variants = variants[-1:]
         scopes.setdefault(i, variants)
         own |= {id(v) for v in variants}

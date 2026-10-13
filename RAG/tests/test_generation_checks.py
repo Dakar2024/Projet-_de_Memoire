@@ -923,3 +923,115 @@ def test_correct_forms_with_the_significance_before_the_variant_pass(answer):
 def test_a_value_line_after_its_variant_still_binds_backwards():
     answer = "- c.4837A>G\n  Signification : pathogène\n- c.5266dup\n  Signification : bénin"
     assert _verdict(answer) == "significance_not_in_sources"
+
+
+# --- N4 (re-relecture de la vague n° 2) : traîne lexicale des inversions et atténuations ------
+@pytest.mark.parametrize("answer", [
+    "On a longtemps cru que ce variant était pathogène.",
+    "Ce variant était pathogène.",
+    "Ce variant fut pathogène.",
+    "Il est pathogène selon une ancienne classification.",
+    "Pathogène (classement obsolète).",
+    "Certains le disent pathogène, mais c'est une erreur.",
+    "Ce variant est pathogène — erreur.",
+    "Le caractère pathogène est contesté.",
+    "Le caractère pathogène est discutable.",
+    "Le caractère pathogène est douteux.",
+    "Le caractère pathogène a été remis en cause.",
+    "Ce variant est présumé pathogène.",
+    "Ce variant est supposé pathogène.",
+    "Ce variant est suspecté d'être pathogène.",
+    "Ce variant semble pathogène.",
+    "Ce variant serait pathogène.",
+    "Ce variant est faiblement pathogène.",
+    "Ce variant est plutôt pathogène.",
+    "Ce variant est a priori pathogène.",
+    "Pathogène ? Absolument faux.",
+    "Ce variant est pathogène ? C'est faux.",
+    "Ce variant est pathogène ? Que nenni.",
+    "Ce variant est pathogène. Ou pas.",
+    "Ce variant est classé 5.",
+    "Ce variant est classé en classe V.",
+    "Ce variant est de classe V.",
+    "Ce variant est classé « B ».",
+    'Ce variant est classé "B".',
+    "Ce variant est classé b.",
+    "Ce variant est classé V.",
+])
+def test_remaining_inversions_and_softenings_are_rejected(answer):
+    assert _reason(check_significances, answer, [doc()]) == "significance_not_in_sources"
+
+
+@pytest.mark.parametrize("answer", [
+    "Le variant est pathogène. La protéine produite était tronquée.",
+    "L'ensemble des laboratoires le classent pathogène.",
+    "Il est classé pathogène depuis 2015.",
+    "Le gène code une protéine de classe I.",
+    "Ce variant pathogène est incontestablement décrit.",
+])
+def test_neighbouring_ordinary_wording_is_still_accepted(answer):
+    check_significances(answer, [doc()])
+
+
+# --- N6 : « pourrait » après une signification correctement appariée -------------------------
+@pytest.mark.parametrize("answer", [
+    "Le variant c.5266dup est pathogène et pourrait augmenter le risque de cancer du sein.",
+    "Ce variant est pathogène ; il pourrait favoriser un cancer de l'ovaire.",
+    "Ce variant pathogène pourrait entraîner une protéine tronquée.",
+])
+def test_could_about_the_consequence_after_the_significance_is_accepted(answer):
+    check_significances(answer, [doc()])
+
+
+@pytest.mark.parametrize("answer", [
+    "Ce variant pourrait être pathogène.",
+    "Pathogène, ce variant pourrait l'être.",
+    "Ce variant pourrait augmenter le risque et il est pathogène.",
+    "Ce variant est pathogène et pourrait l'être davantage.",
+    "Ce variant est pathogène, potentiellement.",
+    "Ce variant est pathogène et pourrait augmenter le risque, potentiellement.",
+])
+def test_could_about_the_significance_itself_is_still_rejected(answer):
+    assert _reason(check_significances, answer, [doc()]) == "significance_not_in_sources"
+
+
+# --- N5 : notations de répétition et délétions protéiques ; « respectivement » par fiche ; -----
+# parenthèse au pluriel après une liste.
+REPEAT_TEXT = ("Variant NM_058216.3(RAD51C):c.1048GTT[3] (p.Val351dup), gene RAD51C. "
+               "ClinVar Variation ID 588261. Clinical significance: Uncertain significance.")
+INFRAME_TEXT = ("Variant NM_058216.3(RAD51C):c.977_979del (p.Leu326del), gene RAD51C. "
+                "ClinVar Variation ID 410000. Clinical significance: Likely benign.")
+REPEAT = variant_doc("clinvar:777", REPEAT_TEXT, "Uncertain significance", "c.1048GTT[3]", "p.Val351dup",
+                     None, "588261")
+INFRAME = variant_doc("clinvar:666", INFRAME_TEXT, "Likely benign", "c.977_979del", "p.Leu326del", None, "410000")
+
+
+@pytest.mark.parametrize("answer", [
+    "Le variant c.9999CTC[4] est pathogène.",
+    "Le variant p.Pro3333del est pathogène.",
+    "Le variant p.Val218_Ile219del est pathogène.",
+    "Le variant **c.9999CTC[4]** est pathogène.",
+])
+def test_invented_repeat_and_inframe_notations_are_rejected(answer):
+    assert _verdict(answer) == "identifier_not_in_sources"
+
+
+def test_repeat_and_inframe_notations_of_the_cards_are_paired():
+    docs, ids = [PATHO, REPEAT, INFRAME], [PATHO.doc_id, REPEAT.doc_id, INFRAME.doc_id]
+    good = ("- c.5266dup : pathogène\n- c.1048GTT[3] (p.Val351dup) : signification incertaine\n"
+            "- c.977_979del (p.Leu326del) : probablement bénin")
+    assert _verdict(good, docs, ids) is None
+    assert _verdict("Le variant c.1048GTT[3] est pathogène.", docs, ids) == "significance_not_in_sources"
+    assert _verdict("Le variant p.Leu326del est pathogène.", docs, ids) == "significance_not_in_sources"
+
+
+def test_respectively_counts_variants_by_card():
+    assert _verdict("c.4837A>G et c.5266dup (rs1799966) sont pathogène et bénin respectivement.") \
+        == "significance_not_in_sources"
+    assert _verdict("c.5266dup et c.4837A>G (rs1799966) sont pathogène et bénin respectivement.") is None
+
+
+def test_a_plural_parenthesis_after_a_list_covers_the_whole_list():
+    assert _verdict("c.4837A>G et c.5266dup (pathogènes).") == "significance_not_in_sources"
+    assert _verdict("c.5266dup et c.5123C>A (pathogènes ou probablement pathogènes).") is None
+    assert _verdict("c.5266dup, c.4837A>G (bénin).") is None
