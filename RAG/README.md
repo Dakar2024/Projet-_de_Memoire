@@ -340,8 +340,18 @@ le modèle d'embedding servi est celui de l'index (§8.2).
 Le LLM rend un JSON strict (`status`, `scope_reason`, `answer`, `citations`). Le code accepte le texte
 seulement si :
 
-- **Citations** : chaque source citée est l'un des 10 documents transmis ; la liste affichée des
-  sources vient du code, pas du LLM.
+- **Identifiants neutres** : les documents transmis portent des étiquettes `D1`…`Dn` (ordre de
+  transmission), jamais leur `doc_id` interne. Raison : `clinvar:NNN` est l'AlleleID interne, pas le
+  Variation ID affiché dans la fiche ; le modèle le recopiait comme « ClinVar NNN » (10 des 18 rejets
+  de la recette d'octobre) et induisait le lecteur en erreur. La table `Dk -> doc_id` est construite par
+  le code seul (`context.document_labels`).
+- **Citations** : chaque source citée est une étiquette `Dk` des documents transmis, convertie par le
+  code en `doc_id` réel ; une étiquette inconnue (ou un `doc_id` recopié) est un rejet
+  (`citation_not_transmitted`), jamais une erreur. La liste affichée des sources vient du code.
+- **Étiquette dans le texte** : une étiquette `Dk` transmise écrite dans la réponse est **rejetée**
+  (`document_label_in_text`), non retirée : un retrait par le code pourrait laisser une phrase tronquée
+  ou en changer le sens. Exception : un symbole identique présent tel quel dans les fiches
+  (« complementation group D1 »). Le Variation ID réel de la fiche reste accepté s'il est écrit.
 - **Identifiants** : tout identifiant du texte (rs, HGVS c./p., identifiant ClinVar, gène) est présent
   dans un document cité ou dans les textes transmis ; un identifiant inventé rejette la réponse.
 - **Signification actuelle** : toute signification clinique affirmée est celle du document cité ; une
@@ -349,11 +359,16 @@ seulement si :
   terme de signification et une négation n'importe où (`ne`, `n'`, `pas`, `aucun`, `jamais`, `rien`,
   `sans`, `ni`, `non`) et tout qualificatif hors table (« VUS », « inoffensif », « sans danger »,
   « anodin », « bénéfique », « incertain » seul…). Avant ce test, une **liste fermée** de formules est
-  masquée, parce que leur négation ne porte jamais sur la signification : « aucun / sans conflit(s) »
-  (statut de revue ClinVar « no conflicts »), « aucun critère (d'évaluation) fourni » (« no assertion
+  masquée, parce que leur négation ne porte jamais sur la signification : « aucun / sans / pas de conflit(s) (d'interprétation(s)) »
+  (statut de revue ClinVar « no conflicts » ; seule l'expression est masquée, « pas de conflit, il n'est
+  pas pathogène » reste rejeté), « aucun critère (d'évaluation) fourni » (« no assertion
   criteria provided »), « ClinVar ne documente pas de phénotype pour ce variant » (phrase imposée par
   le prompt pour les fiches maigres), « d'autres variantes non listées ici » (liste tronquée ; seule cette
-  formule est masquée, et pas si elle est suivie de « comme » ou « en tant ») et « non sphérocytaire » (nom de maladie). « non listé » seul n'est **pas** masqué :
+  formule est masquée, et pas si elle est suivie de « comme » ou « en tant ») et « non sphérocytaire » (nom de maladie). **Noms de maladie** : un terme de signification inclus dans
+  un nom de maladie ou de phénotype des documents **cités** (lignes `Associated conditions` /
+  `Related phenotypes`), recopié mot pour mot (insensible à la casse, au moins deux mots), n'est pas
+  compté ; seule cette portion exacte est neutralisée (une traduction du modèle, comme « excroissances
+  bénignes » pour *Macrocephaly-autism syndrome*, ne l'est pas). « non listé » seul n'est **pas** masqué :
   « Ce variant est non listé comme pathogène » reste rejeté. Un « \n » littéral émis par le modèle
   est ramené à un vrai retour à la ligne avant tout contrôle.
 - **Historique restitué par le code** : le LLM ne raconte jamais l'historique de classification
@@ -374,7 +389,7 @@ seulement si :
   reçoivent un texte écrit par le code. Un `not_in_sources` du LLM reçoit **toujours** le message fixe
   « Aucune fiche ClinVar du panel ne correspond à cette question » : son texte libre n'est jamais livré
   (seule la recette le consigne, `llm_text_withheld`, pour examen).
-- **Longueur** : réponse de 1 500 caractères au plus (prompt v5), 4 000 au maximum dur.
+- **Longueur** : réponse de 1 500 caractères au plus (prompt v6), 4 000 au maximum dur.
 
 **Ce qui n'est PAS vérifié par le code** : les maladies et phénotypes cités, et le reste du texte
 libre (reformulations, liens logiques). Seuls les identifiants, les citations et les significations
