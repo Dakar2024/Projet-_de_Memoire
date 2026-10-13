@@ -127,7 +127,27 @@ def test_history_of_a_cited_document_is_restored_by_the_code():
     source = answer.sources[0]
     assert (source.previous_significance, source.previous_significance_fr, source.previous_until) == (
         "Uncertain significance", "signification incertaine", "2015-01")
-    assert answer.history == (messages.history_sentence("clinvar:32716", "signification incertaine", "2015-01"),)
+    assert answer.history == (messages.history_sentence("c.5266dup", "17677", "signification incertaine", "2015-01"),)
+    assert answer.history[0].startswith("Historique ClinVar (c.5266dup, Variation ID 17677) : ")
+    assert "clinvar:" not in answer.history[0] and "32716" not in answer.history[0]
+
+
+def test_history_sentence_designates_the_variant_without_the_internal_id():
+    full = messages.history_sentence("NM_007294.4:c.5266dup", "17677", "signification incertaine", "2015-01")
+    assert full.startswith("Historique ClinVar (NM_007294.4:c.5266dup, Variation ID 17677) : classé « signification")
+    only_vid = messages.history_sentence(None, "17677", "bénin", "2015-01")
+    assert only_vid.startswith("Historique ClinVar (Variation ID 17677) : ")
+    none = messages.history_sentence(None, None, "bénin", "2015-01")
+    assert none.startswith("Historique ClinVar : classé « bénin »") and "(" not in none
+    for sentence in (full, only_vid, none):
+        assert "clinvar:" not in sentence.lower()
+
+
+def test_history_falls_back_to_protein_name_then_nothing_in_the_answer():
+    d = doc(text=HISTORY_TEXT)
+    d = RetrievedDocument(**{**d.__dict__, "hgvs_c": None, "clinvar_variation_id": None})
+    answer = _generate(StubClient(ok()), result(docs=[d]))
+    assert answer.history[0].startswith("Historique ClinVar (p.Gln1756fs) : ")
 
 
 def test_no_history_when_the_cited_document_has_none():

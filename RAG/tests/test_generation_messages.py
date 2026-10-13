@@ -99,8 +99,8 @@ def test_system_prompt_forbids_negated_significances_and_abbreviations():
 
 
 def test_history_sentence_is_written_by_the_code():
-    assert messages.history_sentence("clinvar:32716", "signification incertaine", "2015-01") == (
-        "Historique ClinVar (clinvar:32716) : classé « signification incertaine » jusqu'au 2015-01, "
+    assert messages.history_sentence("c.5266dup", "17677", "signification incertaine", "2015-01") == (
+        "Historique ClinVar (c.5266dup, Variation ID 17677) : classé « signification incertaine » jusqu'au 2015-01, "
         "avant la classification actuelle.")
 
 

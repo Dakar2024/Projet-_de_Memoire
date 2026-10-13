@@ -89,7 +89,9 @@ def _source(d: RetrievedDocument) -> Source:
 
 def _history(sources) -> tuple[str, ...]:
     """Une phrase par source citée ayant un historique, dans l'ordre des citations."""
-    return tuple(messages.history_sentence(s.doc_id, s.previous_significance_fr, s.previous_until)
+    # Nom HGVS : transcrit (hgvs_c) sinon protéine (hgvs_p) ; jamais le doc_id interne.
+    return tuple(messages.history_sentence(s.variant or s.protein, s.clinvar_variation_id,
+                                           s.previous_significance_fr, s.previous_until)
                  for s in sources if s.previous_significance_fr and s.previous_until)
 
 
