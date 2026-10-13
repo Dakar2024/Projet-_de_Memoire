@@ -81,7 +81,13 @@ def identifiers_not_found(identifiers: list[str]) -> str:
             "(les noms historiques comme « 5382insC » ou « Glu6Val » ne sont pas reconnus).")
 
 
-def history_sentence(doc_id: str, previous_fr: str, until: str) -> str:
-    """Phrase d'historique écrite par le code, jamais par le LLM, pour une source citée."""
-    return (f"Historique ClinVar ({doc_id}) : classé « {previous_fr} » jusqu'au {until}, "
+def history_sentence(variant: str | None, variation_id: str | None, previous_fr: str, until: str) -> str:
+    """Phrase d'historique écrite par le code, jamais par le LLM, pour une source citée.
+    Le variant est désigné par son nom HGVS et son Variation ID ClinVar, tous deux issus de
+    la fiche ; l'AlleleID interne (doc_id) n'est jamais affiché, un lecteur le prendrait pour
+    un Variation ID et tomberait sur un autre variant. Sans l'un ni l'autre : aucune parenthèse."""
+    designation = ", ".join(part for part in (variant, f"Variation ID {variation_id}" if variation_id else None)
+                            if part)
+    where = f" ({designation})" if designation else ""
+    return (f"Historique ClinVar{where} : classé « {previous_fr} » jusqu'au {until}, "
             "avant la classification actuelle.")
