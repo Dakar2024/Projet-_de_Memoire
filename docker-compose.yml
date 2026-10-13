@@ -525,6 +525,11 @@ services:
     # `--no-access-log` : le journal JSON de l'API (une ligne par question, sans texte) suffit.
     command: ["uvicorn", "RAG.src.api.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000",
               "--workers", "1", "--no-server-header", "--no-access-log", "--log-level", "info"]
+    # Arrêt : uvicorn laisse finir les requêtes en cours (au plus api.request_timeout_s = 120 s
+    # chacune, puis 503), puis le lifespan attend les fils actifs au plus 120 s avant de fermer
+    # les connexions. 2 × 120 s + 10 s de marge ; sans cela Docker tue le processus au bout de
+    # 10 s. Au repos, l'arrêt reste immédiat. Lié à config.yaml par test_compose_security.py.
+    stop_grace_period: 250s
     # Aucun port publié : Docker n'en publie pas pour un conteneur relié seulement à
     # des réseaux internes. L'entrée passe par rag-gateway (rag-gateway-net) ; l'API
     # reste sans sortie directe (Internet uniquement par rag-proxy).
