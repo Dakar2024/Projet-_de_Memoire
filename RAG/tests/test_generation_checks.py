@@ -790,3 +790,61 @@ def test_the_truncated_list_formula_does_not_cover_a_significance_after_it(answe
 
 def test_the_truncated_list_formula_is_still_masked_at_the_end_of_a_list():
     check_significances("Le variant c.5266dup est pathogène (et d'autres variantes non listées ici).", [doc()])
+
+
+# --- N1 (re-relecture de la vague n° 2) : délimiteurs Markdown ou ASCII collés à un identifiant ---
+# Sans normalisation, « **c.9999A>G** » n'était pas extrait : identifiant inventé et appariement
+# variant ↔ signification contournés par une simple mise en forme.
+@pytest.mark.parametrize("answer", [
+    "Le variant **c.9999A>G** est pathogène.",
+    "Le variant **p.Arg9999Ter** est pathogène.",
+    "Le variant `c.9999A>G` est pathogène.",
+    'Le variant "c.9999A>G" est pathogène.',
+    "Le variant [c.9999A>G] est pathogène.",
+    "Le variant _c.9999A>G_ est pathogène.",
+    "Le variant *c.9999A>G* est pathogène.",
+    "Le variant c.9999A>G* est pathogène.",
+    "Le variant 'c.9999A>G' est pathogène.",
+    "Le variant ~~c.9999A>G~~ est pathogène.",
+    "Le variant <b>c.9999A>G</b> est pathogène.",
+    "| c.9999A>G| pathogène |",
+    "Le variant **rs99999999** est pathogène.",
+    "Le variant **p.Arg9999***, pathogène.",
+])
+def test_an_invented_identifier_in_markup_is_still_rejected(answer):
+    assert _verdict(answer) == "identifier_not_in_sources"
+
+
+@pytest.mark.parametrize("answer", [
+    "**c.4837A>G** — *pathogène*",
+    "**NM_007294.4(BRCA1):c.4837A>G** : pathogène",
+    "Le variant `c.4837A>G` est pathogène.",
+    'Le variant "c.4837A>G" est pathogène.',
+    "Le variant c.4837A>G est _pathogène_.",
+    "- **c.4837A>G** (rs1799966) : **pathogène**",
+])
+def test_a_swapped_significance_in_markup_is_still_rejected(answer):
+    assert _verdict(answer) == "significance_not_in_sources"
+
+
+@pytest.mark.parametrize("answer", [
+    "- **c.5266dup** (rs80357906) : **pathogène**\n- **c.4837A>G** (`rs1799966`) : *bénin*",
+    "Le variant _c.5266dup_ est **pathogène** et le variant \"c.4837A>G\" est bénin.",
+    "| Variant | Signification |\n|---|---|\n|c.5266dup|pathogène|\n|c.4837A>G|bénin|",
+])
+def test_correct_answers_in_markup_pass(answer):
+    assert _verdict(answer) is None
+
+
+@pytest.mark.parametrize(("text", "expected"), [
+    ("p.Arg337*", "p.Arg337Ter"),
+    ("**p.Arg337***", "p.Arg337Ter"),
+    ("c.*123A>G", "c.*123A>G"),
+    ("p.Gln1756Profs*74", "p.Gln1756fs"),
+    ("c.68_69del", "c.68_69del"),
+    ("c.-61-9703_-61-9700del", "c.-61-9703_-61-9700del"),
+    ("NM_007294.4(BRCA1):c.5266dup", "c.5266dup"),
+])
+def test_markup_removal_keeps_the_stars_and_underscores_of_hgvs(text, expected):
+    from RAG.src.generation.checks import _answer_text, _text_ids
+    assert expected in _text_ids(_answer_text(text))
