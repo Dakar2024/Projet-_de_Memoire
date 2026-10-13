@@ -362,19 +362,33 @@ seulement si :
   peuvent venir de n'importe quel texte transmis. Les graphies voisines sont ramenées à la forme
   extraite avant le contrôle : « dbSNP 80357999 », « rs-12345 », « p.(Gln1756Profs*74) »,
   « c. 5266dup », « c.5266 dup » ; un HGVS mitochondrial (« m.3243A>G ») absent des textes transmis
-  est rejeté.
+  est rejeté. La **mise en forme** collée à un identifiant (gras ou italique Markdown, code,
+  guillemets droits ou simples, crochets, barres de tableau, balises) est ramenée à des espaces avant
+  l'extraction, dans les seuls contrôles (l'extraction des questions de E2a n'est pas modifiée) :
+  « **c.9999A>G** » ou « `c.9999A>G` » inventés sont rejetés ; les « * » et « _ » du HGVS
+  (« c.*123A>G », « p.Arg337* », « c.68_69del ») sont conservés. Les répétitions (« c.1048GTT[3] »)
+  et délétions ou duplications protéiques en phase (« p.Leu326del », « p.Val218_Ile219del ») sont
+  contrôlées sous leur forme écrite.
 - **Signification actuelle** : chaque terme de signification **reconnu** par le contrôle (termes de
   la table, en français ou en anglais) doit être une signification actuelle d'un document cité ; le
   contrôle reste **lexical** et n'attrape que les formulations qu'il connaît (limites : §9.11). Est
   rejetée toute phrase qui porte un terme de signification et une négation ou une inversion n'importe
   où (`ne`, `n'`, `pas`, `aucun`, `jamais`, `rien`, `sans`, `ni`, `non`, « loin d'être », « tout
   sauf », « peu probable », « improbable », « écarté », « exclu », « à tort », « faux / faussement »,
-  « contrairement », « réfuté », « infirmé »), ou une atténuation (« potentiellement »,
-  « possiblement », « éventuellement », « hautement », « peut-être », « pourrait ») ; une phrase
-  réduite à « Non. », « Faux. », « Inexact. » après une phrase qui porte un terme ; tout qualificatif
+  « contrairement », « réfuté », « infirmé », « erreur », « contesté », « discutable », « douteux »,
+  « remis en cause », « obsolète », « ancien(ne) »), une atténuation (« potentiellement »,
+  « possiblement », « éventuellement », « hautement », « peut-être », « pourrait », « présumé »,
+  « supposé », « suspecté », « semble », « serait », « faiblement », « plutôt », « a priori ») ou le
+  passé (« était », « fut », « longtemps » : l'historique est restitué par le code). Seule exception,
+  « pourrait » suivi d'un verbe de conséquence (« augmenter », « favoriser », « entraîner »…) **après**
+  tous les termes de la phrase (« X est pathogène et pourrait augmenter le risque ») ; « pourrait
+  être / l'être » ou « pourrait » avant le terme restent rejetés. Est rejetée aussi une phrase
+  réduite à « Non. », « Faux. », « Inexact. », « C'est faux. », « Absolument faux. », « Ou pas. »,
+  « Que nenni. » après une phrase qui porte un terme ; tout qualificatif
   hors table (« VUS », « inoffensif », « sans danger », « anodin », « bénéfique », « incertain »
   seul…), les abréviations (« P », « LP », « B », « LB », « P/LP », « B/LB » après un verbe de
-  classement ou entre parenthèses) et les classes ACMG chiffrées (« classe 5 »). Avant ce test, une **liste fermée** de formules est
+  classement ou entre parenthèses, « classé b », « classé « B » ») et les classes ACMG chiffrées
+  (« classe 5 », « classé 5 », « classé V », « de classe V » ; « classe I » reste du vocabulaire). Avant ce test, une **liste fermée** de formules est
   masquée, parce que leur négation ne porte jamais sur la signification : « aucun / sans / pas de conflit(s) (d'interprétation(s)) »
   (statut de revue ClinVar « no conflicts » ; seule l'expression est masquée, « pas de conflit, il n'est
   pas pathogène » reste rejeté), « aucun critère (d'évaluation) fourni » (« no assertion
@@ -400,8 +414,20 @@ seulement si :
   « X et d'autres variants pathogènes » oblige X à être pathogène, mais « W (bénin) et d'autres
   variantes probablement pathogènes » ne relie pas le second terme à W. Le sens « après le variant »
   est celui de toutes les listes acceptées de la recette ; regarder des deux côtés laisserait passer
-  une permutation entre voisins. Une phrase sans identifiant de variant (« Ce variant est
-  pathogène ») garde la règle des documents cités.
+  une permutation entre voisins. Il ne s'inverse que sur des formes reconnues : terme en début de
+  ligne ou de puce (« - pathogène : X »), terme séparé du variant suivant par des espaces, « : » ou
+  « ( » seulement (« le variant pathogène X et le variant bénin Y », « Pathogène : X, bénin : Y »),
+  en-tête de section seul sur sa ligne (« Variants bénins : », « ### Variants pathogènes »), qui
+  vaut pour les variants suivants jusqu'à l'en-tête suivant ; quand un terme peut porter sur les deux
+  voisins (« X : pathogène (Y) »), les deux doivent concorder. « respectivement » compte les variants
+  par fiche (un rs de la même fiche intercalé ne fausse pas le compte) ; une parenthèse au pluriel
+  après une liste (« X et Y (pathogènes) ») porte sur toute la liste. **Phrase voisine** : une phrase
+  qui porte des termes sans nommer de variant (« Il est pathogène », « Signification : pathogène »,
+  « Tous deux sont pathogènes ») porte sur les variants nommés par la dernière phrase qui en nomme
+  (sauf « autres », « plusieurs », « certains » ; une phrase sans variant ni terme coupe ce contexte) ;
+  une phrase qui nomme des variants sans terme mais avec « aussi », « également », « de même »,
+  « idem » ou « l'est » reprend les termes de la phrase précédente. Une phrase sans identifiant de
+  variant et sans variant dans la phrase précédente garde la règle des documents cités.
 - **Historique restitué par le code** : le LLM ne raconte jamais l'historique de classification
   (« auparavant », « reclassé », « jusqu'en 2019 » sont rejetés) ; le code ajoute lui-même une phrase
   « Historique ClinVar … » depuis la ligne `Classification history` du Gold. Le variant y est désigné par
@@ -504,7 +530,10 @@ recherche, nombre de sources. Une réponse arrivée après le délai (jamais liv
 `late_result` (statut, coût, modèle) ou `late_error` (classe de l'exception). À l'arrêt, l'API attend
 les fils encore actifs (au plus `request_timeout_s`) avant de fermer ses connexions à la base ; un fil
 toujours actif après ce délai est signalé par `shutdown_threads_active`, et son rendu d'emplacement
-tardif par `release_after_shutdown`. Le journal d'accès
+tardif par `release_after_shutdown`. `stop_grace_period: 250s` (Compose) laisse le temps à cette
+attente : uvicorn finit d'abord les requêtes en cours (au plus `request_timeout_s` chacune), puis
+l'attente des fils (au plus `request_timeout_s`) ; sans ce délai, Docker tuerait le processus au bout
+de 10 s. Au repos, l'arrêt reste immédiat. Le journal d'accès
 d'uvicorn est coupé (`--no-access-log`) : il répéterait chaque requête. **Ni la question, ni la
 réponse, ni la clé, ni l'en-tête** : la
 passerelle journalise `méthode chemin statut durée`, sans chaîne de requête ; le proxy journalise
@@ -644,6 +673,13 @@ rejets : `reference/recette_e2b.md`.
 
 - **Listes de phénotypes polluées** (modes de transmission, âges) dans les documents : à traiter
   après la première mesure RAGAS (E3).
+- **Les contrôles réduisent le risque, ils ne l'éliminent pas.** Identifiants, citations et
+  significations sont contrôlés par des **motifs lexicaux** : chaque vague de relecture a trouvé de
+  nouvelles formulations qui leur échappaient (mise en forme Markdown, phrase suivante, terme placé
+  avant le variant, nouveaux mots d'atténuation), corrigées une à une. Une fausse signification
+  peut encore être livrée sous une forme que les motifs ne connaissent pas. L'étape suivante — mesure
+  de la fidélité aux fiches (*faithfulness*) et, si elle le justifie, un second modèle vérificateur —
+  relève de E3.
 - **Contrôle de signification par motifs** : il reste lexical. Les lacunes connues ont été comblées
   (« classé incertain », « inoffensif », « sans danger », « Uncertain-significance », négation après
   le terme), mais une formulation nouvelle peut encore lui échapper : le contrôle n'est **pas** sûr
@@ -663,10 +699,19 @@ rejets : `reference/recette_e2b.md`.
   fréquence) ou échapper aux règles (le LLM tranche alors).
 - **Permutation entre deux documents cités** : détectée dès que la phrase écrit l'identifiant du
   variant (appariement variant ↔ signification, §9.2) ; **non détectée** quand la phrase ne le nomme
-  pas (« Ce variant est pathogène », « Le premier est bénin ») et que plusieurs fiches citées ont des
-  significations différentes. Sens prudent de l'appariement : une construction mêlée (« le variant
-  pathogène X et le variant bénin Y », terme avant le variant puis après) est rejetée à tort ; un
-  variant nommé sans aucun terme dans sa phrase n'a rien à contrôler.
+  pas, ni dans la phrase ni dans la précédente (« Le premier est bénin » après une phrase sans
+  variant), et que plusieurs fiches citées ont des significations différentes ; un gène seul (« Le
+  variant de BRCA1 est pathogène ») ne désigne pas de fiche. Sens prudent de l'appariement : une phrase
+  générale qui suit une liste (« Les variants pathogènes augmentent le risque ») est rejetée si un
+  variant de la liste n'a pas ce terme ; « aussi » ou « de même » dans une phrase qui nomme un variant
+  sans terme lui imposent les termes de la phrase précédente ; un terme entre parenthèses après
+  « X : pathogène » qui nomme un autre variant (« (Y : bénin) ») est rejeté. Restent acceptées sans
+  appariement : « X et Y sont pathogène ou bénin » (chaque variant a l'un des termes), une liste
+  annoncée par un terme suivi de « respectivement » avant les variants. Les tournures d'atténuation
+  ou de réfutation hors des listes du §9.2 (« selon un seul laboratoire », « Que nenni » sous une
+  autre forme…) ne sont pas reconnues ; à l'inverse « hautement pénétrant », « éventuellement
+  transmis » ou « ne figure dans aucune autre fiche » font rejeter à tort une réponse juste (sens
+  sûr).
 - « et N autres » (comptes de listes) n'est pas vérifié.
 - Noms historiques de variants (« 5382insC », « Glu6Val ») non reconnus ; un symbole du type « CD4 »
   peut être pris pour un gène hors panel (§8.6).
