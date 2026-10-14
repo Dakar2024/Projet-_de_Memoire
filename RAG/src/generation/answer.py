@@ -174,7 +174,7 @@ def generate_answer(question: str, result: SearchResult, *, client, profile: Llm
         # (contre aucun document) pour consigner un éventuel code de rejet dans la recette.
         rejected = None
         try:
-            verify_answer(text, [], [], status)
+            verify_answer(text, [], [], status, question)
         except GenerationRejectedError as exc:
             rejected = str(exc)
         return Answer(status=status, answer=messages.NO_DOCUMENT, sources=(), scope_reason=None,
@@ -186,7 +186,7 @@ def generate_answer(question: str, result: SearchResult, *, client, profile: Llm
     # rejetée par les contrôles (citation_not_transmitted), jamais une erreur d'index.
     resolved = resolve_citations(citations, documents)
     try:
-        verify_answer(text, documents, resolved, status)
+        verify_answer(text, documents, resolved, status, question)
     except GenerationRejectedError as exc:
         return Answer(status="unverifiable", answer=messages.UNVERIFIABLE,
                       sources=tuple(_source(d) for d in documents), scope_reason=None, rejected=str(exc), **meta)

@@ -499,6 +499,45 @@ def _disease_names(cited: Sequence[RetrievedDocument]) -> list[str]:
     return sorted(names, key=len, reverse=True)
 
 
+# Correctif post-recette n° 2 (2026-10-14) : P1-B09 et P1-C20 ont été rejetées parce que la
+# réponse reprenait la paraphrase de la question, « syndrome de multiples excroissances
+# bénignes », où « bénignes » qualifie des tumeurs, pas un variant. Un terme de signification
+# est neutralisé quand le mot qui le précède et le terme lui-même figurent côte à côte, tels
+# quels, dans la question, SAUF si ce mot désigne un variant ou introduit une classification
+# (« variants pathogènes », « classé bénin », « est pathogène ») : là, le terme porte sur un
+# variant et reste contrôlé, même recopié de la question.
+_VARIANT_CARRIERS = re.compile(
+    r"^(?:variant\w*|mutation\w*|all[èe]le\w*|forme\w*|modification\w*|changement\w*|alt[ée]ration\w*"
+    r"|substitution\w*|d[ée]l[ée]tion\w*|insertion\w*|duplication\w*|class\w*|cat[ée]goris\w*"
+    r"|consid[ée]r\w*|jug[ée]\w*|reconnu\w*|signification\w*|statut\w*|interpr[ée]t\w*"
+    r"|est|sont|[êe]tre|comme|et|ou|tr[èe]s|plus|moins)$", re.IGNORECASE)
+_WORD_BEFORE = re.compile(r"([^\W\d_][\w'’-]*)\s+$")
+
+
+def _fold(text: str) -> str:
+    """Minuscules, sans accents, espaces réduits : comparaison avec la question."""
+    folded = unicodedata.normalize("NFD", text.lower())
+    folded = "".join(c for c in folded if unicodedata.category(c) != "Mn")
+    return re.sub(r"\s+", " ", folded).strip()
+
+
+def _mask_question_phrases(text: str, question: str) -> str:
+    if not question:
+        return text
+    folded_question = f" {_fold(question)} "
+    spans: list[tuple[int, int]] = []
+    for _term, pattern in _TERMS:
+        for match in pattern.finditer(text):
+            before = _WORD_BEFORE.search(text[:match.start()])
+            if not before or _VARIANT_CARRIERS.match(before.group(1)):
+                continue
+            if f" {_fold(before.group(1) + ' ' + match.group())} " in folded_question:
+                spans.append(match.span())
+    for start, end in sorted(spans, reverse=True):
+        text = text[:start] + " " * (end - start) + text[end:]
+    return text
+
+
 def _mask_disease_names(text: str, cited: Sequence[RetrievedDocument]) -> str:
     """Remplace par des espaces les occurrences exactes (insensibles à la casse) d'un nom de
     maladie des documents cités qui contient un terme de signification : seule cette portion
@@ -755,7 +794,7 @@ def _check_variant_pairing(sentence: str, terms: list[tuple[int, str]],
             check(orphans, governing, every_term=False)
 
 
-def check_significances(answer: str, cited: Sequence[RetrievedDocument]) -> None:
+def check_significances(answer: str, cited: Sequence[RetrievedDocument], question: str = "") -> None:
     """Chaque signification de la réponse est la signification actuelle d'un document cité
     (champ `clinical_significance` et ligne « Clinical significance ») ; dans une phrase qui
     nomme des variants, elle est en plus celle de la fiche du variant auquel elle se rapporte
@@ -771,6 +810,7 @@ def check_significances(answer: str, cited: Sequence[RetrievedDocument]) -> None
         raise GenerationRejectedError("significance_not_in_sources",
                                       [f"qualificatif hors table : {off_table.group()}"])
     text = _mask_disease_names(text, cited)
+    text = _mask_question_phrases(text, question)
     text = _NEUTRAL_PHRASES.sub(lambda m: " " * len(m.group()), text)
     previous_terms: list = []
     context: list[str] = []  # variants nommés par la dernière phrase qui en nomme (N2)
@@ -857,7 +897,7 @@ def check_not_empty(text: str) -> None:
 
 
 def verify_answer(text: str, documents: Sequence[RetrievedDocument], citations: Sequence[str],
-                  status: str) -> None:
+                  status: str, question: str = "") -> None:
     """Chaîne complète des contrôles, dans l'ordre : la seule définition, utilisée par la
     génération et par le diagnostic hors ligne. Statut `not_in_sources` : le texte libre est
     contrôlé contre aucun document (sert seulement à consigner un code de rejet)."""
@@ -865,7 +905,7 @@ def verify_answer(text: str, documents: Sequence[RetrievedDocument], citations: 
     if status == "not_in_sources":
         check_identifiers(text, [], status=status)
         check_no_history_narration(text)
-        check_significances(text, [])
+        check_significances(text, [], question)
         return
     by_id = {d.doc_id: d for d in documents}
     check_citations(citations, documents, status)
@@ -874,15 +914,15 @@ def verify_answer(text: str, documents: Sequence[RetrievedDocument], citations: 
     cited = [by_id[c] for c in citations]
     check_identifiers_cited(text, cited)
     check_no_history_narration(text)
-    check_significances(text, cited)
+    check_significances(text, cited, question)
 
 
 def explain_rejection(text: str, documents: Sequence[RetrievedDocument], citations: Sequence[str],
-                      status: str) -> dict | None:
+                      status: str, question: str = "") -> dict | None:
     """Pourquoi la réponse est rejetée : {"reason": code, "detail": [éléments déclencheurs]},
     ou None si elle passe. Même chaîne que la génération (verify_answer), aucune divergence."""
     try:
-        verify_answer(text, documents, citations, status)
+        verify_answer(text, documents, citations, status, question)
     except GenerationRejectedError as exc:
         return {"reason": str(exc), "detail": list(exc.detail)}
     return None

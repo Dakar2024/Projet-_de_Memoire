@@ -1070,3 +1070,40 @@ def test_after_removal_the_check_passes_and_uncited_labels_are_still_rejected():
     check_document_labels(strip_cited_labels("Pathogène [D1] (voir D2).", ["D1", "D2"]), docs)
     assert _reason(check_document_labels, strip_cited_labels("Pathogène [D3].", ["D1"]), docs) == \
         "document_label_in_text"
+
+
+# --- Correctif post-recette n° 2 : expression reprise de la question --------------------------
+QUESTION_B09 = ("Variants de PTEN responsables d'un syndrome de multiples excroissances bénignes "
+                "avec risque accru de cancer")
+
+
+def test_a_term_inside_a_phrase_copied_from_the_question_is_not_a_significance():
+    """P1-B09 : « excroissances bénignes » vient de la question et qualifie des tumeurs."""
+    answer = ("Le variant c.5266dup, associé à un syndrome de multiples excroissances bénignes avec "
+              "risque accru de cancer, est pathogène.")
+    check_significances(answer, [doc()], QUESTION_B09)
+    # Sans la question, le terme reste lu comme une signification absente de la fiche.
+    assert _reason(check_significances, answer, [doc()]) == "significance_not_in_sources"
+
+
+def test_the_copied_phrase_must_appear_word_for_word_in_the_question():
+    answer = "Le variant c.5266dup, associé à des lésions bénignes, est pathogène."
+    assert _reason(check_significances, answer, [doc()], QUESTION_B09) == "significance_not_in_sources"
+
+
+@pytest.mark.parametrize("question,answer", [
+    # Le terme porte sur un variant : il reste contrôlé même s'il vient de la question.
+    ("Quels variants bénins de BRCA1 ?", "Les variants bénins de BRCA1 : c.5266dup."),
+    ("Le variant c.5266dup est-il bénin ?", "Le variant c.5266dup est bénin."),
+    ("Variants classés bénins de BRCA1", "c.5266dup : classé bénin."),
+    ("Mutations bénignes de BRCA1", "Mutations bénignes : c.5266dup."),
+])
+def test_a_copied_term_that_qualifies_a_variant_is_still_checked(question, answer):
+    assert _reason(check_significances, answer, [doc()], question) == "significance_not_in_sources"
+
+
+def test_the_question_reaches_the_check_through_verify_answer():
+    from RAG.src.generation.checks import verify_answer
+    answer = ("Le variant c.5266dup, associé à un syndrome de multiples excroissances bénignes avec "
+              "risque accru de cancer, est pathogène.")
+    verify_answer(answer, [doc()], ["clinvar:32716"], "answered", QUESTION_B09)
