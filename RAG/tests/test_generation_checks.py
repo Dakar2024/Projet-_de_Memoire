@@ -1049,6 +1049,7 @@ from RAG.src.generation.checks import strip_cited_labels  # noqa: E402
     ("Phénotypes similaires (voir D2).", ["D2"], "Phénotypes similaires."),
     ("Pathogène ( d 1 ).", ["D1"], "Pathogène."),
     ("Pathogène (D1 et D2).", ["D1", "D2"], "Pathogène."),
+    ("- c.764del : pathogène [D1] \n- c.790del : pathogène", ["D1"], "- c.764del : pathogène\n- c.790del : pathogène"),
 ])
 def test_cited_parenthetical_labels_are_removed(answer, citations, expected):
     assert strip_cited_labels(answer, citations) == expected

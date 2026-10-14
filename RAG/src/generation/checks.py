@@ -265,7 +265,9 @@ def strip_cited_labels(answer: str, citations: Sequence[str]) -> str:
     def replace(match: re.Match) -> str:
         return "" if _label_set(match.group("labels")) <= cited else match.group()
 
-    return _PAREN_REFERENCE.sub(replace, answer)
+    stripped = _PAREN_REFERENCE.sub(replace, answer)
+    # Espaces laissés en fin de ligne par un retrait (« … (voir la fiche ClinVar) [D1] »).
+    return stripped if stripped == answer else re.sub(r"[ \t]+$", "", stripped, flags=re.MULTILINE)
 
 
 def check_document_labels(answer: str, documents: Sequence[RetrievedDocument]) -> None:

@@ -348,11 +348,14 @@ seulement si :
 - **Citations** : chaque source citée est une étiquette `Dk` des documents transmis, convertie par le
   code en `doc_id` réel ; une étiquette inconnue (ou un `doc_id` recopié) est un rejet
   (`citation_not_transmitted`), jamais une erreur. La liste affichée des sources vient du code.
-- **Étiquette dans le texte** : une étiquette `Dk` transmise écrite dans la réponse est **rejetée**
-  (`document_label_in_text`), non retirée : un retrait par le code pourrait laisser une phrase tronquée
-  ou en changer le sens. Seuls les emplois en référence sont rejetés : entre parenthèses ou crochets,
-  seule ou en liste (« (D1) », « [D2] », « (D1, D2) », « (voir D2) »), derrière un mot de renvoi
-  (document, source, fiche, voir, selon, cf.), ou en tête de phrase suivie de « : » ; espace (« D 1 ») et
+- **Étiquette dans le texte** : une référence **entre parenthèses ou crochets** dont toutes les
+  étiquettes sont **déjà citées** par le modèle (« [D3] », « (voir D2) », « (voir par ex. D1, D2) »,
+  « (cf. D4) », « (document D1) », « (source : D1) ») est **retirée** du texte livré : c'est une incise,
+  son retrait ne tronque pas la phrase et ne change pas les fiches citées (correctif post-recette n° 1,
+  `checks.strip_cited_labels` ; 6 des 17 rejets de la recette étaient des réponses justes ainsi
+  écrites). Toute autre référence est **rejetée** (`document_label_in_text`) : étiquette non citée,
+  derrière un mot de renvoi dans la phrase (« Selon D2, … », « voir D1 » hors parenthèse), ou en tête
+  de phrase suivie de « : » ; là, un retrait pourrait laisser une phrase tronquée. Espace (« D 1 ») et
   casse (« d1 ») compris. Le vocabulaire médical (« cycline D1 », « vitamine D3 », « groupe D ») passe. Le Variation ID réel de la fiche reste accepté s'il est écrit.
 - **Identifiants** : tout identifiant du texte (rs, HGVS c./p., identifiant ClinVar, gène) est présent
   dans les textes transmis ; un identifiant inventé rejette la réponse (`identifier_not_in_sources`).
@@ -395,14 +398,22 @@ seulement si :
   criteria provided »), « ClinVar ne documente pas de phénotype pour ce variant » (phrase imposée par
   le prompt pour les fiches maigres), « d'autres variantes non listées ici » (liste tronquée ; seule cette
   formule est masquée, et pas si elle est suivie de « comme » ou « en tant », ni d'un terme de
-  signification dans la même phrase : « d'autres variantes non listées ici sont pathogènes » est rejeté) et « non sphérocytaire » (nom de maladie). **Noms de maladie** : un terme de signification inclus dans
+  signification dans la même phrase : « d'autres variantes non listées ici sont pathogènes » est rejeté), « non sphérocytaire » (nom de maladie) et « sans mention / sans précision de syndrome,
+  maladie, condition, phénotype, pathologie, affection, sous-type » (précision sur la condition
+  déposée, correctif post-recette n° 3). **Expression reprise de la question** (correctif n° 2) : un
+  terme de signification dont le mot précédent et lui-même figurent côte à côte dans la question
+  (« excroissances bénignes ») n'est pas compté, sauf si ce mot désigne un variant ou introduit une
+  classification (« variants bénins », « mutations bénignes », « classé bénin », « est bénin ») : là,
+  le terme porte sur un variant et reste contrôlé. **Noms de maladie** : un terme de signification inclus dans
   un nom de maladie ou de phénotype des documents **cités** (lignes `Associated conditions` /
   `Related phenotypes`), recopié mot pour mot (insensible à la casse, au moins deux mots), n'est pas
   compté ; seule cette portion exacte est neutralisée (une traduction du modèle, comme « excroissances
   bénignes » pour *Macrocephaly-autism syndrome*, ne l'est pas). « non listé » seul n'est **pas** masqué :
   « Ce variant est non listé comme pathogène » reste rejeté. Un « \n » littéral émis par le modèle
   est ramené à un vrai retour à la ligne avant tout contrôle.
-- **Variant ↔ signification** : dans une phrase qui nomme des variants (rs, c., p., Variation ID),
+- **Variant ↔ signification** : dans une phrase qui nomme des variants (rs, c., p., Variation ID, et
+  **nom historique** d'une fiche citée sans HGVS dans son titre, comme « G6PD ZURICH » : correctif
+  post-recette n° 4),
   chaque terme de signification est relié au variant voisin et doit être une signification actuelle
   de **la fiche de ce variant**, pas seulement d'une fiche citée. Les identifiants consécutifs d'une
   même fiche (« c.4837A>G (p.Ser1613Gly, rs1799966) ») forment un variant. Règle d'appariement
@@ -442,8 +453,14 @@ seulement si :
   « ablation de l'exon / du gène / du domaine / de la région ») et, **seulement si la question contient
   un contexte personnel** (« je », « ma », « sœur », « enfants », « patiente », « porteuse »…), « peut-il »
   et « indiqué(e)(s) » : « Ce variant peut-il causer une anémie ? » reste une question factuelle) reçoivent un message fixe sans appel au LLM ; « nombre de soumissionnaires » et « classé
-  selon les laboratoires / les soumissionnaires » (données de la fiche) ne sont pas détectés ; la règle du prompt reste un second
-  filet (questions hors domaine, `other`). Règles écrites avec la seule série de développement (§9.10).
+  selon les laboratoires / les soumissionnaires » (données de la fiche) ne sont pas détectés. Hors
+  domaine (`other`, correctif post-recette n° 5), deux **listes fermées** examinées en dernier : une
+  demande de création (« écris / rédige / invente / raconte … un poème, une chanson, une blague, une
+  histoire… », ou « poème », « chanson », « blague », « horoscope » seuls) et des sujets de culture
+  générale (« capitale », « président », « premier ministre », « météo », « football », « recette de
+  cuisine ») ; un hors-sujet absent de ces listes reste au LLM (second filet). Règles écrites avec la
+  série de développement ; la règle « création » l'a été **après** avoir vu la série de contrôle de la
+  recette (§9.10) : cette série n'est plus une mesure indépendante.
 - **Messages fixes** : hors périmètre, gène hors panel, document introuvable et réponse non vérifiable
   reçoivent un texte écrit par le code. Un `not_in_sources` du LLM reçoit **toujours** le message fixe
   « Aucune fiche ClinVar du panel ne correspond à cette question » : son texte libre n'est jamais livré
