@@ -1126,3 +1126,47 @@ def test_a_negation_about_the_condition_is_neutral(answer):
 ])
 def test_other_negations_still_reject(answer):
     assert _reason(check_significances, answer, [doc()]) == "significance_not_in_sources"
+
+
+# --- Correctif post-recette n° 4 : noms historiques des fiches sans HGVS ------------------------
+def _g6pd(doc_id, title, sig, hgvs=None, rs=None):
+    text = (f"Variant {title}, gene G6PD, chromosome Xq28.\nClinVar Variation ID {doc_id[-3:]}.\n"
+            f"Clinical significance: {sig}.\n")
+    return RetrievedDocument(doc_id=doc_id, doc_type="variant", text=text, gene_symbol="G6PD",
+                             clinical_significance=sig, review_status=None, rs_dbsnp=rs, hgvs_c=hgvs,
+                             hgvs_p=None, clinvar_variation_id=None, clinvar_url=None, source_version="2026-10",
+                             similarity=0.9, stage="filtered")
+
+
+G6PD_DOCS = [
+    _g6pd("clinvar:25428", "NM_000402.4(G6PD):c.1478G>A (p.Arg493His)", "Pathogenic", hgvs="c.1478G>A"),
+    _g6pd("clinvar:25459", "G6PD ZURICH", "Pathogenic/Likely pathogenic"),
+    _g6pd("clinvar:25460", "G6PD VARNSDORF", "Pathogenic"),
+]
+
+
+def test_a_variant_named_by_its_historical_name_gets_its_own_card():
+    """P1-B19 : le segment « G6PD ZURICH (…) » n'hérite plus du variant du segment précédent."""
+    answer = ("Les variantes pathogènes sont : NM_000402.4(G6PD):c.1478G>A (p.Arg493His) (Pathogenic) ; "
+              "G6PD ZURICH (Pathogenic/Likely pathogenic) ; G6PD VARNSDORF (Pathogenic).")
+    check_significances(answer, G6PD_DOCS)
+
+
+def test_the_historical_name_is_paired_strictly():
+    # VARNSDORF n'est que « Pathogenic » dans sa fiche : « probablement pathogène » est rejeté,
+    # même si une autre fiche citée (ZURICH) porte ce terme.
+    answer = "G6PD ZURICH : pathogène. G6PD VARNSDORF : probablement pathogène."
+    assert _reason(check_significances, answer, G6PD_DOCS) == "significance_not_in_sources"
+
+
+def test_a_term_only_sentence_after_a_name_inherits_that_card():
+    assert _reason(check_significances, "Le variant G6PD VARNSDORF est décrit. Il est probablement pathogène.",
+                   G6PD_DOCS) == "significance_not_in_sources"
+    check_significances("Le variant G6PD VARNSDORF est décrit. Il est pathogène.", G6PD_DOCS)
+
+
+def test_hgvs_titles_and_short_names_are_not_names():
+    from RAG.src.generation.checks import _doc_name
+    assert _doc_name(G6PD_DOCS[0]) is None
+    assert _doc_name(G6PD_DOCS[1]) == "G6PD ZURICH"
+    assert _doc_name(_g6pd("clinvar:1", "Hb S", "Pathogenic")) is None
