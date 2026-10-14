@@ -104,6 +104,25 @@ _RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
         r"\ble\s+plus\s+grand\s+nombre\b",
         r"\bquel(?:le)?s?\s+genes?\b.*\ble\s+plus\b",
     )),
+    # Correctif post-recette n° 5 (2026-10-14) : « other » n'avait aucune règle et le LLM
+    # répondait `not_in_sources` au lieu de `out_of_scope` (recette E2b, P4-10 de la série de
+    # développement). Deux listes FERMÉES, examinées en dernier : une demande de création
+    # (poème, chanson, blague…) et des sujets de culture générale sans lien avec la génomique.
+    # Une liste fermée plutôt qu'une règle « aucun mot du domaine » : le vocabulaire médical est
+    # ouvert (« macrocéphalie », « retard de croissance »…) et une telle règle bloquerait des
+    # questions légitimes. Limite : un hors-sujet absent des listes reste au LLM (second filet).
+    ("other", (
+        r"\b(?:ecri[st]|ecrire|redige[sz]?|rediger|compose[sz]?|composer|invente[sz]?|inventer"
+        r"|raconte[sz]?|raconter)\b.*\b(?:poemes?|chansons?|blagues?|histoires?|contes?|recits?"
+        r"|haikus?|slogans?|romans?|nouvelles?|raps?|vers|dissertations?)\b",
+        r"\b(?:poemes?|chansons?|blagues?|haikus?|horoscopes?)\b",
+        r"\bcapitales?\b",
+        r"\bpresident(?:e|s|es)?\b",
+        r"\bpremier\s+ministre\b",
+        r"\bmeteo\b",
+        r"\bfootball\b",
+        r"\brecettes?\s+de\s+cuisine\b",
+    )),
 )
 _COMPILED = tuple((reason, tuple(re.compile(p) for p in patterns)) for reason, patterns in _RULES)
 _APOSTROPHES = str.maketrans({"’": "'", "‘": "'", "`": "'", "´": "'"})
@@ -118,7 +137,7 @@ def normalize(question: str) -> str:
 
 
 def detect_out_of_scope(question: str) -> str | None:
-    """Raison hors périmètre (counting, acmg, frequency, clinical_advice) ou `None`."""
+    """Raison hors périmètre (counting, acmg, frequency, clinical_advice, other) ou `None`."""
     text = normalize(question)
     for reason, patterns in _COMPILED:
         if any(p.search(text) for p in patterns):

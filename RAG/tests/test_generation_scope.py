@@ -18,9 +18,8 @@ GENUINE_IN_SEARCH_SET = {"P3-05": "frequency"}
 
 @pytest.mark.parametrize("q", DEVELOPMENT, ids=[q["id"] for q in DEVELOPMENT])
 def test_development_set_reasons(q):
-    expected = q["expected_scope_reason"]
-    # « other » (hors domaine) n'a pas de règle : il reste au LLM.
-    assert detect_out_of_scope(q["question"]) == (None if expected == "other" else expected)
+    # « other » (hors domaine) a des règles depuis le correctif post-recette n° 5.
+    assert detect_out_of_scope(q["question"]) == q["expected_scope_reason"]
 
 
 def test_no_false_positive_on_the_search_questions():
@@ -67,7 +66,6 @@ def test_invented_out_of_scope_questions(question, reason):
     "Quel est le statut de revue du variant rs334 ?",
     "Quels phénotypes sont décrits pour les variants pathogènes de STK11 ?",
     "Que sait-on du gène HBS1L ?",
-    "Quelle est la capitale du Sénégal ?",
 ])
 def test_ordinary_or_unruled_questions_are_not_detected(question):
     assert detect_out_of_scope(question) is None
@@ -165,3 +163,30 @@ def test_ambiguous_words_without_personal_context_are_not_detected(question):
 ])
 def test_ambiguous_words_with_personal_context_are_detected(question, reason):
     assert detect_out_of_scope(question) == reason
+
+
+# --- Correctif post-recette n° 5 : « other » ----------------------------------------------------
+@pytest.mark.parametrize("question", [
+    "Écris-moi une chanson sur l'ADN.",
+    "Raconte une blague sur les gènes.",
+    "Rédige un poème sur BRCA1.",
+    "Invente une histoire avec un variant pathogène.",
+    "Quel est le président du Sénégal ?",
+    "Quelle est la météo à Dakar ?",
+    "Qui est le premier ministre ?",
+    "Donne-moi une recette de cuisine sénégalaise.",
+    "Qui a gagné le match de football ?",
+])
+def test_invented_off_domain_questions_are_other(question):
+    assert detect_out_of_scope(question) == "other"
+
+
+@pytest.mark.parametrize("question", [
+    "Quel est le rôle de BRCA1 ?",
+    "Que sait-on de la macrocéphalie liée à PTEN ?",
+    "Quelle histoire familiale évoque un syndrome de Li-Fraumeni ?",   # « histoire » sans verbe de création
+    "Comment le variant c.5266dup modifie-t-il la protéine ?",
+    "Quelles maladies sont associées au variant rs334 ?",
+])
+def test_domain_questions_are_not_other(question):
+    assert detect_out_of_scope(question) is None
