@@ -63,6 +63,8 @@ JUDGE_CACHE = OUT / "cache_juge.json"
 SAMPLE = OUT / "echantillon.json"
 ANNOTATIONS = OUT / "annotations.json"
 GENERATIONS = OUT / "generations"
+EVALUATION = OUT / "evaluation.json"
+_ABSTENTIONS = ("not_in_sources", "out_of_scope")
 _JUDGED_STATUSES = ("answered", "partial")
 # Délai par appel au juge : sa réflexion interne sur 10 fiches dépasse parfois la minute.
 _JUDGE_TIMEOUT_S = 120.0
@@ -593,6 +595,170 @@ def annotate(items: list[dict], done: dict, *, ask, show, save) -> dict:
     return done
 
 
+
+# --- Évaluation (spec §6, §7.3, §8) --------------------------------------------------------------
+
+def retrieval_metrics(searches: dict[str, dict], relevant: dict[str, list[str]], strata: dict[str, str],
+                      k: int) -> dict[str, dict]:
+    """Par strate : précision (pertinents transmis / transmis), rappel@k (pertinents transmis /
+    min(|pertinents|, k)), et pour la strate I la part des questions dont le 1er document est pertinent."""
+    by_stratum: dict[str, dict[str, list[float]]] = {}
+    for qid, record in searches.items():
+        sent, rel = record["doc_ids"], set(relevant[qid])
+        hits = sum(d in rel for d in sent)
+        bucket = by_stratum.setdefault(strata[qid], {"precision": [], "rappel": [], "premier": []})
+        bucket["precision"].append(hits / len(sent) if sent else 0.0)
+        bucket["rappel"].append(hits / min(len(rel), k) if rel else 0.0)
+        bucket["premier"].append(1.0 if sent and sent[0] in rel else 0.0)
+    out = {}
+    for stratum, values in sorted(by_stratum.items()):
+        out[stratum] = {"n": len(values["precision"]), "precision": float(np.mean(values["precision"])),
+                        "rappel": float(np.mean(values["rappel"]))}
+        if stratum == "I":
+            out[stratum]["premier_pertinent"] = float(np.mean(values["premier"]))
+    return out
+
+
+def candidate_result(profile: str, generations: dict[tuple[str, int], dict], judgements: dict[str, dict],
+                     searches: dict[str, dict], relevant: dict[str, list[str]], passes: int):
+    """Mesures d'un candidat (spec §6.3). Dénominateur : questions du passage 1 où le LLM est appelé."""
+    from RAG.src.evaluation.decision import CandidateResult
+    records = generations[(profile, 1)]["records"]
+    n = len(records)
+    rejected = sum(r["status"] in ("unverifiable", UNAVAILABLE) for r in records.values())
+    unavailable = sum(r["status"] == UNAVAILABLE for r in records.values())
+    wrong_abstentions = sum(1 for qid, r in records.items() if r["llm_status"] in _ABSTENTIONS
+                            and set(searches[qid]["doc_ids"]) & set(relevant[qid]))
+    faithfulness, relevance = {}, {}
+    for qid in records:
+        judged = judgements.get(judge_key(profile, 1, qid))
+        if judged is None:
+            continue
+        relevance[qid] = judged["relevance"] / 2
+        if judged["faithfulness"] is not None:
+            faithfulness[qid] = judged["faithfulness"]
+    # Variabilité : les questions reprises (passages 2 et suivants), notées sur chacun des passages.
+    repeat_ids = sorted(generations[(profile, 2)]["records"]) if (profile, 2) in generations else []
+    repeat_f: dict[str, list[float]] = {}
+    repeat_r: dict[str, list[float]] = {}
+    for passage in range(1, passes + 1):
+        for qid in repeat_ids:
+            judged = judgements.get(judge_key(profile, passage, qid))
+            if judged is None:
+                continue
+            repeat_r.setdefault(qid, []).append(judged["relevance"] / 2)
+            if judged["faithfulness"] is not None:
+                repeat_f.setdefault(qid, []).append(judged["faithfulness"])
+    latencies = [r["latency_ms"] for r in records.values() if not r["from_cache"] and r["latency_ms"] is not None]
+    result = CandidateResult(
+        name=profile, faithfulness=faithfulness, relevance=relevance,
+        rejection_rate=rejected / n if n else 1.0, wrong_abstention_rate=wrong_abstentions / n if n else 0.0,
+        mean_cost=float(np.mean([r["cost_usd"] for r in records.values()])) if n else 0.0,
+        median_latency_ms=float(np.median(latencies)) if latencies else float("inf"),
+        repeat_faithfulness=repeat_f, repeat_relevance=repeat_r)
+    statuses: dict[str, int] = {}
+    for r in records.values():
+        statuses[r["status"]] = statuses.get(r["status"], 0) + 1
+    details = {"questions": n, "rejets_controles": rejected - unavailable, "indisponibles": unavailable,
+               "abstentions_a_tort": wrong_abstentions, "reponses_jugees": len(relevance),
+               "sans_affirmation": len(relevance) - len(faithfulness), "statuts": statuses,
+               "latence_mesuree_sur": len(latencies)}
+    return result, details
+
+
+def completeness_problems(candidates: tuple[str, ...], generations: dict[tuple[str, int], dict],
+                          judgements: dict[str, dict], llm_ids: list[str], repeat_ids: list[str],
+                          passes: int) -> list[str]:
+    """Tout ce qui manque pour conclure (spec §12) ; vide si rien ne manque."""
+    problems = []
+    for profile in candidates:
+        for passage in range(1, passes + 1):
+            expected = llm_ids if passage == 1 else repeat_ids
+            data = generations.get((profile, passage))
+            got = set(data["records"]) if data else set()
+            missing = sorted(set(expected) - got)
+            if missing:
+                problems.append(f"{profile} passage {passage} : {len(missing)} génération(s) manquante(s)")
+            for qid in sorted(got & set(expected)):
+                if judgeable(data["records"][qid]) and judge_key(profile, passage, qid) not in judgements:
+                    problems.append(f"{profile} passage {passage} : jugement manquant pour {qid}")
+    return problems
+
+
+def manifest_problems(searches_manifest: dict, generations: dict[tuple[str, int], dict]) -> list[str]:
+    """Toutes les séries doivent porter les mêmes conditions que les recherches figées."""
+    shared = ("questions_sha256", "index_doc_ids_sha256", "analysis_profile", "generation_prompt_sha",
+              "generation_max_tokens", "settings_sha256")
+    reference: dict = {}
+    problems = []
+    for (profile, passage), data in sorted(generations.items()):
+        m = data["manifest"]
+        for key in ("questions_sha256", "index_doc_ids_sha256", "analysis_profile"):
+            if m.get(key) != searches_manifest.get(key):
+                problems.append(f"{profile} passage {passage} : {key} différent des recherches")
+        for key in shared:
+            reference.setdefault(key, m.get(key))
+            if m.get(key) != reference[key]:
+                problems.append(f"{profile} passage {passage} : {key} différent des autres séries")
+    return problems
+
+
+def _mean_or_none(values: list[float]) -> float | None:
+    """Moyenne, ou None sans valeur (jamais NaN : le rapport reste du JSON standard)."""
+    return float(np.mean(values)) if values else None
+
+
+def agreement_report(sample: list[str], annotations: dict, judgements: dict[str, dict], *, seed: int) -> dict:
+    """Kappas juge/humain (fidélité par affirmation, pertinence pondérée), IC par grappes,
+    signalements de découpage, stabilité du juge (répétition 2), fidélité humaine par candidat."""
+    from RAG.src.evaluation.agreement import cluster_bootstrap_ci, cohen_kappa, weighted_kappa
+    from RAG.src.evaluation.decision import bootstrap_mean_ci
+    yes_no, notes = (True, False), (0, 1, 2)
+    faith_clusters, relevance_clusters, human_by_profile = [], [], {}
+    badly_split = missed = 0
+    for n, key in enumerate(sample, start=1):
+        human, judged = annotations[str(n)], judgements[key]
+        if len(human["verdicts"]) != len(judged["verdicts"]):
+            raise SystemExit(f"annotation {n} : {len(human['verdicts'])} verdicts pour "
+                             f"{len(judged['verdicts'])} affirmations")
+        faith_clusters.append(list(zip(judged["verdicts"], human["verdicts"])))
+        relevance_clusters.append([(judged["relevance"], human["pertinence"])])
+        badly_split += len(human["mal_decoupees"])
+        missed += int(human["oubliee"])
+        if human["verdicts"]:
+            human_by_profile.setdefault(parse_judge_key(key)[0], []).append(
+                sum(human["verdicts"]) / len(human["verdicts"]))
+
+    def kappa_f(a, b):
+        return cohen_kappa(a, b, yes_no)
+
+    def kappa_r(a, b):
+        return weighted_kappa(a, b, notes)
+
+    flat_f = [p for c in faith_clusters for p in c]
+    flat_r = [p for c in relevance_clusters for p in c]
+    report = {
+        "fidelite": {"kappa": kappa_f([p[0] for p in flat_f], [p[1] for p in flat_f]),
+                     "ic95": cluster_bootstrap_ci(faith_clusters, kappa_f, seed=seed),
+                     "affirmations": len(flat_f)},
+        "pertinence": {"kappa_pondere": kappa_r([p[0] for p in flat_r], [p[1] for p in flat_r]),
+                       "ic95": cluster_bootstrap_ci(relevance_clusters, kappa_r, seed=seed),
+                       "reponses": len(flat_r)},
+        "decoupage": {"mal_decoupees": badly_split, "reponses_avec_oubli": missed},
+        "fidelite_humaine": {p: dict(zip(("moyenne", "ic_bas", "ic_haut"), bootstrap_mean_ci(v, seed=seed)),
+                                     n=len(v)) for p, v in sorted(human_by_profile.items())},
+    }
+    second = [(judgements[k], judgements.get(k.replace("|r1", "|r2"))) for k in sample]
+    pairs = [(a, b) for a, b in second if b is not None]
+    if pairs:
+        report["stabilite_juge"] = {
+            "reponses": len(pairs),
+            "kappa_pondere_pertinence": kappa_r([a["relevance"] for a, _ in pairs], [b["relevance"] for _, b in pairs]),
+            "ecart_moyen_fidelite": _mean_or_none([abs(a["faithfulness"] - b["faithfulness"]) for a, b in pairs
+                                                   if a["faithfulness"] is not None and b["faithfulness"] is not None])}
+    return report
+
+
 # --- Commandes -------------------------------------------------------------------------------
 
 def _e2a_identifier_doc_ids() -> set[str]:
@@ -853,6 +1019,75 @@ def cmd_annoter(args) -> None:
     print(f"{len(done)}/{len(items)} réponses annotées")
 
 
+def cmd_evaluer(args) -> None:
+    from dataclasses import asdict
+
+    from RAG.src.evaluation.decision import choose
+    from RAG.src.evaluation.settings import load_settings
+    from RAG.src.utils.config import load_search_config
+
+    settings = load_settings()
+    questions = load_questions(QUESTIONS_PATH, settings.strata)
+    searches_file = _load_searches(questions)
+    searches = searches_file["records"]
+    truth = _manifest_file(TRUTH)
+    if truth.get("manifest", {}).get("questions_sha256") != searches_file["manifest"]["questions_sha256"]:
+        raise SystemExit("vérité terrain et recherches portent sur deux jeux différents")
+    relevant = truth["relevant"]
+    generations = load_generations()
+    judgements_file = _manifest_file(JUDGEMENTS)
+    check_manifest(JUDGEMENTS, _judge_manifest(settings), judgements_file.get("manifest", {}))
+    judgements = judgements_file["records"]
+    llm_ids = sorted(i for i, r in searches.items() if r["llm_called"])
+    repeat_ids = select_repeats(llm_ids, settings.repeat_questions, settings.seed_draw)
+    problems = (manifest_problems(searches_file["manifest"], generations)
+                + completeness_problems(settings.candidates, generations, judgements, llm_ids, repeat_ids,
+                                        settings.passes))
+    sample = _manifest_file(SAMPLE).get("cles") or []
+    annotations = _manifest_file(ANNOTATIONS)
+    if not sample or len(annotations) < len(sample):
+        problems.append(f"annotation incomplète : {len(annotations)}/{len(sample) or settings.sample_size}")
+    if problems:
+        print("\n".join(problems[:30]))
+        raise SystemExit(f"pas de conclusion : {len(problems)} problème(s) ci-dessus")
+
+    strata = {q["id"]: q["strate"] for q in questions}
+    retrieval = retrieval_metrics(searches, relevant, strata, load_search_config().k)
+    results, details = [], {}
+    for profile in settings.candidates:
+        result, detail = candidate_result(profile, generations, judgements, searches, relevant, settings.passes)
+        results.append(result)
+        details[profile] = {**detail, "fidelite": result.mean_faithfulness, "pertinence": result.mean_relevance,
+                            "taux_rejet": result.rejection_rate, "abstention_a_tort": result.wrong_abstention_rate,
+                            "cout_moyen_usd": result.mean_cost,
+                            "latence_mediane_ms": None if result.median_latency_ms == float("inf")
+                            else result.median_latency_ms}
+    agreement = agreement_report(sample, annotations, judgements, seed=settings.seed_bootstrap)
+    kappa_f = agreement["fidelite"]["kappa"]
+    kappa_r = agreement["pertinence"]["kappa_pondere"]
+    t = settings.thresholds
+    judge_valid = kappa_f is not None and kappa_f >= t.kappa_min
+    relevance_valid = kappa_r is not None and kappa_r >= t.kappa_min
+    decision = choose(results, t, use_relevance=relevance_valid, seed=settings.seed_bootstrap) if judge_valid else None
+    report = {"recherche": retrieval, "candidats": details, "accord": agreement,
+              "juge_valide": judge_valid, "pertinence_valide": relevance_valid,
+              "decision": asdict(decision) if decision else None,
+              "questions": {"total": len(questions), "llm_appele": len(llm_ids),
+                            "message_fixe": len(questions) - len(llm_ids)},
+              "fixe_par_statut": {s: sum(1 for r in searches.values() if r["fixed_status"] == s)
+                                  for s in sorted({r["fixed_status"] for r in searches.values() if r["fixed_status"]})}}
+    _write_json_atomic(EVALUATION, json.loads(json.dumps(report, allow_nan=False)))
+    print(json.dumps({k: report[k] for k in ("recherche", "candidats", "accord")}, ensure_ascii=False, indent=1))
+    if not judge_valid:
+        print(f"\nkappa de fidélité {kappa_f} < {t.kappa_min} : scores du juge INDICATIFS, règle non appliquée. "
+              "Décision à prendre sur la fidélité humaine ci-dessus (accord.fidelite_humaine).")
+    else:
+        if not relevance_valid:
+            print(f"\nkappa de pertinence {kappa_r} < {t.kappa_min} : étape pertinence sautée.")
+        print(f"\nmodèle retenu : {decision.chosen or 'aucun (tous éliminés)'} ; éliminés : {decision.eliminated}")
+    print(f"rapport complet : {EVALUATION}")
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -872,6 +1107,7 @@ def main(argv: list[str] | None = None) -> None:
     juger.set_defaults(func=cmd_juger)
     sub.add_parser("echantillonner").set_defaults(func=cmd_echantillonner)
     sub.add_parser("annoter").set_defaults(func=cmd_annoter)
+    sub.add_parser("evaluer").set_defaults(func=cmd_evaluer)
     args = parser.parse_args(argv)
     args.func(args)
 

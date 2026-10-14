@@ -543,3 +543,182 @@ def test_forget_last_removes_only_the_refused_output(tmp_path):
     assert reloaded.last_hit
     reloaded.complete_json(PROFILE, **_kwargs(user="refusé"))
     assert not reloaded.last_hit and inner.calls == 3
+
+
+# --- Évaluation (Tâche 8) -----------------------------------------------------------------------
+
+def test_retrieval_metrics_by_stratum():
+    searches = {"a": {"doc_ids": ["d1", "x", "d2"]}, "b": {"doc_ids": ["x", "d3"]}, "c": {"doc_ids": []}}
+    relevant = {"a": ["d1", "d2"], "b": ["d3"], "c": ["d9"]}
+    m = ev.retrieval_metrics(searches, relevant, {"a": "S", "b": "I", "c": "I"}, k=10)
+    assert m["S"] == {"n": 1, "precision": pytest.approx(2 / 3), "rappel": 1.0}
+    assert m["I"]["precision"] == pytest.approx(0.25)          # (1/2 + 0) / 2
+    assert m["I"]["rappel"] == pytest.approx(0.5)
+    assert m["I"]["premier_pertinent"] == 0.0
+
+
+def _g(status="answered", llm_status="answered", cost=0.01, latency=1000.0, from_cache=False, strate="I"):
+    return {"status": status, "llm_status": llm_status, "llm_text": "R" if llm_status else None,
+            "cost_usd": cost, "latency_ms": latency, "from_cache": from_cache, "strate": strate}
+
+
+def _j(f, r=2, claims=2):
+    verdicts = [True] * round(f * claims) + [False] * (claims - round(f * claims))
+    return {"claims": ["c"] * claims, "verdicts": verdicts, "faithfulness": f if claims else None,
+            "relevance": r, "justifications": [], "relevance_justification": "", "cost_usd": 0, "calls": 3}
+
+
+def test_candidate_rates():
+    searches = {q: {"doc_ids": ["d1"]} for q in "abcde"}
+    relevant = {"a": ["d1"], "b": ["d1"], "c": ["d1"], "d": ["zz"], "e": ["d1"]}
+    gens = {("m", 1): {"records": {
+        "a": _g(), "b": _g(status="unverifiable"), "c": _g(status="not_in_sources", llm_status="not_in_sources"),
+        "d": _g(status="not_in_sources", llm_status="not_in_sources"),
+        "e": {**_g(status=ev.UNAVAILABLE, llm_status=None), "latency_ms": None}}},
+        ("m", 2): {"records": {"a": _g()}}, ("m", 3): {"records": {"a": _g(from_cache=True)}}}
+    judgements = {"m|p1|a|r1": _j(1.0), "m|p1|b|r1": _j(0.5, r=1), "m|p2|a|r1": _j(0.5), "m|p3|a|r1": _j(1.0)}
+    result, details = ev.candidate_result("m", gens, judgements, searches, relevant, passes=3)
+    assert result.rejection_rate == pytest.approx(2 / 5)            # unverifiable + indisponible
+    assert result.wrong_abstention_rate == pytest.approx(1 / 5)     # c a un pertinent transmis, d non
+    assert result.faithfulness == {"a": 1.0, "b": 0.5}
+    assert result.relevance == {"a": 1.0, "b": 0.5}
+    assert result.repeat_faithfulness == {"a": [1.0, 0.5, 1.0]}
+    assert details["rejets_controles"] == 1 and details["indisponibles"] == 1
+    assert details["latence_mesuree_sur"] == 4
+
+
+def test_completeness_problems():
+    gens = {("m", 1): {"records": {"a": _g(), "b": _g()}}, ("m", 2): {"records": {}}}
+    problems = ev.completeness_problems(("m",), gens, {"m|p1|a|r1": _j(1.0)}, ["a", "b"], ["a"], passes=3)
+    assert "m passage 1 : jugement manquant pour b" in problems
+    assert "m passage 2 : 1 génération(s) manquante(s)" in problems
+    assert "m passage 3 : 1 génération(s) manquante(s)" in problems
+
+
+def test_manifest_problems():
+    base = {"questions_sha256": "q", "index_doc_ids_sha256": "i", "analysis_profile": "a"}
+    gens = {("m", 1): {"manifest": {**base, "generation_prompt_sha": "g1"}},
+            ("n", 1): {"manifest": {**base, "generation_prompt_sha": "g2", "index_doc_ids_sha256": "j"}}}
+    problems = ev.manifest_problems(base, gens)
+    assert any("generation_prompt_sha différent des autres" in p for p in problems)
+    assert any("index_doc_ids_sha256 différent des recherches" in p for p in problems)
+
+
+def test_agreement_report_kappas_and_flags():
+    sample = ["a|p1|q1|r1", "b|p1|q2|r1", "a|p1|q3|r1"]
+    judgements = {"a|p1|q1|r1": {**_j(0.5), "verdicts": [True, False]},
+                  "b|p1|q2|r1": {**_j(1.0, r=1), "verdicts": [True, True]},
+                  "a|p1|q3|r1": {**_j(0.5, r=0), "verdicts": [False, True]},
+                  "a|p1|q1|r2": {**_j(1.0), "verdicts": [True, True]}}
+    annotations = {"1": {"verdicts": [True, False], "mal_decoupees": [2], "oubliee": False, "pertinence": 2},
+                   "2": {"verdicts": [True, True], "mal_decoupees": [], "oubliee": True, "pertinence": 1},
+                   "3": {"verdicts": [False, True], "mal_decoupees": [], "oubliee": False, "pertinence": 0}}
+    report = ev.agreement_report(sample, annotations, judgements, seed=1)
+    assert report["fidelite"]["kappa"] == pytest.approx(1.0)
+    assert report["pertinence"]["kappa_pondere"] == pytest.approx(1.0)
+    assert report["decoupage"] == {"mal_decoupees": 1, "reponses_avec_oubli": 1}
+    assert report["fidelite_humaine"]["a"]["n"] == 2
+    assert report["stabilite_juge"]["reponses"] == 1
+
+
+def test_agreement_refuses_misaligned_annotation():
+    with pytest.raises(SystemExit, match="verdicts pour"):
+        ev.agreement_report(["a|p1|q|r1"], {"1": {"verdicts": [True], "mal_decoupees": [], "oubliee": False,
+                                                   "pertinence": 2}}, {"a|p1|q|r1": _j(1.0)}, seed=1)
+
+
+# --- Bout en bout de `evaluer`, sur fichiers synthétiques ----------------------------------------
+
+def _full_setup(monkeypatch, tmp_path, *, human_agrees=True, faith=(1.0, 0.95, 0.5)):
+    import dataclasses
+
+    from RAG.src.evaluation import settings as settings_module
+    from RAG.src.evaluation.judge import JUDGE_PROMPT_SHA, JUDGE_PROMPT_VERSION
+    real = settings_module.load_settings()
+    small = dataclasses.replace(real, strata=STRATA, repeat_questions=4, sample_size=6)
+    monkeypatch.setattr(settings_module, "load_settings", lambda *a, **k: small)
+    for name in ("OUT", "SEARCHES", "JUDGEMENTS", "JUDGE_CACHE", "SAMPLE", "ANNOTATIONS", "GENERATIONS",
+                 "SPENDING", "QUESTIONS_PATH", "TRUTH", "EVALUATION"):
+        monkeypatch.setattr(ev, name, tmp_path / name.lower())
+    questions = _draw()
+    ev.QUESTIONS_PATH.write_text(ev.render_draft(questions, seed=1), encoding="utf-8")
+    qsha = ev._sha256(ev.QUESTIONS_PATH)
+    base = {"questions_sha256": qsha, "index_doc_ids_sha256": "i", "analysis_profile": "p"}
+    ids = [q["id"] for q in questions]
+    llm_ids = ids[1:]  # la première : message fixe
+    ev._write_json_atomic(ev.TRUTH, {"manifest": {"questions_sha256": qsha}, "relevant": {i: ["d1"] for i in ids}})
+    ev._write_json_atomic(ev.SEARCHES, {"manifest": base, "records": {
+        q["id"]: {"doc_ids": ["d1", "d2"], "context": "C", "llm_called": q["id"] in llm_ids,
+                  "fixed_status": None if q["id"] in llm_ids else "out_of_scope", "strate": q["strate"]}
+        for q in questions}})
+    strata = {q["id"]: q["strate"] for q in questions}
+    repeats = ev.select_repeats(llm_ids, 4, small.seed_draw)
+    judgements = {}
+    for name, f in zip(small.candidates, faith):
+        for passage in (1, 2, 3):
+            todo = llm_ids if passage == 1 else repeats
+            manifest = {**base, "generation_prompt_sha": "g", "generation_max_tokens": 3000, "settings_sha256": "s",
+                        "profile": name, "passage": passage}
+            ev._write_json_atomic(ev.GENERATIONS / f"{name}__p{passage}.json", {"manifest": manifest, "records": {
+                q: _g(strate=strata[q], cost={"claude-opus-5.5": 0.05}.get(name, 0.01)) for q in todo}})
+            for i, q in enumerate(todo):
+                judgements[ev.judge_key(name, passage, q)] = _j(f if i % 2 else 1.0, r=2 if i % 3 else 1,
+                                                                claims=4)
+    ev._write_json_atomic(ev.JUDGEMENTS, {"manifest": {
+        "judge_prompt_version": JUDGE_PROMPT_VERSION, "judge_prompt_sha": JUDGE_PROMPT_SHA,
+        "judge_model": small.judge.model, "judge_provider_tag": small.judge.provider_tag,
+        "judge_max_tokens": small.judge_max_tokens}, "records": judgements})
+    ev.main(["echantillonner"])
+    sample = json.loads(ev.SAMPLE.read_text(encoding="utf-8"))["cles"]
+    annotations = {}
+    for n, key in enumerate(sample, start=1):
+        j = judgements[key]
+        verdicts = j["verdicts"] if human_agrees else [not v for v in j["verdicts"]]
+        annotations[str(n)] = {"verdicts": verdicts, "mal_decoupees": [], "oubliee": False,
+                               "pertinence": j["relevance"]}
+    ev._write_json_atomic(ev.ANNOTATIONS, annotations)
+    return small
+
+
+def test_evaluer_applies_the_rule_end_to_end(tmp_path, monkeypatch, capsys):
+    _full_setup(monkeypatch, tmp_path)
+    ev.main(["evaluer"])
+    report = json.loads(ev.EVALUATION.read_text(encoding="utf-8"))
+    assert report["juge_valide"] is True
+    assert report["decision"]["chosen"] == "claude-opus-5.5"
+    assert "gpt-oss-120b" in report["decision"]["eliminated"]   # fidélité 0,75 < 0,90
+    assert report["questions"] == {"total": 17, "llm_appele": 16, "message_fixe": 1}
+    assert "modèle retenu : claude-opus-5.5" in capsys.readouterr().out
+
+
+def test_evaluer_does_not_apply_the_rule_with_a_bad_judge(tmp_path, monkeypatch, capsys):
+    _full_setup(monkeypatch, tmp_path, human_agrees=False)
+    ev.main(["evaluer"])
+    report = json.loads(ev.EVALUATION.read_text(encoding="utf-8"))
+    assert report["juge_valide"] is False and report["decision"] is None
+    assert "INDICATIFS" in capsys.readouterr().out
+
+
+def test_evaluer_refuses_incomplete_annotation(tmp_path, monkeypatch):
+    _full_setup(monkeypatch, tmp_path)
+    annotations = json.loads(ev.ANNOTATIONS.read_text(encoding="utf-8"))
+    annotations.pop("1")
+    ev._write_json_atomic(ev.ANNOTATIONS, annotations)
+    with pytest.raises(SystemExit, match="pas de conclusion"):
+        ev.main(["evaluer"])
+
+
+def test_evaluer_refuses_a_missing_generation(tmp_path, monkeypatch):
+    _full_setup(monkeypatch, tmp_path)
+    path = ev.GENERATIONS / "mistral-medium__p1.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["records"].pop(sorted(data["records"])[0])
+    ev._write_json_atomic(path, data)
+    with pytest.raises(SystemExit, match="pas de conclusion"):
+        ev.main(["evaluer"])
+
+
+def test_echantillonner_runs_once(tmp_path, monkeypatch):
+    _full_setup(monkeypatch, tmp_path)
+    with pytest.raises(SystemExit, match="une seule fois"):
+        ev.main(["echantillonner"])
