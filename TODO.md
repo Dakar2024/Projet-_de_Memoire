@@ -31,14 +31,12 @@ part pas.
 
 ## 2. Exploitation — à installer
 
-- [ ] **Planifier la sauvegarde hebdomadaire.** `scripts/sauvegarde.sh` est écrit et exécuté
-      avec succès (931 Mo, dump PostgreSQL vérifié relisible, table Delta sauvegardée relue),
-      mais **aucune tâche cron ne le lance** — vérifié le 25/09, `crontab` ne le mentionne pas.
-      Ligne à ajouter avec `crontab -e` :
-      `0 3 * * 0 cd /home/azuka/Documents/Projet-_de_Memoire && ./scripts/sauvegarde.sh >> ~/sauvegarde.log 2>&1`
-- [ ] **Tester une restauration complète** sur une stack vide. Ce qui est vérifié à ce jour :
-      le dump est un fichier d'archive valide et une table Delta sauvegardée se relit. Ce qui ne
-      l'est pas : restaurer réellement la base et les buckets, puis relancer un run dessus.
+- [x] **Planifier la sauvegarde hebdomadaire.** Tâche cron installée le 14/10/2026 (dimanche
+      3 h), après correction d'un défaut : les copies des buckets appartenaient à root et la
+      rotation n'aurait pas pu les supprimer (échec dès la 5e sauvegarde).
+- [ ] **Tester une restauration complète** sur une stack vide. Fait pour la **base vectorielle**
+      (`scripts/verifier_restauration_rag.sh`, 14/10 : conforme, 78 s). Reste : la base
+      Airflow et les buckets MinIO, puis relancer un run dessus (E3b, niveau « restauration »).
 
 ---
 
@@ -112,8 +110,8 @@ critiques que le jour d'un déploiement hors de la machine de développement.
       les listes de phénotypes contiennent des termes HPO qui n'en sont pas vraiment
       (« Autosomal dominant inheritance », « Middle age onset ») et occupent des places dans une
       liste plafonnée à dix.
-- [ ] **Sauvegarde de `rag-postgres-data`** dans `scripts/sauvegarde.sh`. La base se reconstruit
-      depuis le Gold, mais en ~4 h sur CPU (9 min sur GPU).
+- [x] **Sauvegarde de `rag-postgres-data`** dans `scripts/sauvegarde.sh` (14/10/2026) : dump
+      relu à chaque sauvegarde, restauration vérifiée (97 211 documents en 78 s au lieu de ~4 h).
 - [ ] **Application web** : interface et API, lisant le RAG et `gold/analytique` via DuckDB.
 
 ---

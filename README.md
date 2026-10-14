@@ -253,19 +253,55 @@ pytest tests_airflow -q    # structure des DAGs Airflow (passe séparée, plus l
 ### Sauvegarder le lac
 
 Les archives mensuelles ClinVar antérieures à 2023 ne sont plus téléchargeables : une perte du
-lac ne se rattrape donc pas par un simple rejeu. Le script sauvegarde les quatre buckets et la
-base de métadonnées d'Airflow, en conservant les quatre dernières copies :
+lac ne se rattrape donc pas par un simple rejeu. Le script sauvegarde les quatre buckets, la base
+de métadonnées d'Airflow et la **base vectorielle du RAG** (`rag-postgres` : documents, vecteurs,
+index, droits), en conservant les quatre dernières copies. La base vectorielle se reconstruirait
+depuis le Gold, mais en ~4 h sur CPU ; sa copie se restaure en ~80 s.
 
 ```bash
 ./scripts/sauvegarde.sh                                  # vers ~/sauvegardes-genomique/
 DESTINATION_SAUVEGARDE=/mnt/disque-externe ./scripts/sauvegarde.sh
 ```
 
-Planification hebdomadaire, avec `crontab -e` :
+- Les dumps PostgreSQL sont faits dans les conteneurs par le socket local (aucun mot de passe ne
+  circule) et **relus** (`pg_restore --list`) aussitôt écrits : un dump illisible fait échouer le
+  script.
+- Les copies ne sont lisibles que par l'utilisateur (`umask 077`) et lui appartiennent (le
+  conteneur `mc` tourne sous son identité, sans quoi la rotation ne pourrait plus les supprimer).
+
+**Vérifier qu'une sauvegarde se restaure** (conteneur jetable sans réseau, même image pgvector,
+procédure de production rejouée, puis comparaison avec la base en service : documents, modèle
+d'embedding, empreintes des identifiants et des vecteurs, index, droits, plus proches voisins) :
+
+```bash
+./scripts/verifier_restauration_rag.sh                   # dernière sauvegarde
+./scripts/verifier_restauration_rag.sh ~/sauvegardes-genomique/<date>/rag.dump
+```
+
+Vérifié le 14/10/2026 : 97 211 documents restaurés en 78 s, six comparaisons sur six identiques ;
+un dump tronqué est refusé.
+
+**Restaurer la base vectorielle en production** (après une perte du volume `rag-postgres-data`) :
+
+```bash
+docker compose --env-file .env stop rag-api                        # plus aucune lecture
+docker compose --env-file .env up -d rag-postgres rag-postgres-init # base, schéma, comptes
+docker exec -i genomique-rag-postgres pg_restore -U rag_owner -d rag \
+  --clean --if-exists --exit-on-error < ~/sauvegardes-genomique/<date>/rag.dump
+docker compose --env-file .env up -d rag-gateway                   # relance rag-api
+```
+
+Les mots de passe des comptes ne sont pas dans le dump : `rag-postgres-init` les pose depuis `.env`.
+Si le Gold a changé depuis la sauvegarde, la prochaine indexation du DAG rattrape l'écart.
+
+Planification hebdomadaire (installée le 14/10/2026), visible avec `crontab -l` :
 
 ```
 0 3 * * 0 cd /chemin/vers/Projet-_de_Memoire && ./scripts/sauvegarde.sh >> ~/sauvegarde.log 2>&1
 ```
+
+Cron ne rattrape pas une échéance manquée : machine éteinte le dimanche à 3 h, pas de sauvegarde
+cette semaine-là (consulter `~/sauvegarde.log`).
 
 ### Recevoir les alertes
 
@@ -365,7 +401,8 @@ src/transformations/  passages entre couches : raw_to_bronze, bronze_to_silver,
                       quality_check_gold
 scripts/              ingest_*.py : un script par source, écrit dans raw
                       run_collection.py : ancien script de collecte (voir plus bas)
-                      sauvegarde.sh : sauvegarde des buckets MinIO et de PostgreSQL
+                      sauvegarde.sh : sauvegarde des buckets MinIO, de PostgreSQL et de la base vectorielle ;
+                      verifier_restauration_rag.sh : test de restauration
 dags/                 DAGs Airflow : acquisition mensuelle + un DAG par panel
 docker/               image Airflow, création des buckets MinIO
 docker-compose.yml    stack Airflow 3 + PostgreSQL + MinIO
