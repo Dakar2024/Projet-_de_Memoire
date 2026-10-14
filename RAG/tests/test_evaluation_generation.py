@@ -357,3 +357,189 @@ def test_manifest_mismatch_names_the_differing_fields(tmp_path):
     with pytest.raises(SystemExit, match="generation_prompt_sha"):
         ev.check_manifest(tmp_path / "f.json", {"generation_prompt_sha": "a", "k": 1},
                           {"generation_prompt_sha": "b", "k": 1})
+
+
+# --- Jugement, échantillon, annotation (Tâche 7) -------------------------------------------------
+
+def _gen(profile, passage, records):
+    return {"manifest": {"profile": profile, "passage": passage}, "records": records}
+
+
+def _rec(strate="I", llm_status="answered", text="Réponse."):
+    return {"strate": strate, "llm_status": llm_status, "llm_text": text}
+
+
+def test_only_model_answers_are_judged():
+    generations = {("a", 1): _gen("a", 1, {"q1": _rec(), "q2": _rec(llm_status="not_in_sources"),
+                                           "q3": _rec(llm_status=None, text=None), "q4": _rec(text="  ")}),
+                   ("a", 2): _gen("a", 2, {"q1": _rec(llm_status="partial")})}
+    keys = [k for k, _ in ev.answers_to_judge(generations)]
+    assert keys == ["a|p1|q1|r1", "a|p2|q1|r1"]
+
+
+def test_judge_key_roundtrip():
+    assert ev.parse_judge_key(ev.judge_key("gpt-oss-120b", 3, "E3-S01", 2)) == ("gpt-oss-120b", 3, "E3-S01", 2)
+
+
+def test_load_generations_reads_every_series(tmp_path):
+    ev._write_json_atomic(tmp_path / "a__p1.json", _gen("a", 1, {}))
+    ev._write_json_atomic(tmp_path / "b__p2.json", _gen("b", 2, {}))
+    assert set(ev.load_generations(tmp_path)) == {("a", 1), ("b", 2)}
+
+
+def _eligible(n_per=(30, 30, 30), candidates=("a", "b", "c")):
+    out = []
+    for name, n in zip(candidates, n_per):
+        for i in range(n):
+            out.append({"key": f"{name}|p1|q{i:02d}|r1", "profile": name, "strate": "ISGM"[i % 4]})
+    return out
+
+
+def test_sample_quotas_strata_and_determinism():
+    keys = ev.draw_sample(_eligible(), size=40, seed=20261014, candidates=("a", "b", "c"))
+    assert len(keys) == len(set(keys)) == 40
+    counts = {c: sum(k.startswith(f"{c}|") for k in keys) for c in "abc"}
+    assert counts == {"a": 14, "b": 13, "c": 13}
+    assert keys == ev.draw_sample(_eligible(), size=40, seed=20261014, candidates=("a", "b", "c"))
+    a_strata = sorted(k.split("|")[2] for k in keys if k.startswith("a|"))
+    assert len({int(q[1:]) % 4 for q in a_strata}) == 4  # les quatre strates représentées
+
+
+def test_sample_order_is_shuffled_across_candidates():
+    keys = ev.draw_sample(_eligible(), size=40, seed=1, candidates=("a", "b", "c"))
+    assert [k[0] for k in keys] != sorted(k[0] for k in keys)
+
+
+def test_sample_refuses_too_few_answers():
+    with pytest.raises(SystemExit, match="requises"):
+        ev.draw_sample(_eligible((30, 5, 30)), size=40, seed=1, candidates=("a", "b", "c"))
+
+
+def test_allocate_largest_remainder():
+    # Parts exactes 1,86 / 4,64 / 1,86 / 4,64 : planchers 1/4/1/4, restes à G, M (égalité : nom), puis I.
+    assert ev._allocate(13, {"G": 10, "I": 25, "M": 10, "S": 25}) == {"G": 2, "I": 5, "M": 2, "S": 4}
+    assert sum(ev._allocate(14, {"I": 3, "S": 3, "G": 1}).values()) == 14
+
+
+ITEMS = [{"n": 1, "question": "Q1 ?", "context": '<document id="D1">c.1A&gt;G &lt;x</document>',
+          "answer": "R1", "claims": ["a", "b"]},
+         {"n": 2, "question": "Q2 ?", "context": "C2", "answer": "R2", "claims": ["c"]}]
+
+
+def _scripted(answers):
+    answers = list(answers)
+    return lambda _prompt: answers.pop(0)
+
+
+def test_annotation_records_verdicts_flags_and_relevance():
+    shown, saved = [], []
+    done = ev.annotate(ITEMS, {}, ask=_scripted(["s", "nm", "n", "2", "s", "o", "1"]), show=shown.append,
+                       save=lambda d: saved.append(json.loads(json.dumps(d))))
+    assert done["1"] == {"verdicts": [True, False], "mal_decoupees": [2], "oubliee": False, "pertinence": 2}
+    assert done["2"] == {"verdicts": [True], "mal_decoupees": [], "oubliee": True, "pertinence": 1}
+    assert len(saved) == 2  # enregistré après chaque réponse
+
+
+def test_annotation_is_blind_and_readable():
+    shown = []
+    ev.annotate(ITEMS[:1], {}, ask=_scripted(["s", "s", "n", "2"]), show=shown.append, save=lambda d: None)
+    text = "\n".join(shown)
+    assert "c.1A>G <x" in text  # documents désechappés pour la lecture
+    for hidden in ("gpt-oss", "mistral", "claude", "soutenue\"", "faithfulness"):
+        assert hidden not in text
+
+
+def test_invalid_input_is_asked_again():
+    shown = []
+    done = ev.annotate(ITEMS[1:], {}, ask=_scripted(["x", "s", "peut-être", "n", "3", "0"]), show=shown.append,
+                       save=lambda d: None)
+    assert done["2"]["pertinence"] == 0
+    assert sum("saisie attendue" in line for line in shown) == 3
+
+
+def test_annotation_resumes_and_quits_cleanly():
+    done = ev.annotate(ITEMS, {}, ask=_scripted(["s", "s", "n", "2", "q"]), show=lambda _: None, save=lambda d: None)
+    assert set(done) == {"1"}
+    done = ev.annotate(ITEMS, done, ask=_scripted(["n", "n", "0"]), show=lambda _: None, save=lambda d: None)
+    assert set(done) == {"1", "2"} and done["2"]["verdicts"] == [False]
+
+
+def _small_settings(monkeypatch):
+    import dataclasses
+
+    from RAG.src.evaluation import settings as settings_module
+    real = settings_module.load_settings()
+    small = dataclasses.replace(real, strata=STRATA, budget_usd=5.0)
+    monkeypatch.setattr(settings_module, "load_settings", lambda *a, **k: small)
+    return small
+
+
+def _setup_outputs(monkeypatch, tmp_path):
+    for name in ("OUT", "SEARCHES", "JUDGEMENTS", "JUDGE_CACHE", "SAMPLE", "ANNOTATIONS", "GENERATIONS",
+                 "SPENDING", "QUESTIONS_PATH"):
+        monkeypatch.setattr(ev, name, tmp_path / name.lower())
+    questions = _draw()
+    ev.QUESTIONS_PATH.write_text(ev.render_draft(questions, seed=1), encoding="utf-8")
+    ev._write_json_atomic(ev.SEARCHES, {"manifest": {}, "records": {
+        q["id"]: {"context": f"CTX {q['id']}", "llm_called": True} for q in questions}})
+    first = questions[0]["id"]
+    ev._write_json_atomic(ev.GENERATIONS / "mistral-medium__p1.json", _gen("mistral-medium", 1, {
+        first: _rec(), questions[1]["id"]: _rec(llm_status="not_in_sources")}))
+    return first
+
+
+class JudgeLlm:
+    """Faux OpenRouter du juge : sortie incohérente au premier appel de verdicts si `broken`."""
+
+    instances = []
+
+    def __init__(self, *args, broken=False, **kwargs):
+        self.broken, self.calls = JudgeLlm.broken, 0
+        JudgeLlm.instances.append(self)
+
+    def complete_json(self, profile, *, system, user, schema_name, schema, max_tokens):
+        self.calls += 1
+        content = {"affirmations": {"affirmations": ["a"]},
+                   "verdicts": {"verdicts": [] if self.broken else
+                                [{"numero": 1, "justification": "D1", "verdict": "soutenue"}]},
+                   "pertinence": {"justification": "ok", "note": 2}}[schema_name]
+        return LlmCall(content, "g", "Google", 0.001, 1, 1)
+
+    def close(self):
+        pass
+
+
+def test_juger_records_judgements_and_skips_incoherent_ones(tmp_path, monkeypatch):
+    import RAG.src.llm.openrouter as openrouter
+    _small_settings(monkeypatch)
+    first = _setup_outputs(monkeypatch, tmp_path)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test")
+    monkeypatch.setattr(openrouter, "OpenRouterClient", JudgeLlm)
+    JudgeLlm.broken = True
+    ev.main(["juger"])
+    assert not ev.JUDGEMENTS.exists()  # une sortie incohérente n'est jamais un score
+    JudgeLlm.broken = False
+    ev.main(["juger"])
+    records = json.loads(ev.JUDGEMENTS.read_text(encoding="utf-8"))["records"]
+    assert list(records) == [f"mistral-medium|p1|{first}|r1"]  # not_in_sources jamais jugé
+    assert records[f"mistral-medium|p1|{first}|r1"]["faithfulness"] == 1.0
+    calls_before = JudgeLlm.instances[-1].calls
+    ev.main(["juger"])  # tout est fait : aucun appel
+    assert JudgeLlm.instances[-1].calls == 0 and calls_before == 2
+    spent = json.loads(ev.SPENDING.read_text(encoding="utf-8"))
+    # Payés : découpage + verdicts refusés au 1er passage ; au 2e, découpage relu du cache,
+    # verdicts rappelés (la sortie refusée a quitté le cache), pertinence.
+    assert spent["total_usd"] == pytest.approx(0.001 * (2 + 2))
+
+
+def test_forget_last_removes_only_the_refused_output(tmp_path):
+    inner = FakeLlm({"a": 1})
+    cached = ev.CachedClient(inner, tmp_path / "c.json", "juge-r1")
+    cached.complete_json(PROFILE, **_kwargs(user="bon"))
+    cached.complete_json(PROFILE, **_kwargs(user="refusé"))
+    cached.forget_last()
+    reloaded = ev.CachedClient(inner, tmp_path / "c.json", "juge-r1")
+    reloaded.complete_json(PROFILE, **_kwargs(user="bon"))
+    assert reloaded.last_hit
+    reloaded.complete_json(PROFILE, **_kwargs(user="refusé"))
+    assert not reloaded.last_hit and inner.calls == 3

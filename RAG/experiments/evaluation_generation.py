@@ -58,6 +58,14 @@ TRUTH = OUT / "verite_terrain.json"
 ANALYSIS_CACHE = OUT / "cache_analyses.json"
 GENERATION_CACHE = OUT / "cache_generation.json"
 SPENDING = OUT / "depenses.json"
+JUDGEMENTS = OUT / "jugements.json"
+JUDGE_CACHE = OUT / "cache_juge.json"
+SAMPLE = OUT / "echantillon.json"
+ANNOTATIONS = OUT / "annotations.json"
+GENERATIONS = OUT / "generations"
+_JUDGED_STATUSES = ("answered", "partial")
+# Délai par appel au juge : sa réflexion interne sur 10 fiches dépasse parfois la minute.
+_JUDGE_TIMEOUT_S = 120.0
 
 
 def _write_json_atomic(path: Path, data) -> None:
@@ -317,11 +325,20 @@ class CachedClient:
         self._inner, self._path, self._namespace = inner, path, namespace
         self._cache: dict[str, dict] = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
         self.last_hit = False
+        self._last_key: str | None = None
+
+    def forget_last(self) -> None:
+        """Retire le dernier appel du cache : sa sortie a été refusée après coup (jugement
+        incohérent). Sans cela, la reprise relirait indéfiniment la même sortie refusée."""
+        if self._last_key is not None and self._cache.pop(self._last_key, None) is not None:
+            _write_json_atomic(self._path, self._cache)
+        self._last_key = None
 
     def complete_json(self, profile, *, system, user, schema_name, schema, max_tokens):
         from RAG.src.llm.common import LlmCall
         key = call_cache_key(self._namespace, profile, system=system, user=user, schema_name=schema_name,
                              max_tokens=max_tokens)
+        self._last_key = key
         if key in self._cache:
             self.last_hit = True
             return LlmCall(**self._cache[key])
@@ -463,6 +480,117 @@ def generate_record(question: dict, stored: dict, result, *, recorder: Recording
     if not answer.from_llm:
         raise SystemExit(f"{question['id']} : message fixe alors que `rechercher` prévoyait un appel au LLM")
     return generation_record(question, answer, recorder.last_content, passage=passage, from_cache=cached.last_hit)
+
+
+
+# --- Jugement, échantillon, annotation (spec §6, §7) -------------------------------------------
+
+def judge_key(profile: str, passage: int, question_id: str, repetition: int = 1) -> str:
+    """Clé d'un jugement ; la répétition 2 est le rejugement de l'échantillon (stabilité du juge)."""
+    return f"{profile}|p{passage}|{question_id}|r{repetition}"
+
+
+def parse_judge_key(key: str) -> tuple[str, int, str, int]:
+    profile, passage, question_id, repetition = key.split("|")
+    return profile, int(passage[1:]), question_id, int(repetition[1:])
+
+
+def judgeable(record: dict) -> bool:
+    """Réponse jugée : le modèle a répondu (answered/partial) avec un texte, avant les contrôles."""
+    return record.get("llm_status") in _JUDGED_STATUSES and bool((record.get("llm_text") or "").strip())
+
+
+def load_generations(folder: Path = None) -> dict[tuple[str, int], dict]:
+    folder = folder or GENERATIONS
+    out = {}
+    for path in sorted(folder.glob("*__p*.json")) if folder.exists() else []:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        out[(data["manifest"]["profile"], int(data["manifest"]["passage"]))] = data
+    return out
+
+
+def answers_to_judge(generations: dict[tuple[str, int], dict]) -> list[tuple[str, dict]]:
+    """(clé, enregistrement) de chaque réponse à juger, tous candidats et passages."""
+    return [(judge_key(profile, passage, qid), record)
+            for (profile, passage), data in sorted(generations.items())
+            for qid, record in sorted(data["records"].items()) if judgeable(record)]
+
+
+def _allocate(total: int, weights: dict[str, int]) -> dict[str, int]:
+    """Répartition proportionnelle à plus fort reste (déterministe : égalités par nom)."""
+    whole = sum(weights.values())
+    if whole == 0:
+        return {k: 0 for k in weights}
+    exact = {k: total * w / whole for k, w in weights.items()}
+    out = {k: int(v) for k, v in exact.items()}
+    for k in sorted(weights, key=lambda k: (-(exact[k] - out[k]), k))[:total - sum(out.values())]:
+        out[k] += 1
+    return out
+
+
+def draw_sample(eligible: list[dict], *, size: int, seed: int, candidates: tuple[str, ...]) -> list[str]:
+    """Échantillon d'annotation (spec §7.1) : `size` réponses réparties entre candidats (reste aux
+    premiers : 14/13/13), puis proportionnellement aux strates ; ordre de présentation aléatoire.
+    `eligible` : {"key", "profile", "strate"} des réponses jugées ayant au moins une affirmation."""
+    rng = np.random.default_rng(seed)
+    base, extra = divmod(size, len(candidates))
+    chosen: list[str] = []
+    for i, candidate in enumerate(candidates):
+        quota = base + (1 if i < extra else 0)
+        mine = sorted((e for e in eligible if e["profile"] == candidate), key=lambda e: e["key"])
+        if len(mine) < quota:
+            raise SystemExit(f"{candidate} : {len(mine)} réponse(s) jugée(s) avec affirmations, {quota} requises")
+        strata = sorted({e["strate"] for e in mine})
+        per_stratum = _allocate(quota, {s: sum(e["strate"] == s for e in mine) for s in strata})
+        for stratum in strata:
+            pool = [e["key"] for e in mine if e["strate"] == stratum]
+            chosen += [pool[int(j)] for j in rng.choice(len(pool), size=per_stratum[stratum], replace=False)]
+    return [chosen[int(j)] for j in rng.permutation(len(chosen))]
+
+
+def _readable(context: str) -> str:
+    from html import unescape
+    return unescape(context)
+
+
+def annotate(items: list[dict], done: dict, *, ask, show, save) -> dict:
+    """Annotation en aveugle. `items` : {"n", "question", "context", "answer", "claims"} — ni
+    candidat ni verdict du juge. Saisie : par affirmation `s` (soutenue) ou `n` (non soutenue),
+    suivie de `m` si elle est mal découpée ; puis affirmation oubliée (o/n) ; puis pertinence 0/1/2.
+    `q` arrête (tout ce qui est fini est déjà enregistré). Une saisie invalide est redemandée."""
+    def prompt(text: str, valid: set[str]) -> str:
+        while True:
+            value = ask(text).strip().lower()
+            if value == "q":
+                raise KeyboardInterrupt
+            if value in valid:
+                return value
+            show(f"  saisie attendue : {', '.join(sorted(valid))} (ou q pour arrêter)")
+
+    total = len(items)
+    try:
+        for item in items:
+            key = str(item["n"])
+            if key in done:
+                continue
+            show(f"\n===== Réponse {item['n']}/{total} =====\nQUESTION : {item['question']}\n\nDOCUMENTS :\n"
+                 f"{_readable(item['context'])}\n\nRÉPONSE :\n{item['answer']}\n\nAFFIRMATIONS :")
+            verdicts, badly_split = [], []
+            for i, claim in enumerate(item["claims"], start=1):
+                show(f"  {i}. {claim}")
+                value = prompt(f"  {i} soutenue (s) / non soutenue (n), + m si mal découpée : ",
+                               {"s", "n", "sm", "nm"})
+                verdicts.append(value[0] == "s")
+                if value.endswith("m"):
+                    badly_split.append(i)
+            missed = prompt("Une affirmation de la réponse a-t-elle été oubliée ? (o/n) : ", {"o", "n"}) == "o"
+            relevance = int(prompt("Pertinence : 2 traite la question, 1 en partie, 0 non : ", {"0", "1", "2"}))
+            done[key] = {"verdicts": verdicts, "mal_decoupees": badly_split, "oubliee": missed,
+                         "pertinence": relevance}
+            save(done)
+    except KeyboardInterrupt:
+        show("\narrêt : les réponses terminées sont enregistrées ; relancer `annoter` pour reprendre")
+    return done
 
 
 # --- Commandes -------------------------------------------------------------------------------
@@ -615,6 +743,116 @@ def cmd_lancer(args) -> None:
     print(f"dépensé au total : {budget.spent:.4f} $ sur {settings.budget_usd} $")
 
 
+def _judge_manifest(settings) -> dict:
+    from RAG.src.evaluation.judge import JUDGE_PROMPT_SHA, JUDGE_PROMPT_VERSION
+    return {"judge_prompt_version": JUDGE_PROMPT_VERSION, "judge_prompt_sha": JUDGE_PROMPT_SHA,
+            "judge_model": settings.judge.model, "judge_provider_tag": settings.judge.provider_tag,
+            "judge_max_tokens": settings.judge_max_tokens}
+
+
+def cmd_juger(args) -> None:
+    from RAG.src.evaluation.judge import JudgeOutputError, judge_answer
+    from RAG.src.evaluation.settings import load_settings
+    from RAG.src.llm.openrouter import OpenRouterClient
+    from RAG.src.utils.config import load_openrouter_key
+    from RAG.src.utils.errors import LlmPermanentError, LlmUnavailableError
+
+    settings = load_settings()
+    questions = {q["id"]: q for q in load_questions(QUESTIONS_PATH, settings.strata)}
+    searches = _load_searches(list(questions.values()))["records"]
+    generations = load_generations()
+    if args.rejuger_echantillon:
+        sample = _manifest_file(SAMPLE).get("cles")
+        if not sample:
+            raise SystemExit("échantillon absent : lancer `echantillonner`")
+        by_key = {judge_key(p, pa, q): r for (p, pa), d in generations.items() for q, r in d["records"].items()}
+        todo = [(k.replace("|r1", "|r2"), by_key[k]) for k in sample]
+        repetition = 2
+    else:
+        todo = [(k, r) for k, r in answers_to_judge(generations)
+                if args.profil is None or k.startswith(f"{args.profil}|")]
+        repetition = 1
+    manifest = _judge_manifest(settings)
+    data = _manifest_file(JUDGEMENTS) or {"manifest": manifest, "records": {}}
+    check_manifest(JUDGEMENTS, manifest, data["manifest"])
+    todo = [(k, r) for k, r in todo if k not in data["records"]]
+    print(f"{len(todo)} réponse(s) à juger (répétition {repetition})")
+    budget = Budget(SPENDING, settings.budget_usd, settings.reserve_per_call_usd)
+    client = CachedClient(BudgetedClient(OpenRouterClient(load_openrouter_key(), timeout_s=_JUDGE_TIMEOUT_S), budget),
+                          JUDGE_CACHE, f"juge-r{repetition}")
+    missing = 0
+    try:
+        for key, record in todo:
+            _, _, qid, _ = parse_judge_key(key)
+            try:
+                judgement = judge_answer(client, settings.judge, question=questions[qid]["question"],
+                                         context=searches[qid]["context"], answer=record["llm_text"],
+                                         max_tokens=settings.judge_max_tokens)
+            except (BudgetExceededError, LlmPermanentError) as exc:
+                raise _stop(exc) from None
+            except (JudgeOutputError, LlmUnavailableError) as exc:
+                # Jamais un score : le jugement reste absent et sera retenté au prochain `juger`.
+                # La sortie refusée quitte le cache (les appels précédents, valides, y restent).
+                if isinstance(exc, JudgeOutputError):
+                    client.forget_last()
+                missing += 1
+                print(f"{key} : jugement indisponible ({type(exc).__name__}), retenté au prochain passage")
+                continue
+            data["records"][key] = judgement.as_dict()
+            _write_json_atomic(JUDGEMENTS, data)
+            print(f"{key} : fidélité {judgement.faithfulness}, pertinence {judgement.relevance}")
+    finally:
+        client.close()
+    print(f"terminé ; {missing} jugement(s) à retenter ; dépensé au total {budget.spent:.4f} $")
+
+
+def cmd_echantillonner(args) -> None:
+    from RAG.src.evaluation.settings import load_settings
+    settings = load_settings()
+    if SAMPLE.exists():
+        raise SystemExit(f"{SAMPLE.name} existe déjà : l'échantillon est tiré une seule fois")
+    generations = load_generations()
+    judgements = _manifest_file(JUDGEMENTS).get("records", {})
+    eligible, missing = [], []
+    for (profile, passage), data in sorted(generations.items()):
+        if passage != 1 or profile not in settings.candidates:
+            continue
+        for qid, record in sorted(data["records"].items()):
+            if not judgeable(record):
+                continue
+            key = judge_key(profile, 1, qid)
+            if key not in judgements:
+                missing.append(key)
+            elif judgements[key]["claims"]:
+                eligible.append({"key": key, "profile": profile, "strate": record["strate"]})
+    if missing:
+        raise SystemExit(f"{len(missing)} réponse(s) du passage 1 non jugée(s) : terminer `juger`")
+    keys = draw_sample(eligible, size=settings.sample_size, seed=settings.seed_draw, candidates=settings.candidates)
+    _write_json_atomic(SAMPLE, {"cles": keys})
+    print(f"échantillon : {len(keys)} réponses -> {SAMPLE} (fichier à ne pas ouvrir avant la fin de l'annotation)")
+
+
+def cmd_annoter(args) -> None:
+    from RAG.src.evaluation.settings import load_settings
+    settings = load_settings()
+    keys = _manifest_file(SAMPLE).get("cles")
+    if not keys:
+        raise SystemExit("échantillon absent : lancer `echantillonner`")
+    questions = {q["id"]: q for q in load_questions(QUESTIONS_PATH, settings.strata)}
+    searches = _load_searches(list(questions.values()))["records"]
+    generations = load_generations()
+    judgements = _manifest_file(JUDGEMENTS)["records"]
+    items = []
+    for n, key in enumerate(keys, start=1):
+        profile, passage, qid, _ = parse_judge_key(key)
+        items.append({"n": n, "question": questions[qid]["question"], "context": searches[qid]["context"],
+                      "answer": generations[(profile, passage)]["records"][qid]["llm_text"],
+                      "claims": judgements[key]["claims"]})
+    done = _manifest_file(ANNOTATIONS)
+    annotate(items, done, ask=input, show=print, save=lambda d: _write_json_atomic(ANNOTATIONS, d))
+    print(f"{len(done)}/{len(items)} réponses annotées")
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -627,6 +865,13 @@ def main(argv: list[str] | None = None) -> None:
     lancer.add_argument("--profil", required=True)
     lancer.add_argument("--passage", type=int, default=1, help="1 : jeu complet ; 2 et 3 : reprises")
     lancer.set_defaults(func=cmd_lancer)
+    juger = sub.add_parser("juger")
+    juger.add_argument("--profil", help="un seul candidat (défaut : tous)")
+    juger.add_argument("--rejuger-echantillon", action="store_true",
+                       help="rejuge l'échantillon hors cache (stabilité du juge, spec §7.3)")
+    juger.set_defaults(func=cmd_juger)
+    sub.add_parser("echantillonner").set_defaults(func=cmd_echantillonner)
+    sub.add_parser("annoter").set_defaults(func=cmd_annoter)
     args = parser.parse_args(argv)
     args.func(args)
 
