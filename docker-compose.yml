@@ -571,12 +571,13 @@ services:
       - ./src:/opt/projet/src:ro
       - ./data/models:/opt/projet/data/models:ro
       # Seuls dossiers écrits : les mesures de E2a (cache d'analyses, séries), l'essai
-      # gratuit (Groq) et la recette de E2b. Le reste de data/experiments (mesures de E1)
-      # n'est ni lu ni modifiable d'ici. Les dossiers doivent exister sur l'hôte
-      # (mkdir -p data/experiments/<nom>), sinon Docker les crée en root.
+      # gratuit (Groq), la recette de E2b et l'évaluation de la génération (E3a). Le reste
+      # de data/experiments (mesures de E1) n'est ni lu ni modifiable d'ici. Les dossiers
+      # doivent exister sur l'hôte (mkdir -p data/experiments/<nom>), sinon Docker les crée en root.
       - ./data/experiments/e2a:/opt/projet/data/experiments/e2a
       - ./data/experiments/e2a-essai:/opt/projet/data/experiments/e2a-essai
       - ./data/experiments/e2b-recette:/opt/projet/data/experiments/e2b-recette
+      - ./data/experiments/e3a:/opt/projet/data/experiments/e3a
     entrypoint: ["python"]
     deploy:
       resources:
