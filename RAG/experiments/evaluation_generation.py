@@ -269,13 +269,28 @@ class BudgetExceededError(Exception):
 class Budget:
     """Dépense réelle cumulée (`usage.cost` de chaque appel payé), persistée de façon atomique.
     `check` refuse un appel si dépensé + réserve dépasse le plafond : la réserve couvre le coût
-    maximal d'un appel au plafond de jetons, donc le plafond n'est jamais franchi."""
+    maximal d'un appel au plafond de jetons, donc le plafond n'est jamais franchi.
+
+    Un verrou exclusif (fichier `.lock` à côté) est pris pour toute la vie de l'objet : deux
+    commandes payantes simultanées liraient le même total et le plafond pourrait être dépassé."""
 
     def __init__(self, path: Path, limit_usd: float, reserve_usd: float) -> None:
+        import fcntl
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = open(path.with_name(path.name + ".lock"), "w")  # noqa: SIM115 - gardé ouvert
+        try:
+            fcntl.flock(self._lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            self._lock.close()
+            raise SystemExit("une autre commande payante de E3a est en cours : attendre qu'elle se termine") from None
         self._path, self.limit, self.reserve = path, limit_usd, reserve_usd
         data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
         self.spent = float(data.get("total_usd", 0.0))
         self.calls = int(data.get("appels", 0))
+
+    def close(self) -> None:
+        """Libère le verrou (la fermeture du fichier relâche `flock`)."""
+        self._lock.close()
 
     def check(self) -> None:
         if self.spent + self.reserve > self.limit:
@@ -308,7 +323,10 @@ class BudgetedClient:
         return call
 
     def close(self) -> None:
-        self._inner.close()
+        try:
+            self._inner.close()
+        finally:
+            self._budget.close()
 
 
 def call_cache_key(namespace: str, profile, *, system: str, user: str, schema_name: str, max_tokens: int) -> str:
@@ -550,9 +568,19 @@ def draw_sample(eligible: list[dict], *, size: int, seed: int, candidates: tuple
     return [chosen[int(j)] for j in rng.permutation(len(chosen))]
 
 
+_CONTROL = {c: None for c in range(32) if c not in (9, 10)} | {127: None} | {c: None for c in range(128, 160)}
+
+
+def _safe(text: str) -> str:
+    """Retire les caractères de contrôle (sauf tabulation et saut de ligne) avant affichage : une
+    fiche ou une réponse de modèle contenant une séquence d'échappement ANSI ne doit pas agir sur
+    le terminal de l'annotateur."""
+    return text.translate(_CONTROL)
+
+
 def _readable(context: str) -> str:
     from html import unescape
-    return unescape(context)
+    return _safe(unescape(context))
 
 
 def annotate(items: list[dict], done: dict, *, ask, show, save) -> dict:
@@ -575,11 +603,11 @@ def annotate(items: list[dict], done: dict, *, ask, show, save) -> dict:
             key = str(item["n"])
             if key in done:
                 continue
-            show(f"\n===== Réponse {item['n']}/{total} =====\nQUESTION : {item['question']}\n\nDOCUMENTS :\n"
-                 f"{_readable(item['context'])}\n\nRÉPONSE :\n{item['answer']}\n\nAFFIRMATIONS :")
+            show(f"\n===== Réponse {item['n']}/{total} =====\nQUESTION : {_safe(item['question'])}\n\n"
+                 f"DOCUMENTS :\n{_readable(item['context'])}\n\nRÉPONSE :\n{_safe(item['answer'])}\n\nAFFIRMATIONS :")
             verdicts, badly_split = [], []
             for i, claim in enumerate(item["claims"], start=1):
-                show(f"  {i}. {claim}")
+                show(f"  {i}. {_safe(claim)}")
                 value = prompt(f"  {i} soutenue (s) / non soutenue (n), + m si mal découpée : ",
                                {"s", "n", "sm", "nm"})
                 verdicts.append(value[0] == "s")
