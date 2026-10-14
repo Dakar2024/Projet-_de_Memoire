@@ -174,3 +174,186 @@ def test_atomic_write(tmp_path):
     ev._write_json_atomic(path, {"a": "é"})
     assert json.loads(path.read_text(encoding="utf-8")) == {"a": "é"}
     assert not list(path.parent.glob("*.tmp"))
+
+
+# --- Budget, caches, enregistrement, génération sur recherche figée (Tâche 6) -------------------
+
+from RAG.src.llm.common import LlmCall  # noqa: E402
+from RAG.src.retrieval.analysis import QueryAnalysis  # noqa: E402
+from RAG.src.retrieval.identifiers import extract_identifiers  # noqa: E402
+from RAG.src.retrieval.retriever import RetrievedDocument, SearchResult, SearchTrace  # noqa: E402
+from RAG.src.utils.config import LlmProfile  # noqa: E402
+from RAG.src.utils.errors import LlmTruncatedError, LlmUnavailableError  # noqa: E402
+
+PROFILE = LlmProfile("mistral-medium", "mistralai/mistral-medium-3-5", "mistral/zdr", "Mistral", None)
+DOC_TEXT = "Variant c.5266dup, gene BRCA1. dbSNP rs80357906. Clinical significance: Pathogenic."
+
+
+class FakeLlm:
+    def __init__(self, content=None, cost=0.02, error=None):
+        self.content, self.cost, self.error, self.calls, self.closed = content, cost, error, 0, False
+
+    def complete_json(self, profile, **kwargs):
+        self.calls += 1
+        if self.error:
+            raise self.error
+        return LlmCall(self.content, "g", "Mistral", self.cost, 10, 5)
+
+    def close(self):
+        self.closed = True
+
+
+def _kwargs(user="u", system="s"):
+    return {"system": system, "user": user, "schema_name": "x", "schema": {}, "max_tokens": 3000}
+
+
+def _doc(doc_id="clinvar:32716"):
+    return RetrievedDocument(doc_id=doc_id, doc_type="variant", text=DOC_TEXT, gene_symbol="BRCA1",
+                             clinical_significance="Pathogenic", review_status="reviewed by expert panel",
+                             rs_dbsnp=80357906, hgvs_c="c.5266dup", hgvs_p="p.Gln1756fs",
+                             clinvar_variation_id="17677", clinvar_url="https://example/17677",
+                             source_version="2026-10", similarity=0.9, stage="exact")
+
+
+def _result(question="Que sait-on de rs80357906 ?", docs=None, available=True):
+    trace = SearchTrace(mode="full", identifiers=extract_identifiers(question),
+                        analysis=QueryAnalysis("q", "none", None, available, "essai"))
+    return SearchResult(question=question, documents=tuple(docs if docs is not None else [_doc()]), trace=trace)
+
+
+Q = {"id": "E3-I01", "strate": "I", "question": "Que sait-on de rs80357906 ?"}
+
+
+def test_budget_exact_boundaries(tmp_path):
+    path = tmp_path / "depenses.json"
+    budget = ev.Budget(path, limit_usd=1.0, reserve_usd=0.25)
+    inner = FakeLlm({"a": 1}, cost=0.30)
+    client = ev.BudgetedClient(inner, budget)
+    for _ in range(3):
+        client.complete_json(PROFILE, **_kwargs())    # dépensé 0 -> 0,3 -> 0,6 -> 0,9 (0,6 + 0,25 ≤ 1)
+    with pytest.raises(ev.BudgetExceededError):
+        client.complete_json(PROFILE, **_kwargs())    # 0,9 + 0,25 > 1 : refusé AVANT l'appel
+    assert inner.calls == 3
+    reloaded = ev.Budget(path, limit_usd=1.0, reserve_usd=0.25)
+    assert reloaded.spent == pytest.approx(0.9) and reloaded.calls == 3
+
+
+def test_billed_truncation_is_counted(tmp_path):
+    budget = ev.Budget(tmp_path / "d.json", 10.0, 0.25)
+    client = ev.BudgetedClient(FakeLlm(error=LlmTruncatedError("coupée", cost_usd=0.07)), budget)
+    with pytest.raises(LlmTruncatedError):
+        client.complete_json(PROFILE, **_kwargs())
+    assert budget.spent == pytest.approx(0.07)
+
+
+def test_cache_hits_cost_nothing_and_survive_restart(tmp_path):
+    budget = ev.Budget(tmp_path / "d.json", 10.0, 0.25)
+    inner = FakeLlm({"a": 1}, cost=0.5)
+    cached = ev.CachedClient(ev.BudgetedClient(inner, budget), tmp_path / "c.json", "generation-p1")
+    cached.complete_json(PROFILE, **_kwargs())
+    assert not cached.last_hit
+    again = ev.CachedClient(ev.BudgetedClient(inner, budget), tmp_path / "c.json", "generation-p1")
+    assert again.complete_json(PROFILE, **_kwargs()).content == {"a": 1}
+    assert again.last_hit and inner.calls == 1 and budget.spent == pytest.approx(0.5)
+
+
+def test_each_passage_has_its_own_cache_namespace(tmp_path):
+    inner = FakeLlm({"a": 1})
+    for passage in (1, 2):
+        ev.CachedClient(inner, tmp_path / "c.json", f"generation-p{passage}").complete_json(PROFILE, **_kwargs())
+    assert inner.calls == 2
+
+
+def test_cache_key_depends_on_system_prompt_and_message():
+    base = ev.call_cache_key("n", PROFILE, system="s", user="u", schema_name="x", max_tokens=1)
+    assert base != ev.call_cache_key("n", PROFILE, system="s2", user="u", schema_name="x", max_tokens=1)
+    assert base != ev.call_cache_key("n", PROFILE, system="s", user="u2", schema_name="x", max_tokens=1)
+    assert base != ev.call_cache_key("m", PROFILE, system="s", user="u", schema_name="x", max_tokens=1)
+
+
+def test_failures_are_not_cached(tmp_path):
+    inner = FakeLlm(error=LlmUnavailableError("503"))
+    cached = ev.CachedClient(inner, tmp_path / "c.json", "n")
+    with pytest.raises(LlmUnavailableError):
+        cached.complete_json(PROFILE, **_kwargs())
+    assert not (tmp_path / "c.json").exists()
+
+
+def _stored(doc_ids=("clinvar:32716",)):
+    return {"doc_ids": list(doc_ids), "llm_called": True}
+
+
+def _clients(tmp_path, content):
+    inner = FakeLlm(content)
+    cached = ev.CachedClient(inner, tmp_path / "c.json", "generation-p1")
+    return ev.RecordingClient(cached), cached, inner
+
+
+def test_rejected_answer_keeps_the_raw_model_text(tmp_path):
+    raw = {"status": "answered", "scope_reason": None, "citations": ["D1"],
+           "answer": "Le variant rs80357906 est bénin."}  # contredit la fiche : rejet par les contrôles
+    recorder, cached, _ = _clients(tmp_path, raw)
+    record = ev.generate_record(Q, _stored(), _result(), recorder=recorder, cached=cached, profile=PROFILE,
+                                max_tokens=3000, passage=1)
+    assert record["status"] == "unverifiable"
+    assert record["llm_status"] == "answered"
+    assert record["llm_text"] == "Le variant rs80357906 est bénin."
+    assert record["llm_citations"] == ["D1"]
+
+
+def test_accepted_answer_record(tmp_path):
+    raw = {"status": "answered", "scope_reason": None, "citations": ["D1"],
+           "answer": "Le variant rs80357906 est pathogène."}
+    recorder, cached, _ = _clients(tmp_path, raw)
+    record = ev.generate_record(Q, _stored(), _result(), recorder=recorder, cached=cached, profile=PROFILE,
+                                max_tokens=3000, passage=1)
+    assert record["status"] == "answered" and record["rejected"] is None
+    assert record["cost_usd"] == 0.02 and record["from_cache"] is False
+
+
+def test_unavailable_generation_is_recorded_without_its_message(tmp_path):
+    recorder, cached, _ = _clients(tmp_path, {"nonsense": True})  # hors schéma
+    record = ev.generate_record(Q, _stored(), _result(), recorder=recorder, cached=cached, profile=PROFILE,
+                                max_tokens=3000, passage=2)
+    assert record["status"] == ev.UNAVAILABLE and record["error"] == "LlmUnavailableError"
+    assert record["passage"] == 2 and record["llm_text"] is None
+
+
+def test_changed_documents_stop_before_any_call(tmp_path):
+    recorder, cached, inner = _clients(tmp_path, {})
+    with pytest.raises(SystemExit, match="ne redonne pas"):
+        ev.generate_record(Q, _stored(("clinvar:1",)), _result(), recorder=recorder, cached=cached,
+                           profile=PROFILE, max_tokens=3000, passage=1)
+    assert inner.calls == 0
+
+
+def test_missing_cached_analysis_stops(tmp_path):
+    recorder, cached, inner = _clients(tmp_path, {})
+    with pytest.raises(SystemExit, match="analyse absente"):
+        ev.generate_record(Q, _stored(), _result(available=False), recorder=recorder, cached=cached,
+                           profile=PROFILE, max_tokens=3000, passage=1)
+    assert inner.calls == 0
+
+
+def test_search_record_flags_llm_and_fixed_cases():
+    called = ev.search_record(Q, _result(), profile=PROFILE, max_tokens=3000)
+    assert called["llm_called"] is True and called["fixed_status"] is None
+    assert called["doc_ids"] == ["clinvar:32716"]
+    assert '<document id="D1"' in called["context"]
+    empty = ev.search_record(Q, _result(docs=[]), profile=PROFILE, max_tokens=3000)
+    assert empty["llm_called"] is False and empty["fixed_status"] == "not_in_sources"
+
+
+def test_repeats_are_deterministic_and_drawn_among_llm_questions():
+    ids = [f"E3-S{i:02d}" for i in range(1, 31)]
+    first = ev.select_repeats(ids, 20, 20261014)
+    assert first == ev.select_repeats(list(reversed(ids)), 20, 20261014)
+    assert len(set(first)) == 20 and set(first) <= set(ids)
+    with pytest.raises(SystemExit):
+        ev.select_repeats(ids[:5], 20, 1)
+
+
+def test_manifest_mismatch_names_the_differing_fields(tmp_path):
+    with pytest.raises(SystemExit, match="generation_prompt_sha"):
+        ev.check_manifest(tmp_path / "f.json", {"generation_prompt_sha": "a", "k": 1},
+                          {"generation_prompt_sha": "b", "k": 1})
