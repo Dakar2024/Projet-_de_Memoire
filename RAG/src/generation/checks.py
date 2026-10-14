@@ -403,7 +403,11 @@ _NEUTRAL_PHRASES = re.compile(
     r"\b(?:aucun|sans|pas\s+de)\s+conflits?(?:\s+d['’]\s*interpr[ée]tations?)?\b"
     r"|\baucune?\s+crit[èe]res?\s+(?:d['’]\s*[ée]valuation\s+)?fournie?s?\b"
     r"|\bclinvar\s+ne\s+documente\s+pas\s+de\s+ph[ée]notypes?\s+pour\s+ce\s+variant\b"
-    r"|\bnon[- ]sph[ée]rocytaires?\b",
+    r"|\bnon[- ]sph[ée]rocytaires?\b"
+    # Correctif post-recette n° 3 (P1-B21) : « condition : Neurodevelopmental delay (sans mention
+    # de syndrome) » précise la condition déposée, jamais la signification. Liste fermée de noms.
+    r"|\bsans\s+(?:mention|pr[ée]cision)\s+(?:de\s+|d['’]\s*|du\s+|des\s+)"
+    r"(?:syndromes?|maladies?|conditions?|ph[ée]notypes?|pathologies?|affections?|sous[- ]types?)\b",
     re.IGNORECASE,
 )
 

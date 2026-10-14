@@ -1107,3 +1107,22 @@ def test_the_question_reaches_the_check_through_verify_answer():
     answer = ("Le variant c.5266dup, associé à un syndrome de multiples excroissances bénignes avec "
               "risque accru de cancer, est pathogène.")
     verify_answer(answer, [doc()], ["clinvar:32716"], "answered", QUESTION_B09)
+
+
+# --- Correctif post-recette n° 3 : négation sans rapport avec la signification ------------------
+@pytest.mark.parametrize("answer", [
+    "c.5266dup : pathogène, condition : Neurodevelopmental delay (sans mention de syndrome).",
+    "c.5266dup : pathogène, sans précision de sous-type.",
+    "c.5266dup : pathogène, condition déposée sans mention d'affection.",
+])
+def test_a_negation_about_the_condition_is_neutral(answer):
+    check_significances(answer, [doc()])
+
+
+@pytest.mark.parametrize("answer", [
+    "c.5266dup : pathogène, sans mention de confirmation.",   # hors de la liste fermée
+    "c.5266dup : pathogène (sans mention de syndrome), mais pas selon tous.",
+    "c.5266dup n'est pas pathogène (sans mention de syndrome).",
+])
+def test_other_negations_still_reject(answer):
+    assert _reason(check_significances, answer, [doc()]) == "significance_not_in_sources"
