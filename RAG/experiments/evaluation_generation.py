@@ -483,10 +483,26 @@ def search_record(question: dict, result, *, profile, max_tokens: int) -> dict:
                          "significance": analysis.significance, "cost_usd": analysis.cost_usd}}
 
 
+class TransientGenerationError(Exception):
+    """Panne d'infrastructure (réseau, 5xx, réponse illisible du service) : pas une faute du
+    modèle ; rien n'est enregistré, la question sera reposée à la prochaine reprise."""
+
+
+def is_model_fault(exc: Exception) -> bool:
+    """`generate_answer` enveloppe dans `LlmUnavailableError` deux fautes du modèle : une sortie
+    hors schéma (cause `ValueError`) et une réponse coupée par le plafond (cause
+    `LlmTruncatedError`). Toute autre indisponibilité vient du transport ou du fournisseur."""
+    from RAG.src.utils.errors import LlmTruncatedError
+    return isinstance(exc.__cause__, (ValueError, LlmTruncatedError))
+
+
 def generate_record(question: dict, stored: dict, result, *, recorder: RecordingClient, cached: CachedClient,
                     profile, max_tokens: int, passage: int) -> dict:
-    """Une génération sur la recherche figée. Refuse (SystemExit) si les documents ont changé ;
-    une génération indisponible est consignée ; budget et refus permanents remontent."""
+    """Une génération sur la recherche figée. Refuse (SystemExit) si les documents ont changé.
+    Une faute du modèle (hors schéma, coupure) est consignée comme génération indisponible et
+    compte contre lui ; une panne d'infrastructure lève `TransientGenerationError` (rien n'est
+    consigné : on ne pénalise pas un candidat pour une panne réseau). Budget et refus
+    permanents remontent."""
     from RAG.src.generation.answer import generate_answer
     from RAG.src.utils.errors import LlmUnavailableError
     if not result.trace.analysis.available:
@@ -496,6 +512,8 @@ def generate_record(question: dict, stored: dict, result, *, recorder: Recording
     try:
         answer = generate_answer(question["question"], result, client=recorder, profile=profile, max_tokens=max_tokens)
     except LlmUnavailableError as exc:
+        if not is_model_fault(exc):
+            raise TransientGenerationError(type(exc).__name__) from exc
         return unavailable_record(question, exc, passage=passage)
     if not answer.from_llm:
         raise SystemExit(f"{question['id']} : message fixe alors que `rechercher` prévoyait un appel au LLM")
@@ -917,6 +935,7 @@ def cmd_lancer(args) -> None:
     cached = CachedClient(BudgetedClient(build_llm_client(profile, None, generation.timeout_s), budget),
                           GENERATION_CACHE, f"generation-p{args.passage}")
     recorder = RecordingClient(cached)
+    skipped = 0
     try:
         with Searcher(cache_path=ANALYSIS_CACHE, analysis_client=OfflineAnalysisClient()) as searcher:
             if searcher.index_doc_ids_sha256() != manifest["index_doc_ids_sha256"]:
@@ -929,12 +948,16 @@ def cmd_lancer(args) -> None:
                                              max_tokens=generation.max_tokens, passage=args.passage)
                 except (BudgetExceededError, LlmPermanentError) as exc:
                     raise _stop(exc) from None
+                except TransientGenerationError as exc:
+                    skipped += 1
+                    print(f"{qid} : panne d'infrastructure ({exc}), question reposée à la prochaine reprise")
+                    continue
                 data["records"][qid] = record
                 _write_json_atomic(out, data)
                 print(f"{qid} : {record['status']} (modèle : {record['llm_status']})")
     finally:
         recorder.close()
-    print(f"dépensé au total : {budget.spent:.4f} $ sur {settings.budget_usd} $")
+    print(f"{skipped} question(s) à reposer ; dépensé au total : {budget.spent:.4f} $ sur {settings.budget_usd} $")
 
 
 def _judge_manifest(settings) -> dict:
