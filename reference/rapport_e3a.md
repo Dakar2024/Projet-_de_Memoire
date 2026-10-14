@@ -14,6 +14,7 @@
 | Plan | écrit : `docs/superpowers/plans/2026-10-14-sous-projet-e3a-evaluation-generation.md` |
 | Code, tests, jeu de questions, documentation | **faits**, branche `rag/e3a-evaluation` (14 commits, non poussée) |
 | Jeu de questions | **relu et validé tel quel par l'utilisateur** le 14/10, figé |
+| Base de la branche | rebasée le 14/10 sur `rag/e2b-correctifs` (5 correctifs post-recette des contrôles de E2b) : E3a mesurera les modèles avec les contrôles corrigés |
 | Mesure réelle | **pas encore lancée** : elle attend les crédits OpenRouter, la mesure officielle de E2a et la fin de la recette E2b |
 
 Rien n'a été envoyé à OpenRouter : aucun appel payant n'a été fait. Le code de E2b, gelé à 751fae3
