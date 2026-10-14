@@ -741,3 +741,19 @@ def test_terminal_control_sequences_are_stripped_from_the_annotation_screen():
     text = "\n".join(shown)
     assert "\x1b" not in text and "\x07" not in text and "\x9b" not in text
     assert "Q[2J ?" in text
+
+
+def test_a_network_failure_is_not_held_against_the_candidate(tmp_path):
+    inner = FakeLlm(error=LlmUnavailableError("OpenRouter injoignable"))
+    cached = ev.CachedClient(inner, tmp_path / "c.json", "generation-p1")
+    with pytest.raises(ev.TransientGenerationError):
+        ev.generate_record(Q, _stored(), _result(), recorder=ev.RecordingClient(cached), cached=cached,
+                           profile=PROFILE, max_tokens=3000, passage=1)
+
+
+def test_a_truncated_answer_is_the_model_fault(tmp_path):
+    inner = FakeLlm(error=LlmTruncatedError("coupée", cost_usd=0.01))
+    cached = ev.CachedClient(inner, tmp_path / "c.json", "generation-p1")
+    record = ev.generate_record(Q, _stored(), _result(), recorder=ev.RecordingClient(cached), cached=cached,
+                                profile=PROFILE, max_tokens=3000, passage=1)
+    assert record["status"] == ev.UNAVAILABLE
