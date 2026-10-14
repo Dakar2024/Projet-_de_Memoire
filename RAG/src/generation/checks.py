@@ -577,11 +577,41 @@ def _current(d: RetrievedDocument) -> set[str]:
     return _translated(labels)
 
 
-def _mentions(sentence: str) -> list[tuple[int, int, str]]:
-    """Identifiants de variant d'une phrase (début, fin, forme) : rs, c., p. et Variation ID."""
+def _mentions(sentence: str, names: Sequence[str] = ()) -> list[tuple[int, int, str]]:
+    """Identifiants de variant d'une phrase (début, fin, forme) : rs, c., p. et Variation ID ;
+    plus les noms historiques des fiches citées (`names`, voir _doc_name)."""
     spans = (variant_spans(sentence) + _local_spans(sentence)
              + [(m.start(), m.end(), m.group(1)) for m in _VARIATION_ID.finditer(sentence)])
+    for name in names:
+        pattern = re.compile(rf"(?<![\w-]){_spaced(name)}(?![\w-])", re.IGNORECASE)
+        spans += [(m.start(), m.end(), _name_key(name)) for m in pattern.finditer(sentence)]
     return sorted(spans)
+
+
+# Correctif post-recette n° 4 (2026-10-14) : P1-B19 a été rejetée alors qu'elle était exacte.
+# Certaines fiches n'ont pas d'expression HGVS : leur titre Gold est un nom historique
+# (« Variant G6PD ZURICH, gene G6PD »). Faute de reconnaître ce nom comme un variant, le segment
+# « G6PD ZURICH (Pathogenic/Likely pathogenic) ; » héritait du variant du segment précédent
+# (c.1478G>A, Pathogenic) et était déclaré non conforme. Le nom de la fiche CITÉE devient un
+# identifiant de l'appariement, au même titre qu'un HGVS : la signification écrite à côté est
+# comparée à celle de SA fiche (règle plus précise qu'avant, pas plus permissive).
+_DOC_TITLE = re.compile(r"^Variant (?P<name>[^,\n]+), gene\b")
+
+
+def _doc_name(d: RetrievedDocument) -> str | None:
+    """Nom historique d'une fiche sans HGVS dans son titre (« G6PD ZURICH »), sinon None. Un nom
+    trop court ou sans majuscule n'est pas retenu : il pourrait apparaître par hasard."""
+    match = _DOC_TITLE.match(d.text)
+    if not match:
+        return None
+    name = match.group("name").strip()
+    if re.search(r"[cpgmn]\.|[:()]", name) or len(name) < 6 or not re.search(r"[A-Z]", name) or " " not in name:
+        return None
+    return name
+
+
+def _name_key(name: str) -> str:
+    return "nom:" + " ".join(name.lower().split())
 
 
 _RESPECTIVELY = re.compile(r"\brespectivement\b", re.IGNORECASE)
@@ -612,7 +642,7 @@ def _term_end(sentence: str, pos: int) -> int:
 
 
 def _check_variant_pairing(sentence: str, terms: list[tuple[int, str]],
-                           keyed: Sequence[tuple[_VariantIds, set[str], str]]) -> None:
+                           keyed: Sequence[tuple[_VariantIds, set[str], str]], names: Sequence[str] = ()) -> None:
     """Relie chaque terme de signification au(x) variant(s) nommé(s) à côté de lui dans la phrase.
 
     Les identifiants d'une même fiche qui se suivent (« c.4837A>G (p.Ser1613Gly, rs1799966) »)
@@ -693,7 +723,7 @@ def _check_variant_pairing(sentence: str, terms: list[tuple[int, str]],
 
     # Un identifiant qu'aucune fiche citée ne porte relève des contrôles d'identifiants
     # (check_identifiers_cited, appelé avant dans verify_answer) : ignoré ici.
-    mentions = [(start, end, key) for start, end, key in _mentions(sentence) if docs_of(key)]
+    mentions = [(start, end, key) for start, end, key in _mentions(sentence, names) if docs_of(key)]
     if not mentions:
         return
     events = sorted([(start, end, "v", key) for start, end, key in mentions]
@@ -804,7 +834,9 @@ def check_significances(answer: str, cited: Sequence[RetrievedDocument], questio
     nomme des variants, elle est en plus celle de la fiche du variant auquel elle se rapporte
     (_check_variant_pairing). Un libellé de la ligne « Classification history » est rejeté :
     l'historique est restitué par le code."""
-    keyed = [(_doc_ids(d), _current(d), d.doc_id) for d in cited]
+    names = [name for d in cited if (name := _doc_name(d))]
+    keyed = [(_doc_ids(d) | _VariantIds(vid=frozenset({_name_key(n)} if (n := _doc_name(d)) else ())),
+              _current(d), d.doc_id) for d in cited]
     current: set[str] = set()
     for _ids, sigs, _doc_id in keyed:
         current |= sigs
@@ -830,9 +862,9 @@ def check_significances(answer: str, cited: Sequence[RetrievedDocument], questio
                 "significance_not_in_sources",
                 [f"terme absent des documents cités : {t} (phrase : {sentence.strip()})" for t in sorted(unsourced)])
         plain = _unmark(sentence.translate(_TYPOGRAPHY))
-        named = [key for _s, _e, key in _mentions(plain) if any(key in ids for ids, _, _ in keyed)]
+        named = [key for _s, _e, key in _mentions(plain, names) if any(key in ids for ids, _, _ in keyed)]
         if terms and named:
-            _check_variant_pairing(plain, terms, keyed)
+            _check_variant_pairing(plain, terms, keyed, names)
         elif terms and context and not _ANAPHORA_SKIP.search(sentence):
             _check_inherited(context, [t for _, t in terms], keyed, sentence)
         elif named and previous_terms and _SAME.search(sentence):
