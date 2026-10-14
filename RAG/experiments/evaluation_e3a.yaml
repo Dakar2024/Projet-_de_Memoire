@@ -1,0 +1,45 @@
+# Évaluation de la génération (E3a) : conditions fixées AVANT la mesure.
+# Spec : docs/superpowers/specs/2026-10-14-sous-projet-e3a-evaluation-generation-design.md
+# Toute modification de ce fichier change son empreinte, inscrite dans chaque manifeste :
+# `evaluer` refuse alors de mêler les séries obtenues avant et après.
+
+# Juge unique, d'une famille distincte des trois candidats (spec §3). Vérifié le 14/10/2026 sur
+# l'API publique d'OpenRouter : point d'accès zéro rétention avec sorties structurées. Aucune
+# température n'est envoyée (recommandation de Google pour Gemini 3, et paramètre non annoncé par
+# ce point d'accès : spec §2.1).
+judge:
+  name: juge-gemini-3.8-flash
+  model: google/gemini-3.8-flash
+  provider_tag: google-vertex/global
+  provider_name: Google
+  quantization: null
+  # Plafond par appel, réflexion interne comprise (découpage, verdicts ou pertinence).
+  max_tokens: 4000
+
+# Profils candidats : noms de llm.profiles dans RAG/config.yaml (spec §2, Q2).
+candidates: [claude-opus-5.5, mistral-medium, gpt-oss-120b]
+
+seeds:
+  draw: 20261014        # tirage du jeu, des reprises et de l'échantillon
+  bootstrap: 20261001   # même graine que E1 et E2a
+
+# Effectifs du jeu (spec §4.1).
+strata: {I: 25, S: 25, G: 10, M: 10}
+
+# Variabilité (spec §5.2) : questions reprises, et nombre total de passages sur celles-ci.
+repeat_questions: 20
+passes: 3
+
+# Validation du juge (spec §7).
+sample_size: 40
+
+# Règle de choix (spec §8.1) et seuil d'accord (spec §7.3).
+thresholds:
+  faithfulness_min: 0.90
+  rejection_max: 0.25
+  wrong_abstention_max: 0.10
+  kappa_min: 0.6
+
+# Plafond de dépense (spec §9), en dollars ; réserve retenue avant chaque appel payant.
+budget_usd: 25.0
+reserve_per_call_usd: 0.25
