@@ -234,6 +234,7 @@ def test_budget_exact_boundaries(tmp_path):
     with pytest.raises(ev.BudgetExceededError):
         client.complete_json(PROFILE, **_kwargs())    # 0,9 + 0,25 > 1 : refusé AVANT l'appel
     assert inner.calls == 3
+    client.close()  # libère aussi le verrou du budget
     reloaded = ev.Budget(path, limit_usd=1.0, reserve_usd=0.25)
     assert reloaded.spent == pytest.approx(0.9) and reloaded.calls == 3
 
@@ -722,3 +723,21 @@ def test_echantillonner_runs_once(tmp_path, monkeypatch):
     _full_setup(monkeypatch, tmp_path)
     with pytest.raises(SystemExit, match="une seule fois"):
         ev.main(["echantillonner"])
+
+
+def test_two_paying_commands_cannot_share_the_budget(tmp_path):
+    first = ev.Budget(tmp_path / "d.json", 1.0, 0.25)
+    with pytest.raises(SystemExit, match="autre commande payante"):
+        ev.Budget(tmp_path / "d.json", 1.0, 0.25)
+    first._lock.close()
+    ev.Budget(tmp_path / "d.json", 1.0, 0.25)  # libéré : de nouveau possible
+
+
+def test_terminal_control_sequences_are_stripped_from_the_annotation_screen():
+    shown = []
+    item = {"n": 1, "question": "Q\x1b[2J ?", "context": "doc \x1b]0;titre\x07", "answer": "R\x1b[31m",
+            "claims": ["a\x9b1m"]}
+    ev.annotate([item], {}, ask=_scripted(["s", "n", "2"]), show=shown.append, save=lambda d: None)
+    text = "\n".join(shown)
+    assert "\x1b" not in text and "\x07" not in text and "\x9b" not in text
+    assert "Q[2J ?" in text
