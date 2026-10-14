@@ -11,7 +11,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 
 from RAG.src.generation import messages
-from RAG.src.generation.checks import verify_answer
+from RAG.src.generation.checks import strip_cited_labels, verify_answer
 from RAG.src.generation.context import build_context, resolve_citations
 from RAG.src.generation.scope import detect_out_of_scope
 from RAG.src.prompts.generation import (
@@ -179,6 +179,9 @@ def generate_answer(question: str, result: SearchResult, *, client, profile: Llm
             rejected = str(exc)
         return Answer(status=status, answer=messages.NO_DOCUMENT, sources=(), scope_reason=None,
                       rejected=rejected, llm_text_withheld=text, **meta)
+    # Références « (D3) » / « [D1, D2] » déjà citées : retirées du texte (correctif post-recette
+    # n° 1, voir checks.strip_cited_labels) ; toute autre étiquette reste rejetée.
+    text = strip_cited_labels(text, citations)
     # Citations D_k -> doc_id réels (table construite par le code) ; une étiquette inconnue est
     # rejetée par les contrôles (citation_not_transmitted), jamais une erreur d'index.
     resolved = resolve_citations(citations, documents)

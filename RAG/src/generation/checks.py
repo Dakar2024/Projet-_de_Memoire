@@ -231,11 +231,41 @@ def check_identifiers_cited(answer: str, cited: Sequence[RetrievedDocument]) -> 
 # « vitamine D3 », « récepteur D2 », « groupe D ») c'est du vocabulaire médical.
 _LABEL = r"D\s?\d+"
 _LABEL_LIST = rf"{_LABEL}(?:\s*(?:[,;]|et|ou|and)\s*{_LABEL})*"
+# Mot de renvoi facultatif à l'intérieur d'une parenthèse : « (voir D2) », « (cf. D3) »,
+# « (voir par ex. D1, D2) », « (selon D4) ».
+_PAREN_LEAD = (r"(?:(?:voir|cf\.?|selon)(?:\s+par\s+ex(?:emple|\.)?)?\s+"
+               r"|(?:documents?|sources?|fiches?)\s*:?\s*)?")
 _LABEL_REFERENCE = re.compile(
-    rf"[(\[]\s*(?:(?:voir|cf\.?|selon)\s+)?(?P<paren>{_LABEL_LIST})\s*[)\]]"
+    rf"[(\[]\s*{_PAREN_LEAD}(?P<paren>{_LABEL_LIST})\s*[)\]]"
     rf"|(?<![\w-])(?:documents?|sources?|fiches?|voir|selon|cf\.?)\s+(?P<keyword>{_LABEL_LIST})(?![\w-])"
     rf"|(?:^|[.!?]\s+)(?P<head>{_LABEL})\s*:",
     re.IGNORECASE | re.MULTILINE)
+
+
+# Correctif post-recette n° 1 (2026-10-14) : 6 des 17 rejets de la recette E2b étaient des
+# réponses justes, rejetées parce que le modèle recopiait ses citations dans le texte
+# (« pathogène [D3] », « (voir D2) »). Une référence ENTRE PARENTHÈSES OU CROCHETS est une
+# incise : la retirer ne tronque pas la phrase. Elle est donc retirée par le code, à une
+# condition : chacune de ses étiquettes est déjà dans la liste des citations du modèle (le
+# retrait ne change pas les fiches citées, donc rien de ce que contrôlent les étapes suivantes).
+# Une référence dans la phrase (« Selon D2, … », « D3 : … ») ou une étiquette non citée reste
+# rejetée par check_document_labels : la retirer pourrait laisser une phrase tronquée.
+_PAREN_REFERENCE = re.compile(rf"[ \t]*[(\[]\s*{_PAREN_LEAD}(?P<labels>{_LABEL_LIST})\s*[)\]]", re.IGNORECASE)
+
+
+def _label_set(text: str) -> set[str]:
+    return {re.sub(r"\s", "", m).upper() for m in re.findall(_LABEL, text, re.IGNORECASE)}
+
+
+def strip_cited_labels(answer: str, citations: Sequence[str]) -> str:
+    """Retire les références entre parenthèses ou crochets dont toutes les étiquettes sont
+    citées (`citations` : étiquettes D_k rendues par le modèle). Le reste du texte est inchangé."""
+    cited = {re.sub(r"\s", "", c).upper() for c in citations}
+
+    def replace(match: re.Match) -> str:
+        return "" if _label_set(match.group("labels")) <= cited else match.group()
+
+    return _PAREN_REFERENCE.sub(replace, answer)
 
 
 def check_document_labels(answer: str, documents: Sequence[RetrievedDocument]) -> None:

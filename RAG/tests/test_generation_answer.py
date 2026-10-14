@@ -311,12 +311,29 @@ def test_the_llm_receives_neutral_labels_only():
 
 
 @pytest.mark.parametrize("text", [
-    "Le variant rs80357906 est pathogène (document D1).",
     "Selon D1, le variant rs80357906 est pathogène.",
+    "D1 : le variant rs80357906 est pathogène.",
+    "Le variant rs80357906 est pathogène (D2).",            # étiquette non citée : jamais retirée
+    "Le variant rs80357906 est pathogène (D1, D2).",        # une étiquette non citée dans la liste
 ])
 def test_a_document_label_in_the_text_is_rejected(text):
-    answer = _generate(StubClient(ok(answer=text)))
+    answer = _generate(StubClient(ok(answer=text)), result(docs=[doc(), doc("clinvar:2")]))
     assert (answer.status, answer.rejected) == ("unverifiable", "document_label_in_text")
+
+
+@pytest.mark.parametrize("text", [
+    "Le variant rs80357906 est pathogène (document D1).",
+    "Le variant rs80357906 est pathogène [D1].",
+    "Le variant rs80357906 est pathogène (voir D1).",
+    "Le variant rs80357906 est pathogène (voir par ex. D1).",
+    "Le variant rs80357906 est pathogène (cf. D1).",
+    "Le variant rs80357906 est pathogène (source : D1).",
+])
+def test_a_cited_label_in_parentheses_is_removed_from_the_delivered_text(text):
+    """Correctif post-recette n° 1 : l'incise est retirée, la réponse est livrée sans étiquette."""
+    answer = _generate(StubClient(ok(answer=text)))
+    assert answer.status == "answered" and answer.rejected is None
+    assert answer.answer == "Le variant rs80357906 est pathogène."
 
 
 def test_a_benign_variant_called_pathogenic_with_another_card_cited_is_never_delivered():

@@ -1035,3 +1035,38 @@ def test_a_plural_parenthesis_after_a_list_covers_the_whole_list():
     assert _verdict("c.4837A>G et c.5266dup (pathogènes).") == "significance_not_in_sources"
     assert _verdict("c.5266dup et c.5123C>A (pathogènes ou probablement pathogènes).") is None
     assert _verdict("c.5266dup, c.4837A>G (bénin).") is None
+
+
+# --- Correctif post-recette n° 1 : retrait des références déjà citées --------------------------
+from RAG.src.generation.checks import strip_cited_labels  # noqa: E402
+
+
+@pytest.mark.parametrize("answer,citations,expected", [
+    ("Pathogène [D3].", ["D3"], "Pathogène."),
+    ("- c.764del : pathogène [D1]\n- c.790del : pathogène [D2]", ["D1", "D2"],
+     "- c.764del : pathogène\n- c.790del : pathogène"),
+    ("Statut connu (voir par ex. D1, D2, D4).", ["D1", "D2", "D4", "D8"], "Statut connu."),
+    ("Phénotypes similaires (voir D2).", ["D2"], "Phénotypes similaires."),
+    ("Pathogène ( d 1 ).", ["D1"], "Pathogène."),
+    ("Pathogène (D1 et D2).", ["D1", "D2"], "Pathogène."),
+])
+def test_cited_parenthetical_labels_are_removed(answer, citations, expected):
+    assert strip_cited_labels(answer, citations) == expected
+
+
+@pytest.mark.parametrize("answer,citations", [
+    ("Pathogène (D1, D5).", ["D1"]),         # D5 non cité : l'incise reste, le contrôle la rejettera
+    ("Selon D1, il est pathogène.", ["D1"]),  # référence dans la phrase : jamais retirée
+    ("D1 : pathogène.", ["D1"]),
+    ("La cycline D1 est surexprimée (D1 non cité).", ["D1"]),  # pas une incise d'étiquettes seules
+    ("Fanconi anemia complementation group D1.", ["D1"]),
+])
+def test_other_label_uses_are_left_for_the_check(answer, citations):
+    assert strip_cited_labels(answer, citations) == answer
+
+
+def test_after_removal_the_check_passes_and_uncited_labels_are_still_rejected():
+    docs = [doc(), doc("clinvar:2"), doc("clinvar:3")]
+    check_document_labels(strip_cited_labels("Pathogène [D1] (voir D2).", ["D1", "D2"]), docs)
+    assert _reason(check_document_labels, strip_cited_labels("Pathogène [D3].", ["D1"]), docs) == \
+        "document_label_in_text"
