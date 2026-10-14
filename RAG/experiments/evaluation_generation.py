@@ -52,6 +52,12 @@ _I_TEMPLATES = (
     "Quel est le statut de revue du variant {v} de {g} ?",
 )
 _MAX_ATTEMPTS = 200
+UNAVAILABLE = "generation_unavailable"
+SEARCHES = OUT / "recherches.json"
+TRUTH = OUT / "verite_terrain.json"
+ANALYSIS_CACHE = OUT / "cache_analyses.json"
+GENERATION_CACHE = OUT / "cache_generation.json"
+SPENDING = OUT / "depenses.json"
 
 
 def _write_json_atomic(path: Path, data) -> None:
@@ -243,6 +249,222 @@ def relevant_doc_ids(question: dict, documents, diseases) -> list[str]:
     return relevant
 
 
+
+# --- Clients enveloppés : budget, cache, enregistrement (spec §5.1, §9) ------------------------
+
+class BudgetExceededError(Exception):
+    """Le prochain appel payant pourrait dépasser le plafond de dépense."""
+
+
+class Budget:
+    """Dépense réelle cumulée (`usage.cost` de chaque appel payé), persistée de façon atomique.
+    `check` refuse un appel si dépensé + réserve dépasse le plafond : la réserve couvre le coût
+    maximal d'un appel au plafond de jetons, donc le plafond n'est jamais franchi."""
+
+    def __init__(self, path: Path, limit_usd: float, reserve_usd: float) -> None:
+        self._path, self.limit, self.reserve = path, limit_usd, reserve_usd
+        data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        self.spent = float(data.get("total_usd", 0.0))
+        self.calls = int(data.get("appels", 0))
+
+    def check(self) -> None:
+        if self.spent + self.reserve > self.limit:
+            raise BudgetExceededError(f"plafond de dépense : {self.spent:.4f} $ dépensés, réserve "
+                                      f"{self.reserve} $, plafond {self.limit} $")
+
+    def spend(self, cost_usd: float | None) -> None:
+        self.calls += 1
+        self.spent += float(cost_usd or 0.0)
+        _write_json_atomic(self._path, {"total_usd": self.spent, "appels": self.calls})
+
+
+class BudgetedClient:
+    """Client réel sous plafond : vérifie avant, compte après. Une coupure facturée
+    (`LlmTruncatedError.cost_usd`) est comptée. Limite : une réponse rejetée par le client après
+    facturation (fournisseur inattendu, coût absent) n'a pas de coût lisible ; la réserve la couvre."""
+
+    def __init__(self, inner, budget: Budget) -> None:
+        self._inner, self._budget = inner, budget
+
+    def complete_json(self, profile, **kwargs):
+        from RAG.src.utils.errors import LlmTruncatedError
+        self._budget.check()
+        try:
+            call = self._inner.complete_json(profile, **kwargs)
+        except LlmTruncatedError as exc:
+            self._budget.spend(exc.cost_usd)
+            raise
+        self._budget.spend(call.cost_usd)
+        return call
+
+    def close(self) -> None:
+        self._inner.close()
+
+
+def call_cache_key(namespace: str, profile, *, system: str, user: str, schema_name: str, max_tokens: int) -> str:
+    """Clé d'un appel : espace (passage de génération, passage du juge), modèle, point d'accès,
+    plafond, schéma, prompt système et message exacts. Un changement de prompt change la clé."""
+    payload = json.dumps([namespace, profile.model, profile.provider_tag, max_tokens, schema_name, system, user],
+                         ensure_ascii=False)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+class CachedClient:
+    """Cache disque des appels réussis : une reprise ne repaie rien. Les échecs ne sont jamais
+    mis en cache. `last_hit` dit si le dernier appel vient du cache (latence non mesurée)."""
+
+    def __init__(self, inner, path: Path, namespace: str) -> None:
+        self._inner, self._path, self._namespace = inner, path, namespace
+        self._cache: dict[str, dict] = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        self.last_hit = False
+
+    def complete_json(self, profile, *, system, user, schema_name, schema, max_tokens):
+        from RAG.src.llm.common import LlmCall
+        key = call_cache_key(self._namespace, profile, system=system, user=user, schema_name=schema_name,
+                             max_tokens=max_tokens)
+        if key in self._cache:
+            self.last_hit = True
+            return LlmCall(**self._cache[key])
+        self.last_hit = False
+        call = self._inner.complete_json(profile, system=system, user=user, schema_name=schema_name,
+                                         schema=schema, max_tokens=max_tokens)
+        self._cache[key] = {"content": call.content, "generation_id": call.generation_id,
+                            "provider_name": call.provider_name, "cost_usd": call.cost_usd,
+                            "prompt_tokens": call.prompt_tokens, "completion_tokens": call.completion_tokens}
+        _write_json_atomic(self._path, self._cache)
+        return call
+
+    def close(self) -> None:
+        self._inner.close()
+
+
+class RecordingClient:
+    """Garde le contenu brut du dernier appel : la réponse du modèle AVANT les contrôles de E2b,
+    même quand ils la rejettent, sans toucher au code gelé."""
+
+    def __init__(self, inner) -> None:
+        self._inner = inner
+        self.last_content: dict | None = None
+
+    def complete_json(self, profile, **kwargs):
+        self.last_content = None
+        call = self._inner.complete_json(profile, **kwargs)
+        self.last_content = call.content
+        return call
+
+    def close(self) -> None:
+        self._inner.close()
+
+
+class _WouldCallLlm(Exception):
+    pass
+
+
+class ProbeClient:
+    """Sonde de `rechercher` : lève dès que la génération appellerait le LLM. Les cas à message
+    fixe (hors périmètre par règles, identifiant introuvable, aucun document) sont ainsi décidés
+    par le code gelé de E2b lui-même, sans le recopier."""
+
+    def complete_json(self, *args, **kwargs):
+        raise _WouldCallLlm
+
+    def close(self) -> None:
+        pass
+
+
+class OfflineAnalysisClient:
+    """`lancer` refait la recherche avec les analyses en cache seulement : aucune analyse payée."""
+
+    def complete_json(self, *args, **kwargs):
+        from RAG.src.utils.errors import LlmUnavailableError
+        raise LlmUnavailableError("analyse absente du cache de E3a : relancer `rechercher`")
+
+    def close(self) -> None:
+        pass
+
+
+def select_repeats(llm_ids: list[str], n: int, seed: int) -> list[str]:
+    """Questions reprises (spec §5.2) : n tirées sans remise parmi celles où le LLM est appelé."""
+    if n > len(llm_ids):
+        raise SystemExit(f"{n} reprises demandées pour {len(llm_ids)} questions où le LLM est appelé")
+    rng = np.random.default_rng(seed)
+    ordered = sorted(llm_ids)
+    return sorted(ordered[int(i)] for i in rng.choice(len(ordered), size=n, replace=False))
+
+
+def generation_record(question: dict, answer, raw: dict | None, *, passage: int, from_cache: bool) -> dict:
+    """Enregistrement d'une génération : statut livré ET réponse brute du modèle (statut, texte,
+    citations), pour juger le modèle et non le filtre."""
+    from RAG.src.generation.answer import validate_generation
+    record = {"id": question["id"], "strate": question["strate"], "passage": passage,
+              "status": answer.status, "rejected": answer.rejected, "cost_usd": answer.cost_usd,
+              "latency_ms": answer.latency_ms, "from_cache": from_cache, "provider_name": answer.provider_name,
+              "model": answer.model, "llm_status": None, "llm_text": None, "llm_citations": []}
+    if raw is not None:
+        status, _reason, text, citations = validate_generation(raw)
+        record.update(llm_status=status, llm_text=text, llm_citations=citations)
+    return record
+
+
+def unavailable_record(question: dict, error: Exception, *, passage: int) -> dict:
+    """Génération indisponible : seul le nom de la classe d'erreur, jamais son texte."""
+    return {"id": question["id"], "strate": question["strate"], "passage": passage, "status": UNAVAILABLE,
+            "error": type(error).__name__, "rejected": None, "cost_usd": 0.0, "latency_ms": None,
+            "from_cache": False, "llm_status": None, "llm_text": None, "llm_citations": []}
+
+
+def check_same_documents(question_id: str, stored: list[str], found: list[str]) -> None:
+    if stored != found:
+        raise SystemExit(f"{question_id} : la recherche ne redonne pas les documents de recherches.json "
+                         "(index ou analyse changés) — aucune génération lancée")
+
+
+def check_manifest(path: Path, expected: dict, found: dict) -> None:
+    if found != expected:
+        diff = sorted(k for k in set(expected) | set(found) if expected.get(k) != found.get(k))
+        raise SystemExit(f"{path.name} : conditions différentes de la série en cours ({', '.join(diff)}) — "
+                         "ne pas mêler deux séries ; archiver le fichier pour recommencer")
+
+
+
+def search_record(question: dict, result, *, profile, max_tokens: int) -> dict:
+    """Recherche figée d'une question : documents transmis, contexte exact rendu pour le LLM
+    (celui que verra le juge), et si la génération appellera le LLM (sonde, §5.1)."""
+    from RAG.src.generation.answer import generate_answer
+    from RAG.src.generation.context import build_context
+    try:
+        fixed = generate_answer(question["question"], result, client=ProbeClient(), profile=profile,
+                                max_tokens=max_tokens)
+        llm_called, fixed_status = False, fixed.status
+    except _WouldCallLlm:
+        llm_called, fixed_status = True, None
+    analysis = result.trace.analysis
+    return {"id": question["id"], "strate": question["strate"], "doc_ids": [d.doc_id for d in result.documents],
+            "context": build_context(result.documents), "flags": list(result.trace.flags),
+            "llm_called": llm_called, "fixed_status": fixed_status,
+            "analysis": {"profile": analysis.profile, "english_query": analysis.english_query,
+                         "significance": analysis.significance, "cost_usd": analysis.cost_usd}}
+
+
+def generate_record(question: dict, stored: dict, result, *, recorder: RecordingClient, cached: CachedClient,
+                    profile, max_tokens: int, passage: int) -> dict:
+    """Une génération sur la recherche figée. Refuse (SystemExit) si les documents ont changé ;
+    une génération indisponible est consignée ; budget et refus permanents remontent."""
+    from RAG.src.generation.answer import generate_answer
+    from RAG.src.utils.errors import LlmUnavailableError
+    if not result.trace.analysis.available:
+        raise SystemExit(f"{question['id']} : analyse absente du cache — relancer `rechercher`")
+    check_same_documents(question["id"], stored["doc_ids"], [d.doc_id for d in result.documents])
+    cached.last_hit = False
+    try:
+        answer = generate_answer(question["question"], result, client=recorder, profile=profile, max_tokens=max_tokens)
+    except LlmUnavailableError as exc:
+        return unavailable_record(question, exc, passage=passage)
+    if not answer.from_llm:
+        raise SystemExit(f"{question['id']} : message fixe alors que `rechercher` prévoyait un appel au LLM")
+    return generation_record(question, answer, recorder.last_content, passage=passage, from_cache=cached.last_hit)
+
+
 # --- Commandes -------------------------------------------------------------------------------
 
 def _e2a_identifier_doc_ids() -> set[str]:
@@ -278,6 +500,121 @@ def cmd_verite_terrain(args) -> None:
           f"médiane {int(np.median(sizes))}, min {min(sizes)}, max {max(sizes)}")
 
 
+def _manifest_file(path: Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+
+
+def _load_searches(questions: list[dict]) -> dict:
+    data = _manifest_file(SEARCHES)
+    missing = sorted({q["id"] for q in questions} - set(data.get("records", {})))
+    if not data or missing:
+        raise SystemExit(f"recherches incomplètes ({len(missing)} question(s) manquante(s)) : terminer `rechercher`")
+    return data
+
+
+def _stop(exc: Exception) -> SystemExit:
+    """Arrêt propre : ce qui est écrit reste valide, la commande reprend où elle s'est arrêtée."""
+    return SystemExit(f"arrêt : {exc} — relancer la même commande pour reprendre")
+
+
+def cmd_rechercher(args) -> None:
+    from RAG.experiments.mesure_recherche import config_sha256
+    from RAG.src.evaluation.settings import load_settings, settings_sha256
+    from RAG.src.retrieval.retriever import Searcher, build_llm_client
+    from RAG.src.utils.config import DEFAULT_CONFIG_PATH, load_generation_config, load_search_config
+    from RAG.src.utils.errors import LlmPermanentError
+
+    settings = load_settings()
+    questions = load_questions(QUESTIONS_PATH, settings.strata)
+    truth = _manifest_file(TRUTH).get("manifest")
+    if not truth or truth["questions_sha256"] != _sha256(QUESTIONS_PATH):
+        raise SystemExit("vérité terrain absente ou calculée sur un autre jeu : lancer `verite-terrain`")
+    search_config, generation = load_search_config(), load_generation_config()
+    budget = Budget(SPENDING, settings.budget_usd, settings.reserve_per_call_usd)
+    client = BudgetedClient(build_llm_client(search_config.analysis_profile, None, search_config.llm_timeout_s), budget)
+    with Searcher(cache_path=ANALYSIS_CACHE, analysis_client=client) as searcher:
+        index_sha = searcher.index_doc_ids_sha256()
+        if index_sha != truth["gold_doc_ids_sha256"]:
+            raise SystemExit("l'index ne contient pas les documents de la vérité terrain : relancer "
+                             "`verite-terrain` sur le Gold indexé, ou réindexer")
+        manifest = {"questions_sha256": truth["questions_sha256"], "index_doc_ids_sha256": index_sha,
+                    "analysis_profile": search_config.analysis_profile.name,
+                    "search_config_sha256": config_sha256(yaml.safe_load(DEFAULT_CONFIG_PATH.read_text(encoding="utf-8"))),
+                    "settings_sha256": settings_sha256()}
+        data = _manifest_file(SEARCHES) or {"manifest": manifest, "records": {}}
+        check_manifest(SEARCHES, manifest, data["manifest"])
+        todo = [q for q in questions if q["id"] not in data["records"]]
+        print(f"{len(data['records'])} recherche(s) faite(s), {len(todo)} à faire")
+        for q in todo:
+            try:
+                result = searcher.search(q["question"])
+            except (BudgetExceededError, LlmPermanentError) as exc:
+                raise _stop(exc) from None
+            if not result.trace.analysis.available:
+                raise SystemExit(f"{q['id']} : analyse indisponible (quota ou erreur) — relancer plus tard")
+            data["records"][q["id"]] = search_record(q, result, profile=generation.profile,
+                                                     max_tokens=generation.max_tokens)
+            _write_json_atomic(SEARCHES, data)
+            rec = data["records"][q["id"]]
+            print(f"{q['id']} : {len(rec['doc_ids'])} document(s), "
+                  f"{'appel au LLM' if rec['llm_called'] else rec['fixed_status']}")
+    called = sum(r["llm_called"] for r in data["records"].values())
+    print(f"terminé : {called}/{len(data['records'])} questions appelleront le LLM ; dépensé {budget.spent:.4f} $")
+
+
+def cmd_lancer(args) -> None:
+    from RAG.src.evaluation.settings import load_settings, settings_sha256
+    from RAG.src.prompts.generation import GENERATION_PROMPT_SHA
+    from RAG.src.retrieval.retriever import Searcher, build_llm_client
+    from RAG.src.utils.config import load_generation_config, load_search_config
+    from RAG.src.utils.errors import LlmPermanentError
+
+    settings = load_settings()
+    if args.profil not in settings.candidates:
+        raise SystemExit(f"profil {args.profil!r} hors des candidats {list(settings.candidates)}")
+    if not 1 <= args.passage <= settings.passes:
+        raise SystemExit(f"passage entre 1 et {settings.passes}")
+    questions = {q["id"]: q for q in load_questions(QUESTIONS_PATH, settings.strata)}
+    searches = _load_searches(list(questions.values()))
+    llm_ids = sorted(i for i, r in searches["records"].items() if r["llm_called"])
+    ids = llm_ids if args.passage == 1 else select_repeats(llm_ids, settings.repeat_questions, settings.seed_draw)
+    profile = load_search_config().profiles[args.profil]
+    generation = load_generation_config()
+    out = OUT / "generations" / f"{args.profil}__p{args.passage}.json"
+    manifest = {"questions_sha256": searches["manifest"]["questions_sha256"],
+                "index_doc_ids_sha256": searches["manifest"]["index_doc_ids_sha256"],
+                "analysis_profile": searches["manifest"]["analysis_profile"],
+                "generation_prompt_sha": GENERATION_PROMPT_SHA, "profile": profile.name, "model": profile.model,
+                "provider_tag": profile.provider_tag, "passage": args.passage,
+                "generation_max_tokens": generation.max_tokens, "settings_sha256": settings_sha256()}
+    data = _manifest_file(out) or {"manifest": manifest, "records": {}}
+    check_manifest(out, manifest, data["manifest"])
+    todo = [i for i in ids if i not in data["records"]]
+    print(f"{args.profil} passage {args.passage} : {len(ids) - len(todo)} faite(s), {len(todo)} à faire")
+    budget = Budget(SPENDING, settings.budget_usd, settings.reserve_per_call_usd)
+    cached = CachedClient(BudgetedClient(build_llm_client(profile, None, generation.timeout_s), budget),
+                          GENERATION_CACHE, f"generation-p{args.passage}")
+    recorder = RecordingClient(cached)
+    try:
+        with Searcher(cache_path=ANALYSIS_CACHE, analysis_client=OfflineAnalysisClient()) as searcher:
+            if searcher.index_doc_ids_sha256() != manifest["index_doc_ids_sha256"]:
+                raise SystemExit("l'index a changé depuis `rechercher` : aucune génération lancée")
+            for qid in todo:
+                q = questions[qid]
+                try:
+                    record = generate_record(q, searches["records"][qid], searcher.search(q["question"]),
+                                             recorder=recorder, cached=cached, profile=profile,
+                                             max_tokens=generation.max_tokens, passage=args.passage)
+                except (BudgetExceededError, LlmPermanentError) as exc:
+                    raise _stop(exc) from None
+                data["records"][qid] = record
+                _write_json_atomic(out, data)
+                print(f"{qid} : {record['status']} (modèle : {record['llm_status']})")
+    finally:
+        recorder.close()
+    print(f"dépensé au total : {budget.spent:.4f} $ sur {settings.budget_usd} $")
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -285,6 +622,11 @@ def main(argv: list[str] | None = None) -> None:
     tirer.add_argument("--sortie", help="chemin du brouillon (défaut : le fichier du jeu)")
     tirer.set_defaults(func=cmd_tirer)
     sub.add_parser("verite-terrain").set_defaults(func=cmd_verite_terrain)
+    sub.add_parser("rechercher").set_defaults(func=cmd_rechercher)
+    lancer = sub.add_parser("lancer")
+    lancer.add_argument("--profil", required=True)
+    lancer.add_argument("--passage", type=int, default=1, help="1 : jeu complet ; 2 et 3 : reprises")
+    lancer.set_defaults(func=cmd_lancer)
     args = parser.parse_args(argv)
     args.func(args)
 
