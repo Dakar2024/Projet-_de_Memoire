@@ -505,7 +505,7 @@ def diagnose_records(questions: list[dict], v1_records: list[dict], *, search, g
         if status in ("answered", "partial"):
             text = strip_cited_labels(text, citations)  # même préparation que generate_answer
         explanation = explain_rejection(text, result.documents,
-                                        resolve_citations(citations, result.documents), status)
+                                        resolve_citations(citations, result.documents), status, q["question"])
         out.append({"id": q["id"], "answer_status": answer.status, "llm_status": status,
                     "reason": explanation["reason"] if explanation else answer.rejected,
                     "detail": explanation["detail"] if explanation else [],
