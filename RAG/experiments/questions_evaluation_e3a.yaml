@@ -7,8 +7,8 @@
 # SANS changer les valeurs tirées (`tirage`) ni les règles de pertinence (`relevant`).
 # Strate G : les 18 documents de gène sont déjà visés par la famille A de E2a (questions différentes,
 # mêmes documents) — recouvrement inévitable, signalé dans le rapport.
-# À relire par l'utilisateur avant la mesure officielle ; toute correction après la première
-# génération invalide les séries (empreinte du fichier dans chaque manifeste).
+# Relu et validé tel quel par l'utilisateur le 2026-10-14 : jeu figé pour la mesure. Toute correction
+# après la première génération invalide les séries (empreinte du fichier dans chaque manifeste).
 # Écarter une question : ajouter `ecartee: "motif"` (elle reste dans le fichier).
 # --- Strate I ---
 - {"id": "E3-I01", "strate": "I", "tirage": {"gene": "PALB2", "doc_id": "clinvar:529806", "identifiant": "rs769009609"}, "question": "Que sait-on du variant rs769009609 de PALB2 ?", "relevant": {"identifiers": true}}

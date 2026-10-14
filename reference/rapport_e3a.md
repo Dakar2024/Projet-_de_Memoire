@@ -13,6 +13,7 @@
 | Spec | écrite : `docs/superpowers/specs/2026-10-14-sous-projet-e3a-evaluation-generation-design.md` (§15 : amendements) |
 | Plan | écrit : `docs/superpowers/plans/2026-10-14-sous-projet-e3a-evaluation-generation.md` |
 | Code, tests, jeu de questions, documentation | **faits**, branche `rag/e3a-evaluation` (14 commits, non poussée) |
+| Jeu de questions | **relu et validé tel quel par l'utilisateur** le 14/10, figé |
 | Mesure réelle | **pas encore lancée** : elle attend les crédits OpenRouter, la mesure officielle de E2a et la fin de la recette E2b |
 
 Rien n'a été envoyé à OpenRouter : aucun appel payant n'a été fait. Le code de E2b, gelé à 751fae3
@@ -133,8 +134,7 @@ aux fiches et pertinentes ?
 
 ## 5. Ce qu'il vous reste à faire, et quand
 
-1. **Relire le jeu de questions** (`RAG/experiments/questions_evaluation_e3a.yaml`), avant toute
-   génération. Les questions ont été rédigées à partir d'un tirage au hasard ; certaines maladies
+1. ~~Relire le jeu de questions~~ — **fait le 14/10 : validé tel quel.** Pour mémoire, Les questions ont été rédigées à partir d'un tirage au hasard ; certaines maladies
    tirées sont inattendues, par exemple « polykystose rénale » pour RAD51D ou « diabète de type 2 »
    pour G6PD. C'est voulu : ClinVar rattache certains variants à de nombreuses affections, et le
    tirage n'a rien choisi. Vous pouvez reformuler une question, sans changer `tirage` ni `relevant`,
