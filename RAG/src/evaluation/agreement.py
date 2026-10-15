@@ -1,13 +1,4 @@
-"""Accord entre le juge et l'annotation humaine (spec E3a §7.3).
-
-- Kappa de Cohen (1960) pour les verdicts binaires de fidélité ;
-- kappa pondéré linéairement (Cohen, 1968) pour la note ordonnée de pertinence (0/1/2) : un
-  désaccord 0/2 pèse deux fois un désaccord 0/1 ;
-- intervalle de confiance par bootstrap **par grappes** : les affirmations d'une même réponse
-  ne sont pas indépendantes, on rééchantillonne des réponses entières.
-
-Un kappa est indéfini quand l'accord attendu par hasard est total (une seule catégorie
-observée des deux côtés) : la fonction rend None au lieu de diviser par zéro."""
+"""Accord juge / annotation humaine (spec E3a §7.3) : kappa de Cohen, kappa pondéré, IC par bootstrap de grappes."""
 
 from __future__ import annotations
 
@@ -19,6 +10,7 @@ Pair = tuple[Hashable, Hashable]
 
 
 def _table(a: Sequence[Hashable], b: Sequence[Hashable], categories: Sequence[Hashable]) -> np.ndarray:
+    """Construit la table de contingence de deux annotations."""
     if len(a) != len(b):
         raise ValueError("les deux annotations n'ont pas la même longueur")
     index = {c: i for i, c in enumerate(categories)}
@@ -32,6 +24,7 @@ def _table(a: Sequence[Hashable], b: Sequence[Hashable], categories: Sequence[Ha
 
 
 def _kappa(table: np.ndarray, weights: np.ndarray) -> float | None:
+    """Calcule un kappa pondéré, ou None si l'accord attendu est total."""
     n = table.sum()
     if n == 0:
         return None
@@ -60,8 +53,7 @@ def weighted_kappa(a: Sequence[Hashable], b: Sequence[Hashable], categories: Seq
 def cluster_bootstrap_ci(clusters: Sequence[Sequence[Pair]],
                          statistic: Callable[[list, list], float | None], *, seed: int,
                          n_resamples: int = 10_000, alpha: float = 0.05) -> tuple[float | None, float | None]:
-    """IC (alpha/2, 1 - alpha/2) de `statistic(a, b)` en tirant des grappes entières avec remise.
-    Les tirages où la statistique est indéfinie sont écartés ; aucun tirage valide : (None, None)."""
+    """Calcule l'IC de `statistic` en tirant des réponses entières (grappes) ; (None, None) sans tirage valide."""
     if not clusters:
         return None, None
     rng = np.random.default_rng(seed)

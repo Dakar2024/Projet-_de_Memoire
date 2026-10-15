@@ -1,13 +1,4 @@
-"""Règle de choix du modèle de génération, fixée avant la mesure (spec E3a §8).
-
-1. Élimination : fidélité moyenne < seuil, taux de rejet > seuil, ou abstention à tort > seuil.
-2. Classement des restants par fidélité. Un candidat est à égalité avec le meilleur si l'écart
-   apparié n'est pas établi : l'IC bootstrap à 95 % contient 0, ou |écart| < ε, le bruit d'un
-   passage à l'autre mesuré sur les reprises (ε = 1,96 × √((v_a + v_b) / n)).
-3. Parmi les égaux : pertinence, même méthode (sautée si le kappa de pertinence est insuffisant),
-   puis coût moyen par question, puis latence médiane.
-
-Pur et déterministe (graine) : chaque comparaison est tracée dans `Decision.steps`."""
+"""Règle de choix du modèle de génération, fixée avant la mesure (spec E3a §8) : élimination, fidélité, pertinence, coût, latence."""
 
 from __future__ import annotations
 
@@ -25,6 +16,7 @@ _COST_EPS = 1e-9
 
 @dataclass(frozen=True)
 class CandidateResult:
+    """Scores d'un candidat, par question, et ses taux, coût et latence."""
     name: str
     faithfulness: dict[str, float]          # question -> fidélité (réponses jugées, ≥ 1 affirmation)
     relevance: dict[str, float]             # question -> note / 2 (réponses jugées)
@@ -37,15 +29,18 @@ class CandidateResult:
 
     @property
     def mean_faithfulness(self) -> float | None:
+        """Fidélité moyenne, ou None sans réponse jugée."""
         return float(np.mean(list(self.faithfulness.values()))) if self.faithfulness else None
 
     @property
     def mean_relevance(self) -> float | None:
+        """Pertinence moyenne, ou None sans réponse jugée."""
         return float(np.mean(list(self.relevance.values()))) if self.relevance else None
 
 
 @dataclass(frozen=True)
 class Decision:
+    """Candidat retenu, motifs d'élimination et trace de chaque comparaison."""
     chosen: str | None
     eliminated: dict[str, list[str]]
     steps: list[dict]
@@ -53,9 +48,7 @@ class Decision:
 
 def bootstrap_mean_ci(diffs, n_resamples: int = 10_000, seed: int = 20261001,
                       alpha: float = 0.05) -> tuple[float, float, float]:
-    """Moyenne et IC bootstrap percentile des écarts appariés. Même algorithme que
-    `RAG.experiments.comparaison_embeddings.bootstrap_mean_ci` (E1, E2a), recopié ici pour que le
-    code de `RAG/src` ne dépende pas d'un script d'expérience ; un test vérifie l'identité."""
+    """Calcule moyenne et IC bootstrap des écarts appariés (même algorithme que comparaison_embeddings, vérifié par test)."""
     values = np.asarray(diffs, dtype=float)
     rng = np.random.default_rng(seed)
     means = values[rng.integers(0, len(values), size=(n_resamples, len(values)))].mean(axis=1)
@@ -63,8 +56,7 @@ def bootstrap_mean_ci(diffs, n_resamples: int = 10_000, seed: int = 20261001,
 
 
 def run_variance(repeats: dict[str, list[float]]) -> float:
-    """Moyenne, sur les questions reprises, de la variance (ddof 1) des scores d'un passage à
-    l'autre ; une question n'entre que si elle a au moins deux scores."""
+    """Calcule la variance moyenne des scores d'un passage à l'autre, sur les questions reprises."""
     variances = [float(np.var(v, ddof=1)) for v in repeats.values() if len(v) >= 2]
     return float(np.mean(variances)) if variances else 0.0
 
@@ -77,6 +69,7 @@ def noise_margin(va: float, vb: float, n: int) -> float:
 
 
 def eliminate(result: CandidateResult, t: Thresholds) -> list[str]:
+    """Renvoie les motifs d'élimination d'un candidat (vide s'il reste en lice)."""
     reasons = []
     mean = result.mean_faithfulness
     if mean is None:
@@ -121,6 +114,7 @@ def _ties(candidates: list[CandidateResult], metric: str, seed: int) -> tuple[li
 
 
 def choose(results: list[CandidateResult], thresholds: Thresholds, *, use_relevance: bool, seed: int) -> Decision:
+    """Applique la règle de choix et renvoie la décision tracée."""
     eliminated = {r.name: reasons for r in results if (reasons := eliminate(r, thresholds))}
     remaining = [r for r in results if r.name not in eliminated]
     steps: list[dict] = []
