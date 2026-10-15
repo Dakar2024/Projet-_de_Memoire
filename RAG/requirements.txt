@@ -1,0 +1,7 @@
+# Dépendances du RAG. Versions égales aux contraintes d'Airflow 3.3.1
+# (constraints-3.12.txt) : elles sont déjà dans l'image Airflow, et une autre
+# version y forcerait un conflit de dépendances.
+numpy==2.5.1
+pgvector==0.5.0
+psycopg[binary]==3.3.4
+PyYAML==6.0.3

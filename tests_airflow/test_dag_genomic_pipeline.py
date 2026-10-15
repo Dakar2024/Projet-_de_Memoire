@@ -1,0 +1,196 @@
+import datetime as dt
+
+import pytest
+
+from dags.common.panels import (
+    GOLD_WRITE_POOL,
+    NCBI_POOL,
+    RAG_INDEX_POOL,
+    SILVER_WRITE_POOL,
+    SOURCES_READY,
+)
+from dags.dag_genomic_pipeline import build_panel_dag
+
+INGESTIONS = {"ingest_ncbi_gene", "ingest_refseq", "ingest_hpo_terms", "ingest_medgen"}
+
+
+@pytest.fixture
+def dag():
+    return build_panel_dag("brca", ["BRCA1", "BRCA2"])
+
+
+def test_panel_dag_is_triggered_by_the_shared_sources_asset(dag):
+    assert dag.schedule == [SOURCES_READY]
+    assert dag.catchup is False
+
+
+def test_panel_dag_has_the_expected_tasks(dag):
+    assert sorted(t.task_id for t in dag.tasks) == sorted(INGESTIONS | {
+        "resolve_sources_date",
+        "check_raw",
+        "raw_to_bronze",
+        "check_bronze",
+        "bronze_to_silver",
+        "quality_check_silver",
+        "silver_to_gold_rag",
+        "silver_to_gold_analytique",
+        "quality_check_gold",
+        "index_rag_documents",
+    })
+
+
+def test_the_four_ingestions_run_in_parallel_on_the_resolved_sources_date(dag):
+    """MedGen et les termes HPO lisent les partitions raw partagées : ils doivent
+    utiliser la date de l'acquisition, résolue une fois, et non une date propre au run."""
+    for task_id in INGESTIONS:
+        assert dag.get_task(task_id).upstream_task_ids == {"resolve_sources_date"}
+
+
+def test_check_raw_waits_for_all_four_ingestions(dag):
+    assert dag.get_task("check_raw").upstream_task_ids == INGESTIONS
+
+
+def test_the_layers_are_strictly_sequential(dag):
+    assert dag.get_task("raw_to_bronze").upstream_task_ids == {"check_raw", "resolve_sources_date"}
+    assert dag.get_task("check_bronze").upstream_task_ids == {"raw_to_bronze"}
+    assert dag.get_task("bronze_to_silver").upstream_task_ids == {"check_bronze", "resolve_sources_date"}
+    assert dag.get_task("quality_check_silver").upstream_task_ids == {"bronze_to_silver", "resolve_sources_date"}
+
+
+def test_the_two_gold_outputs_read_silver_not_each_other(dag):
+    assert dag.get_task("silver_to_gold_rag").upstream_task_ids == {
+        "quality_check_silver",
+        "resolve_sources_date",
+    }
+    assert dag.get_task("silver_to_gold_analytique").upstream_task_ids == {
+        "quality_check_silver",
+        "resolve_sources_date",
+    }
+
+
+def test_ncbi_ingestions_share_a_single_slot_pool(dag):
+    """Le limiteur de débit NCBI est par processus : deux panels en parallèle
+    dépasseraient la limite globale. Le pool sérialise les tâches E-utilities ;
+    les termes HPO interrogent ontology.jax.org et n'y ont pas leur place."""
+    assert NCBI_POOL == "ncbi"
+    for task_id in ("ingest_ncbi_gene", "ingest_refseq", "ingest_medgen"):
+        assert dag.get_task(task_id).pool == NCBI_POOL
+    assert dag.get_task("ingest_hpo_terms").pool != NCBI_POOL
+
+
+def test_bronze_to_silver_uses_a_single_slot_pool(dag):
+    """Les neuf tables Silver sont partagées entre les deux panels ; ce pool sérialise
+    bronze_to_silver pour empêcher une création de table Delta concurrente entre les
+    deux DAGs de panel, déclenchés sur le même Asset SOURCES_READY."""
+    assert SILVER_WRITE_POOL == "silver_write"
+    assert dag.get_task("bronze_to_silver").pool == SILVER_WRITE_POOL
+
+
+def test_gold_tasks_share_a_single_slot_pool(dag):
+    """Les tables Gold sont partagées entre les deux panels, dont les runs se
+    chevauchent : sans ce pool, deux écritures concurrentes sur la même table Delta
+    peuvent se perdre."""
+    for task_id in ("silver_to_gold_rag", "silver_to_gold_analytique"):
+        assert dag.get_task(task_id).pool == GOLD_WRITE_POOL
+
+
+def test_quality_check_gold_runs_after_both_gold_tasks(dag):
+    upstream = dag.get_task("quality_check_gold").upstream_task_ids
+
+    assert upstream == {
+        "resolve_sources_date",
+        "silver_to_gold_rag",
+        "silver_to_gold_analytique",
+    }
+
+
+def test_transient_failures_are_retried(dag):
+    assert dag.get_task("ingest_ncbi_gene").retries == 3
+
+
+def test_configuration_errors_fail_without_consuming_retries(monkeypatch):
+    """Une configuration manquante est permanente : AirflowFailException échoue la
+    tâche immédiatement, sans passer par les trois retries."""
+    from airflow.sdk.exceptions import AirflowFailException
+
+    from dags import dag_genomic_pipeline
+    from ingestion.errors import ConfigurationError
+
+    def refuser():
+        raise ConfigurationError("NCBI_EMAIL manquant")
+
+    monkeypatch.setattr(dag_genomic_pipeline, "build_client", refuser)
+
+    with pytest.raises(AirflowFailException, match="NCBI_EMAIL"):
+        dag_genomic_pipeline.client_or_fail()
+
+
+def test_both_panel_dags_are_exposed_at_module_level():
+    from dags import dag_genomic_pipeline
+
+    assert dag_genomic_pipeline.dag_genomic_pipeline_brca.dag_id == "dag_genomic_pipeline_brca"
+    assert dag_genomic_pipeline.dag_genomic_pipeline_sickle.dag_id == "dag_genomic_pipeline_sickle"
+
+
+def test_a_manual_run_without_sources_date_fails_with_instructions(dag):
+    """Un run de panel n'a pas de date logique dans Airflow 3. Sans événement d'Asset ni
+    `--conf`, la résolution échoue définitivement en disant comment relancer."""
+    from airflow.sdk.exceptions import AirflowFailException
+
+    with pytest.raises(AirflowFailException, match="--conf"):
+        dag.get_task("resolve_sources_date").python_callable()
+
+
+def test_task_failures_are_emailed(dag):
+    """Un pipeline mensuel sans surveillance : sans alerte, un échec ne se voit que
+    si quelqu'un ouvre l'interface. Le destinataire vient de l'environnement pour
+    ne pas figer une adresse dans le dépôt."""
+    args = dag.default_args
+
+    assert args["email_on_failure"] is True
+    assert args["email_on_retry"] is False
+    assert args["email"] == ["alerte@example.test"]
+
+
+def test_rag_indexing_runs_last_on_checked_gold_only(dag):
+    """On n'indexe que des documents contrôlés : jamais avant quality_check_gold."""
+    assert dag.get_task("index_rag_documents").upstream_task_ids == {"quality_check_gold"}
+    assert dag.get_task("index_rag_documents").downstream_task_ids == set()
+
+
+def test_rag_indexing_is_serialised_and_has_room_for_a_full_cpu_run(dag):
+    """Une réindexation complète sur CPU dure ~4 h (mesure du 30/09/2026) : le délai
+    de 3 h des autres tâches la couperait. Le pool évite deux indexations en
+    parallèle sur un service d'embedding qui sature déjà le processeur."""
+    task = dag.get_task("index_rag_documents")
+    assert RAG_INDEX_POOL == "rag_index"
+    assert task.pool == RAG_INDEX_POOL
+    assert task.execution_timeout == dt.timedelta(hours=6)
+
+
+def test_permanent_rag_errors_fail_without_consuming_retries(dag, monkeypatch):
+    from airflow.sdk.exceptions import AirflowFailException
+
+    from dags import dag_genomic_pipeline
+    from RAG.src.utils.errors import CanaryMismatchError
+
+    def refuser(panel):
+        raise CanaryMismatchError("le service ne sert pas le modèle attendu")
+
+    monkeypatch.setattr(dag_genomic_pipeline, "run_index", refuser)
+
+    with pytest.raises(AirflowFailException, match="modèle attendu"):
+        dag.get_task("index_rag_documents").python_callable()
+
+
+def test_transient_rag_errors_are_left_to_the_retries(dag, monkeypatch):
+    from dags import dag_genomic_pipeline
+    from RAG.src.utils.errors import EmbeddingServiceError
+
+    def indisponible(panel):
+        raise EmbeddingServiceError("503")
+
+    monkeypatch.setattr(dag_genomic_pipeline, "run_index", indisponible)
+
+    with pytest.raises(EmbeddingServiceError):
+        dag.get_task("index_rag_documents").python_callable()

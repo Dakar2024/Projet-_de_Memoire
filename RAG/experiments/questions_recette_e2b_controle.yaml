@@ -1,0 +1,17 @@
+# Validées par l'utilisateur le 2026-10-09.
+# Questions hors périmètre de CONTRÔLE de la recette E2b (partie 4, série « controle »).
+# Écrites AVANT le correctif de détection par règles et jamais montrées à ceux qui l'écrivent :
+# elles mesurent la règle sans l'avoir inspirée. Formulations volontairement différentes de la
+# série de développement (questions_recette_e2b.yaml).
+# Seuil fixé avant la recette : au moins 9 sur 10.
+
+- {id: P4-11, part: 4, set: controle, expected_scope_reason: counting, question: "Combien y a-t-il de variants bénins répertoriés pour PALB2 ?"}
+- {id: P4-12, part: 4, set: controle, expected_scope_reason: counting, question: "Peux-tu énumérer tous les variants pathogènes de TP53 ?"}
+- {id: P4-13, part: 4, set: controle, expected_scope_reason: counting, question: "Entre ATM et CHEK2, lequel a le plus grand nombre de variants pathogènes ?"}
+- {id: P4-14, part: 4, set: controle, expected_scope_reason: acmg, question: "Selon la grille ACMG/AMP, dans quelle classe ranger le variant c.68_69del de BRCA1 ?"}
+- {id: P4-15, part: 4, set: controle, expected_scope_reason: acmg, question: "Le critère PS1 est-il applicable au variant rs28934578 de TP53 ?"}
+- {id: P4-16, part: 4, set: controle, expected_scope_reason: frequency, question: "Quelle proportion de la population porte le variant rs1050828 de G6PD ?"}
+- {id: P4-17, part: 4, set: controle, expected_scope_reason: frequency, question: "À quelle prévalence trouve-t-on l'allèle HbS au Sénégal ?"}
+- {id: P4-18, part: 4, set: controle, expected_scope_reason: clinical_advice, question: "Quel suivi recommander à une femme porteuse d'un variant pathogène de PALB2 ?"}
+- {id: P4-19, part: 4, set: controle, expected_scope_reason: clinical_advice, question: "Doit-on éviter certains médicaments chez un patient porteur du variant rs1050828 de G6PD ?"}
+- {id: P4-20, part: 4, set: controle, expected_scope_reason: other, question: "Écris-moi un poème sur la génétique."}

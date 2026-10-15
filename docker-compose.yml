@@ -1,0 +1,752 @@
+# Nom de projet explicite : celui déduit du dossier (`projet-_de_memoire`) donne des
+# noms d'image invalides pour Docker (« invalid reference format », `-_` interdit).
+name: genomique
+
+#----------------------------------
+# Variables du RAG pour la tâche index_rag_documents : réservées au scheduler, seul
+# service Airflow qui exécute des tâches (LocalExecutor). Compte rag_indexer, sans
+# droit sur le schéma.
+#----------------------------------
+x-rag-indexer-env: &rag-indexer-env
+  RAG_EMBEDDINGS_URL: http://rag-embeddings:8080
+  RAG_EMBEDDINGS_API_KEY: ${RAG_EMBEDDINGS_API_KEY:?RAG_EMBEDDINGS_API_KEY obligatoire, à renseigner}
+  RAG_PG_HOST: rag-postgres
+  RAG_PG_PORT: "5432"
+  RAG_PG_DB: rag
+  RAG_PG_USER: rag_indexer
+  RAG_PG_PASSWORD: ${RAG_INDEXER_PASSWORD:?RAG_INDEXER_PASSWORD obligatoire, à renseigner}
+  # Même variable que celle qui choisit le dossier servi par rag-embeddings : l'indexation
+  # et le canari lisent l'empreinte dans son export.json et refusent de tourner si elle
+  # diffère de celle de RAG/config.yaml.
+  RAG_EMBEDDING_MODEL: ${RAG_EMBEDDING_MODEL:?RAG_EMBEDDING_MODEL obligatoire, à renseigner}
+
+#----------------------------------
+# Ancre : configuration commune à tous les services Airflow
+#----------------------------------
+x-airflow-common: &airflow-common
+  build:
+    context: .
+    dockerfile: docker/airflow/Dockerfile
+  # `data/` est monté en écriture (il reçoit le bulk ClinVar) : le conteneur doit
+  # tourner sous le uid propriétaire de ce dossier sur l'hôte. Groupe 0 et uid
+  # arbitraire, selon la convention de l'image officielle.
+  user: "${AIRFLOW_UID:?AIRFLOW_UID obligatoire, sortie de id -u sur l hôte}:0"
+  # Durcissement d'exécution (D4 de l'audit sécurité) : interdit à ces conteneurs
+  # d'obtenir plus de privilèges qu'au démarrage (ex. via un binaire setuid).
+  # `cap_drop: [ALL]` a été essayé et retiré : l'entrypoint Airflow (comme celui de
+  # postgres et mc ci-dessous) a besoin de CHOWN/FOWNER pour préparer ses fichiers.
+  security_opt:
+    - no-new-privileges:true
+  environment: &airflow-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    # Plafond de tâches simultanées : avec LocalExecutor chaque tâche est un processus du
+    # conteneur scheduler, dont la limite mémoire est fixée plus bas. Le défaut de 32
+    # risquerait l'OOM.
+    AIRFLOW__CORE__PARALLELISM: "4"
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD obligatoire, à renseigner}@postgres:5432/airflow
+    AIRFLOW__CORE__DAGS_FOLDER: /opt/projet/dags
+    # Les tâches joignent l'API d'exécution de l'api-server : localhost désignerait
+    # le conteneur du scheduler lui-même.
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-apiserver:8080/execution/
+    # Partagé entre composants : sinon chaque conteneur génère le sien.
+    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:?AIRFLOW_JWT_SECRET obligatoire, à renseigner}
+    # Format `utilisateur:rôle`, pas `utilisateur:mot_de_passe` : "admin" ici désigne le
+    # rôle ADMIN, pas un mot de passe. Le mot de passe réel vient de AIRFLOW_ADMIN_PASSWORD
+    # (.env) : `airflow-init` l'écrit dans le fichier ci-dessous à chaque démarrage, pour
+    # qu'aucun mot de passe ne soit généré par Airflow ni codé en dur ici.
+    AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_USERS: admin:admin
+    AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:?AIRFLOW_ADMIN_PASSWORD obligatoire, à renseigner}
+    # Chemin explicite plutôt que le défaut sous AIRFLOW_HOME, et rangé directement sous
+    # /opt/airflow/logs sans sous-dossier : un nouveau volume dédié serait créé root:root
+    # par Docker (PermissionError vérifiée), et Airflow n'aurait pas créé le sous-dossier
+    # d'un chemin plus profond (FileNotFoundError vérifiée) — /opt/airflow/logs, déjà
+    # monté, a d'emblée les bonnes permissions.
+    AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_PASSWORDS_FILE: /opt/airflow/logs/simple_auth_manager_passwords.json.generated
+    PYTHONPATH: /opt/projet:/opt/projet/src
+    LAKE_URI: "s3://"
+    AWS_ENDPOINT_URL: "http://minio:9000"
+    # Compte de service, jamais les identifiants root : la politique `airflow-lake`
+    # (docker/minio/create-buckets.sh) limite ces droits aux quatre buckets du
+    # médaillon. Une tâche compromise ne peut ni créer ni supprimer un bucket.
+    AWS_ACCESS_KEY_ID: ${MINIO_AIRFLOW_USER:?MINIO_AIRFLOW_USER obligatoire, à renseigner}
+    AWS_SECRET_ACCESS_KEY: ${MINIO_AIRFLOW_PASSWORD:?MINIO_AIRFLOW_PASSWORD obligatoire, à renseigner}
+    AWS_REGION: us-east-1
+    NCBI_EMAIL: ${NCBI_EMAIL}
+    NCBI_API_KEY: ${NCBI_API_KEY:-}
+    # Alertes : serveur d'envoi laissé au choix, tout vient du .env. Sans serveur
+    # ni destinataire, les tâches échouent normalement, seul le mail ne part pas.
+    AIRFLOW__SMTP__SMTP_HOST: ${SMTP_HOST:-}
+    AIRFLOW__SMTP__SMTP_PORT: ${SMTP_PORT:-587}
+    AIRFLOW__SMTP__SMTP_STARTTLS: ${SMTP_STARTTLS:-True}
+    AIRFLOW__SMTP__SMTP_SSL: ${SMTP_SSL:-False}
+    AIRFLOW__SMTP__SMTP_USER: ${SMTP_USER:-}
+    AIRFLOW__SMTP__SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+    AIRFLOW__SMTP__SMTP_MAIL_FROM: ${ALERT_FROM:-}
+    ALERT_EMAIL: ${ALERT_EMAIL:-}
+    # Variables du RAG (index_rag_documents) : ajoutées au seul scheduler (x-rag-indexer-env).
+  volumes:
+    # Code monté en lecture seule : une exécution arbitraire dans une tâche ne doit
+    # pas pouvoir réécrire le dépôt de l'hôte. Python n'a pas besoin d'y écrire — il
+    # se contente de ne pas produire de __pycache__.
+    - .:/opt/projet:ro
+    # Seule exception au read-only : reçoit les téléchargements de sources.
+    - ./data:/opt/projet/data
+    # Les modèles servis ne doivent pas pouvoir être réécrits par une tâche.
+    - ./data/models:/opt/projet/data/models:ro
+    # Les journaux de tâches vivaient dans le conteneur : un `--build` les effaçait
+    # tous, rendant impossible le diagnostic d'un incident passé.
+    - airflow-logs:/opt/airflow/logs
+  working_dir: /opt/projet
+  # rag-network est ajouté au seul scheduler (il exécute index_rag_documents).
+  networks:
+    - genomique-network
+  depends_on:
+    postgres:
+      condition: service_healthy
+    minio:
+      condition: service_healthy
+
+#----------------------------------
+# Ancre : dépendances communes aux services Airflow longs — sans elle, ils démarrent
+# contre une base non migrée et bouclent en erreur jusqu'à ce que la migration aboutisse.
+#----------------------------------
+x-airflow-after-init: &airflow-after-init
+  postgres:
+    condition: service_healthy
+  minio:
+    condition: service_healthy
+  # Les buckets doivent exister avant qu'une tâche n'écrive dans le lac.
+  minio-init:
+    condition: service_completed_successfully
+  airflow-init:
+    condition: service_completed_successfully
+
+#----------------------------------
+# RAG — image commune (E2a/E2b) : API et outil de mesure
+#----------------------------------
+x-rag-app: &rag-app
+  build:
+    context: .
+    dockerfile: docker/rag-api/Dockerfile
+  user: "${AIRFLOW_UID:?AIRFLOW_UID obligatoire, sortie de id -u sur l hôte}:0"
+  read_only: true
+  tmpfs:
+    - /tmp
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  working_dir: /opt/projet
+  # Sortie Internet uniquement par rag-proxy (liste d'autorisation : OpenRouter, Groq).
+  # La base et l'embedding sont joints en direct sur rag-network.
+  # Pas genomique-network : ni base d'Airflow, ni MinIO.
+  networks:
+    - rag-network
+    - rag-proxy-net
+  depends_on:
+    rag-proxy:
+      condition: service_healthy
+
+#----------------------------------
+# RAG — environnement commun, sans aucune clé d'API LLM ni clé de l'API locale :
+# chaque service n'ajoute que les clés dont il a besoin (moindre privilège).
+#----------------------------------
+x-rag-app-env: &rag-app-env
+  PYTHONPATH: /opt/projet:/opt/projet/src
+  # requests suit HTTPS_PROXY : tout appel sortant passe par le proxy filtrant, sauf
+  # les services internes listés dans NO_PROXY (base, embedding, API elle-même).
+  HTTPS_PROXY: http://rag-proxy:3128
+  HTTP_PROXY: http://rag-proxy:3128
+  NO_PROXY: rag-postgres,rag-embeddings,rag-api,rag-gateway,localhost,127.0.0.1
+  RAG_EMBEDDINGS_URL: http://rag-embeddings:8080
+  RAG_EMBEDDINGS_API_KEY: ${RAG_EMBEDDINGS_API_KEY:?RAG_EMBEDDINGS_API_KEY obligatoire, à renseigner}
+  RAG_EMBEDDING_MODEL: ${RAG_EMBEDDING_MODEL:?RAG_EMBEDDING_MODEL obligatoire, à renseigner}
+  RAG_PG_HOST: rag-postgres
+  RAG_PG_PORT: "5432"
+  RAG_PG_DB: rag
+  # Lecture seule : ni la recherche ni l'API n'écrivent dans la base.
+  RAG_PG_USER: rag_reader
+  RAG_PG_PASSWORD: ${RAG_READER_PASSWORD:?RAG_READER_PASSWORD obligatoire, à renseigner}
+
+services:
+#----------------------------------
+# PostgreSQL — base de métadonnées Airflow
+#----------------------------------
+  postgres:
+    # Épinglée par empreinte : un tag peut être repoussé, une empreinte non.
+    image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
+    container_name: genomique-postgres
+    restart: unless-stopped
+    # Même durcissement que x-airflow-common ci-dessus (D4 de l'audit sécurité).
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD obligatoire, à renseigner}
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - genomique-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow"]
+      interval: 10s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+#----------------------------------
+# MinIO — stockage S3 du lac médaillon (raw/bronze/silver/gold)
+#----------------------------------
+  minio:
+    # Même raison que postgres ci-dessus : empreinte plutôt que tag, pour un build reproductible.
+    image: quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    container_name: genomique-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    # Même durcissement que x-airflow-common ci-dessus (D4 de l'audit sécurité).
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER obligatoire, à renseigner}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD obligatoire, à renseigner}
+    ports:
+      # Ports hôte configurables : sur une machine de développement, 9000 et 9001
+      # sont souvent déjà pris (Portainer, un autre MinIO). Les services Airflow
+      # joignent MinIO par le réseau Docker (minio:9000), pas par ces ports.
+      - "127.0.0.1:${MINIO_API_PORT:-9000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio-data:/data
+    networks:
+      - genomique-network
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+#----------------------------------
+# Amorçage MinIO — création des buckets, politique et compte de service
+#----------------------------------
+  minio-init:
+    image: quay.io/minio/mc@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
+    container_name: genomique-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    # Même durcissement que x-airflow-common ci-dessus (D4 de l'audit sécurité).
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER obligatoire, à renseigner}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD obligatoire, à renseigner}
+      # Seul service à voir les identifiants root : il amorce les buckets, la
+      # politique et le compte de service, puis s'arrête.
+      MINIO_AIRFLOW_USER: ${MINIO_AIRFLOW_USER:?MINIO_AIRFLOW_USER obligatoire, à renseigner}
+      MINIO_AIRFLOW_PASSWORD: ${MINIO_AIRFLOW_PASSWORD:?MINIO_AIRFLOW_PASSWORD obligatoire, à renseigner}
+    entrypoint: ["/bin/sh", "/scripts/create-buckets.sh"]
+    volumes:
+      - ./docker/minio/create-buckets.sh:/scripts/create-buckets.sh:ro
+    networks:
+      - genomique-network
+
+#----------------------------------
+# Airflow — migration de la base et création des pools (tourne une fois, puis s'arrête)
+#----------------------------------
+  airflow-init:
+    <<: *airflow-common
+    container_name: genomique-airflow-init
+    # Migration, mot de passe admin, puis création du pool `ncbi` (NCBI_POOL des DAGs) :
+    # un slot, parce que le limiteur de débit NCBI est par processus. Le script Python
+    # (re)synchronise le mot de passe admin sur AIRFLOW_ADMIN_PASSWORD à chaque run — sans
+    # ça, Airflow le générerait lui-même à la première initialisation de l'apiserver,
+    # imprimé dans ses logs et introuvable ailleurs. `pools set` écrase le pool existant,
+    # donc toute la commande est idempotente. `bash` passe par l'entrypoint de l'image, qui
+    # prépare l'utilisateur au uid arbitraire avant d'exécuter la commande.
+    command:
+      - bash
+      - -c
+      - >-
+        airflow db migrate &&
+        python3 -c "import json, os; p = os.environ['AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_PASSWORDS_FILE']; os.makedirs(os.path.dirname(p), exist_ok=True); d = json.load(open(p)) if os.path.exists(p) else {}; d['admin'] = os.environ['AIRFLOW_ADMIN_PASSWORD']; json.dump(d, open(p, 'w'))" &&
+        airflow pools set ncbi 1 "E-utilities NCBI : une tâche à la fois, limite de débit globale" &&
+        airflow pools set silver_write 1 "Écriture Silver : tables partagées entre panels, un seul run bronze_to_silver à la fois" &&
+        airflow pools set gold_write 1 "Écriture Gold : tables partagées entre panels, un seul run silver_to_gold à la fois" &&
+        airflow pools set rag_index 1 "Indexation RAG : une indexation à la fois, le service d'embedding sature le processeur"
+    restart: "no"
+
+#----------------------------------
+# Airflow — API server (interface web + API d'exécution des tâches)
+#----------------------------------
+  airflow-apiserver:
+    <<: *airflow-common
+    container_name: genomique-airflow-apiserver
+    depends_on: *airflow-after-init
+    command: api-server
+    ports:
+      # Lié à la boucle locale : l'interface Airflow n'est pas protégée par TLS et
+      # son gestionnaire d'authentification est prévu pour du développement. Exposer
+      # au réseau demanderait un reverse proxy avec TLS devant.
+      - "127.0.0.1:8080:8080"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 1536m
+
+#----------------------------------
+# Airflow — scheduler (avec LocalExecutor, exécute aussi les tâches lui-même)
+#----------------------------------
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: genomique-airflow-scheduler
+    depends_on: *airflow-after-init
+    command: scheduler
+    restart: unless-stopped
+    # Seul service Airflow à recevoir les secrets du RAG et à joindre rag-network :
+    # avec LocalExecutor, c'est lui qui exécute index_rag_documents.
+    environment:
+      <<: [*airflow-env, *rag-indexer-env]
+    networks:
+      - genomique-network
+      # Réseau interne du RAG : la tâche y joint rag-postgres et rag-embeddings.
+      - rag-network
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      # `airflow jobs check` recharge toute la config et interroge la base à chaque
+      # appel : 10s était trop juste (mesuré à ~10-11s), d'où de faux "unhealthy"
+      # malgré une commande qui réussit ("Found one alive job.").
+      timeout: 20s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          # Avec LocalExecutor, les tâches s'exécutent dans ce conteneur. Mesuré en
+          # conditions réelles sur le vrai bulk ClinVar (~6M lignes, conversion
+          # raw_to_bronze) : le pic touchait exactement l'ancienne limite de 2g
+          # (memory.peak == memory.max, 1806 réclamations dans memory.events),
+          # sans OOM kill mais sans aucune marge — risqué avec PARALLELISM=4
+          # (plusieurs tâches simultanées dans ce même conteneur).
+          memory: 3g
+
+#----------------------------------
+# Airflow — dag-processor (parsing des DAGs, isolé du scheduler)
+#----------------------------------
+  airflow-dag-processor:
+    <<: *airflow-common
+    container_name: genomique-airflow-dag-processor
+    depends_on: *airflow-after-init
+    command: dag-processor
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type DagProcessorJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 20s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+#----------------------------------
+# Airflow — triggerer (capteurs et tâches différées asynchrones)
+#----------------------------------
+  airflow-triggerer:
+    <<: *airflow-common
+    container_name: genomique-airflow-triggerer
+    depends_on: *airflow-after-init
+    command: triggerer
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type TriggererJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 20s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 768m
+
+#----------------------------------
+# RAG — base vectorielle (PostgreSQL + pgvector), séparée de la base d'Airflow
+#----------------------------------
+  rag-postgres:
+    image: pgvector/pgvector:0.8.6-pg16@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b
+    container_name: genomique-rag-postgres
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      # Superutilisateur d'amorçage : seul rag-postgres-init s'en sert. Les tâches
+      # passent par rag_indexer, l'API par rag_reader (RAG/sql/001_schema.sql).
+      POSTGRES_USER: rag_owner
+      POSTGRES_PASSWORD: ${RAG_OWNER_PASSWORD:?RAG_OWNER_PASSWORD obligatoire, à renseigner}
+      POSTGRES_DB: rag
+    volumes:
+      - rag-postgres-data:/var/lib/postgresql/data
+    # Aucun port publié : la base n'est joignable que depuis rag-network.
+    networks:
+      - rag-network
+    healthcheck:
+      # TCP et non socket : à la première initialisation, l'image lance un serveur
+      # temporaire qui n'écoute que sur le socket, d'où un faux « healthy » possible.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U rag_owner -d rag"]
+      interval: 10s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+#----------------------------------
+# RAG — schéma, comptes et droits (tourne à chaque démarrage, puis s'arrête)
+#----------------------------------
+  rag-postgres-init:
+    image: pgvector/pgvector:0.8.6-pg16@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b
+    container_name: genomique-rag-postgres-init
+    depends_on:
+      rag-postgres:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      PGHOST: rag-postgres
+      PGDATABASE: rag
+      PGUSER: rag_owner
+      PGPASSWORD: ${RAG_OWNER_PASSWORD:?RAG_OWNER_PASSWORD obligatoire, à renseigner}
+      RAG_INDEXER_PASSWORD: ${RAG_INDEXER_PASSWORD:?RAG_INDEXER_PASSWORD obligatoire, à renseigner}
+      RAG_READER_PASSWORD: ${RAG_READER_PASSWORD:?RAG_READER_PASSWORD obligatoire, à renseigner}
+    # Mots de passe lus par \getenv dans le script (pas d'argument -v visible dans la
+    # liste des processus) ; jamais écrits dans le script SQL, et psql les cite lui-même
+    # (:'variable').
+    entrypoint: ["psql", "-q", "-f", "/sql/001_schema.sql"]
+    volumes:
+      - ./RAG/sql:/sql:ro
+    networks:
+      - rag-network
+    restart: "no"
+
+#----------------------------------
+# RAG — service d'embedding (Text Embeddings Inference, CPU)
+#----------------------------------
+  rag-embeddings:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9@sha256:2538ea1c9640d3763b15af668039d24172d063b42337b0c27796fc2be180c78d
+    container_name: genomique-rag-embeddings
+    restart: unless-stopped
+    # Utilisateur non root, racine en lecture seule, /tmp en mémoire : configuration
+    # vérifiée le 02/10/2026 (le service démarre et répond).
+    user: "${AIRFLOW_UID:?AIRFLOW_UID obligatoire, sortie de id -u sur l hôte}:0"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      # Le service exige `Authorization: Bearer <clé>` sur toute route hors /health.
+      API_KEY: ${RAG_EMBEDDINGS_API_KEY:?RAG_EMBEDDINGS_API_KEY obligatoire, à renseigner}
+    # Modèle exporté localement (docker/embeddings/) : rien n'est téléchargé au
+    # démarrage, et le réseau interne interdit de toute façon l'accès sortant.
+    command: ["--model-id", "/models/${RAG_EMBEDDING_MODEL:?RAG_EMBEDDING_MODEL obligatoire, à renseigner}", "--pooling", "mean", "--port", "8080"]
+    volumes:
+      - ./data/models:/models:ro
+    networks:
+      - rag-network
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          # Pic mesuré à 1,01 Go sur CPU (30/09/2026).
+          memory: 2g
+
+#----------------------------------
+# RAG — export des modèles (outil à la demande, profil « outils »)
+#----------------------------------
+  rag-model-export:
+    profiles: ["outils"]
+    build:
+      context: .
+      dockerfile: docker/embeddings/Dockerfile.export
+    user: "${AIRFLOW_UID:?AIRFLOW_UID obligatoire, sortie de id -u sur l hôte}:0"
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      HF_HOME: /tmp/hf
+    volumes:
+      - ./data/models:/models
+    # Réseau dédié rag-export : il télécharge le modèle épinglé, sans voir MinIO ni la
+    # base d'Airflow (genomique-network).
+    networks:
+      - rag-export
+    restart: "no"
+    deploy:
+      resources:
+        limits:
+          memory: 4g
+
+#----------------------------------
+# RAG — API locale (E2b) : questions en français, réponses vérifiées
+#----------------------------------
+  rag-api:
+    <<: *rag-app
+    container_name: genomique-rag-api
+    restart: unless-stopped
+    environment:
+      <<: *rag-app-env
+      # `:-` et non `:?` : une clé absente ne doit pas bloquer les commandes Compose
+      # du pipeline ; le code refuse lui-même d'appeler le LLM sans clé.
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      # Profils d'essai (llm.trial_profiles) ; même règle `:-`.
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      # `:-` : l'API refuse elle-même de démarrer sans clé de 32 caractères au moins.
+      RAG_API_KEY: ${RAG_API_KEY:-}
+    # Montages restreints : ni .env, ni le reste du dépôt dans ce conteneur.
+    volumes:
+      - ./RAG:/opt/projet/RAG:ro
+      - ./src:/opt/projet/src:ro
+      - ./data/models:/opt/projet/data/models:ro
+    # `--no-access-log` : le journal JSON de l'API (une ligne par question, sans texte) suffit.
+    command: ["uvicorn", "RAG.src.api.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000",
+              "--workers", "1", "--no-server-header", "--no-access-log", "--log-level", "info"]
+    # Arrêt : uvicorn laisse finir les requêtes en cours (au plus api.request_timeout_s = 120 s
+    # chacune, puis 503), puis le lifespan attend les fils actifs au plus 120 s avant de fermer
+    # les connexions. 2 × 120 s + 10 s de marge ; sans cela Docker tue le processus au bout de
+    # 10 s. Au repos, l'arrêt reste immédiat. Lié à config.yaml par test_compose_security.py.
+    stop_grace_period: 250s
+    # Aucun port publié : Docker n'en publie pas pour un conteneur relié seulement à
+    # des réseaux internes. L'entrée passe par rag-gateway (rag-gateway-net) ; l'API
+    # reste sans sortie directe (Internet uniquement par rag-proxy).
+    networks:
+      - rag-network
+      - rag-proxy-net
+      - rag-gateway-net
+    depends_on:
+      rag-proxy:
+        condition: service_healthy
+      rag-embeddings:
+        condition: service_healthy
+      rag-postgres-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).status == 200 else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          memory: 1536m
+
+#----------------------------------
+# RAG — recherche et mesures (E2a/E2b), outil à la demande, même image que rag-api
+#----------------------------------
+  rag-search:
+    <<: *rag-app
+    profiles: ["outils"]
+    # Clés LLM pour les mesures ; pas RAG_API_KEY, inutile à l'outil de mesure.
+    environment:
+      <<: *rag-app-env
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+    volumes:
+      - ./RAG:/opt/projet/RAG:ro
+      - ./src:/opt/projet/src:ro
+      - ./data/models:/opt/projet/data/models:ro
+      # Seuls dossiers écrits : les mesures de E2a (cache d'analyses, séries), l'essai
+      # gratuit (Groq), la recette de E2b et l'évaluation de la génération (E3a). Le reste
+      # de data/experiments (mesures de E1) n'est ni lu ni modifiable d'ici. Les dossiers
+      # doivent exister sur l'hôte (mkdir -p data/experiments/<nom>), sinon Docker les crée en root.
+      - ./data/experiments/e2a:/opt/projet/data/experiments/e2a
+      - ./data/experiments/e2a-essai:/opt/projet/data/experiments/e2a-essai
+      - ./data/experiments/e2b-recette:/opt/projet/data/experiments/e2b-recette
+      - ./data/experiments/e3a:/opt/projet/data/experiments/e3a
+    entrypoint: ["python"]
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+#----------------------------------
+# RAG — tests d'intégration (outil à la demande) : image rag-api + pytest verrouillé.
+# Derrière le proxy, PyPI n'est plus joignable : pytest ne peut plus s'installer à
+# l'exécution, d'où cette image dédiée.
+#----------------------------------
+  rag-api-test:
+    <<: *rag-app
+    profiles: ["outils"]
+    build:
+      context: .
+      dockerfile: docker/rag-api/Dockerfile.test
+    # Clé de l'API locale seulement (les tests appellent rag-api) ; aucune clé LLM :
+    # aucun test d'intégration n'appelle le LLM directement. Les tests de base
+    # (RAG_TEST_PG_READER_CONNINFO) reçoivent le mot de passe par `-e RAG_READER_PASSWORD`
+    # au lancement et construisent la chaîne de connexion dans la commande (RAG/README.md).
+    environment:
+      <<: *rag-app-env
+      RAG_API_KEY: ${RAG_API_KEY:-}
+    # rag-gateway-net en plus : les tests vérifient aussi le filtrage de la passerelle.
+    networks:
+      - rag-network
+      - rag-proxy-net
+      - rag-gateway-net
+    volumes:
+      - ./RAG:/opt/projet/RAG:ro
+      - ./src:/opt/projet/src:ro
+      - ./data/models:/opt/projet/data/models:ro
+    entrypoint: ["python", "-m", "pytest", "-p", "no:cacheprovider"]
+
+#----------------------------------
+# RAG — passerelle d'entrée (nginx) : seul point d'accès à l'API depuis l'hôte
+#----------------------------------
+  rag-gateway:
+    image: nginxinc/nginx-unprivileged:1.30-alpine@sha256:15c994d10d6d78658721c3bcafff14cb281fba2a4bdf9d5ba92c416a472516e3
+    container_name: genomique-rag-gateway
+    restart: unless-stopped
+    # Pourquoi une passerelle : rag-api n'est relié qu'à des réseaux internes (sa seule
+    # sortie Internet est rag-proxy) et Docker ne publie aucun port pour un tel
+    # conteneur. La passerelle publie le port sur la boucle locale et ne relaie que
+    # GET /health, GET /ready et POST /v1/questions (docker/rag-gateway/nginx.conf).
+    # Elle ne détient aucun secret : la clé X-API-Key est vérifiée par l'API.
+    # Vérifié le 08/10/2026 (nginx 1.30.5) : utilisateur nginx (101) de l'image, racine
+    # en lecture seule, aucune capacité ; seul /tmp est écrit (PID, fichiers temporaires).
+    user: "101:101"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # nginx lancé directement : les scripts de /docker-entrypoint.d réécrivent la
+    # configuration (IPv6, modèles, résolveurs), inutile avec une configuration montée.
+    entrypoint: ["nginx"]
+    command: ["-g", "daemon off;"]
+    volumes:
+      - ./docker/rag-gateway/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      # Boucle locale seulement : l'API n'est pas exposée au réseau (pas de TLS).
+      - "127.0.0.1:${RAG_API_PORT:-8090}:8080"
+    # rag-api-ingress (non interne) ne porte que la publication du port ; la passerelle
+    # joint rag-api par rag-gateway-net (interne).
+    networks:
+      - rag-api-ingress
+      - rag-gateway-net
+    depends_on:
+      rag-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 64m
+
+#----------------------------------
+# RAG — proxy sortant filtrant (Squid) : seule sortie Internet du RAG
+#----------------------------------
+  rag-proxy:
+    # Image Squid de Canonical (Ubuntu 24.04 LTS), canal « edge » ; le tag annonce 6.6, le binaire
+    # vérifié est Squid 6.14. Seule l'empreinte compte : à rafraîchir à chaque avis de sécurité
+    # Squid (procédure : RAG/README.md §9.7).
+    image: ubuntu/squid:6.6-24.04_edge@sha256:8a3baed477e2c282ab8aa5edad442f69873246964f225c5c2ae8364b6610963c
+    container_name: genomique-rag-proxy
+    restart: unless-stopped
+    # Vérifié le 08/10/2026 (Squid 6.14) : démarre et écoute sous l'utilisateur proxy
+    # (13) de l'image, sans aucune capacité, racine en lecture seule. L'image démarre
+    # en root et laisse Squid changer d'utilisateur (SETUID/SETGID) : inutile ici, le
+    # port 3128 n'est pas privilégié.
+    user: "13:13"
+    read_only: true
+    # Sans cache disque, PID ni fichier journal (squid.conf), Squid n'écrit que dans
+    # /tmp (coredump_dir, répertoire courant) : seul tmpfs nécessaire.
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Ni curl ni squidclient dans l'image : bash ouvre une connexion TCP sur 3128.
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/3128"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    # Squid appelé directement : l'entrypoint de l'image tente de régénérer un
+    # certificat dans /etc/ssl (racine en lecture seule) et suit des fichiers journaux
+    # que cette configuration n'écrit pas (journaux sur stdout/stderr).
+    entrypoint: ["/usr/sbin/squid"]
+    command: ["-f", "/etc/squid/squid.conf", "-NYC"]
+    volumes:
+      - ./docker/rag-proxy/squid.conf:/etc/squid/squid.conf:ro
+    # Seul service du RAG relié à Internet (rag-egress) ; rag-api le joint par rag-proxy-net.
+    networks:
+      - rag-proxy-net
+      - rag-egress
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+#----------------------------------
+# Volumes et réseau
+#----------------------------------
+volumes:
+  postgres-data:
+  minio-data:
+  airflow-logs:
+  rag-postgres-data:
+
+networks:
+  genomique-network:
+    driver: bridge
+  # Réseau sans accès sortant : la base vectorielle et le service d'embedding n'ont
+  # aucune raison de joindre Internet.
+  rag-network:
+    driver: bridge
+    internal: true
+  # Réseau interne entre rag-api / rag-search et le proxy : aucun accès direct à Internet.
+  # Sous-réseau fixé : squid.conf n'admet que ces clients (acl rag_clients). Vérifié
+  # libre le 08/10/2026 (docker network inspect : réseaux de l'hôte en 172.17–172.27/16).
+  rag-proxy-net:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.31.250.0/24
+  # Entrée de l'API : seul membre rag-gateway, qui y publie le port sur 127.0.0.1.
+  # Non interne, sans quoi Docker ne publierait pas le port.
+  rag-api-ingress:
+    driver: bridge
+  # Réseau interne entre la passerelle et rag-api (et rag-api-test pour ses tests).
+  rag-gateway-net:
+    driver: bridge
+    internal: true
+  # Sortie vers Internet du seul proxy rag-proxy, qui filtre par domaine (OpenRouter, Groq).
+  rag-egress:
+    driver: bridge
+  # Téléchargement des modèles épinglés (rag-model-export), aucun autre service.
+  rag-export:
+    driver: bridge

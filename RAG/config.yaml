@@ -1,0 +1,83 @@
+# Configuration non secrète du RAG. Les secrets et les adresses de service viennent
+# de l'environnement (.env, voir .env.example).
+
+embedding:
+  # Empreinte de l'export servi par rag-embeddings, recopiée depuis
+  # data/models/<modèle>/export.json. Vide tant que le modèle n'est pas choisi
+  # (reference/choix_embedding.md) : l'indexation refuse alors de tourner.
+  fingerprint: "NeuML/pubmedbert-base-embeddings@b79526d6ef36+onnx:2ab209f97e0a83ca"
+  # Vecteurs de référence produits par le modèle validé (RAG/README.md).
+  canary_file: canari.json
+  # GPU et CPU donnent un cosinus ≥ 0,99897 pour un même texte (mesure du 01/10/2026) ;
+  # un autre modèle produit des vecteurs sans rapport. 0,995 sépare nettement les deux.
+  canary_min_cosine: 0.995
+  # Plafond du service : 32 textes par requête.
+  batch_size: 32
+  request_timeout_s: 60
+
+index:
+  # Même seuil que le contrôle de plausibilité du Silver : au-delà, une suppression
+  # massive trahit plus probablement une lecture du Gold incomplète qu'un vrai changement.
+  max_delete_ratio: 0.05
+
+search:
+  # Documents transmis au LLM de génération (E2b) et mesurés en E2a.
+  k: 10
+  # En dessous, le filtre de signification est relâché et la trace le signale.
+  min_filtered: 3
+  # Au-delà, la question est refusée avant tout appel réseau (plafonne aussi le coût).
+  max_question_chars: 1000
+
+llm:
+  # Profil d'analyse de la question. PROVISOIRE : profil d'essai gratuit (Groq) tant
+  # que la mesure officielle de E2a n'a pas désigné le modèle (crédits OpenRouter).
+  analysis_profile: essai-groq-gpt-oss-120b
+  # Profil de génération de la réponse (E2b). PROVISOIRE : le modèle est choisi par
+  # mesure en E3 (RAGAS, règle fixée d'avance).
+  generation_profile: essai-groq-gpt-oss-120b
+  # Réponse JSON (texte ≤ 4 000 caractères + citations) et réflexion interne comprises.
+  generation_max_tokens: 3000
+  request_timeout_s: 60
+  # La réflexion interne du modèle compte dans ce plafond (documentation OpenRouter).
+  max_tokens: 2000
+  # Chaque profil fige un point d'accès qui cumule zéro rétention et sorties
+  # structurées (API publique d'OpenRouter, vérifiée le 05/10/2026).
+  profiles:
+    claude-opus-5.5:
+      model: anthropic/claude-opus-5.5
+      provider_tag: google-vertex/europe
+      provider_name: Google
+      quantization: null
+    mistral-medium:
+      model: mistralai/mistral-medium-3-5
+      provider_tag: mistral/zdr
+      provider_name: Mistral
+      quantization: null
+    gpt-oss-120b:
+      model: openai/gpt-oss-120b
+      provider_tag: deepinfra/bf16
+      provider_name: DeepInfra
+      quantization: bf16
+  # Essai gratuit de validation de la chaîne (API Groq, offre gratuite, zéro rétention
+  # activée dans Data Controls). Jamais candidat de la règle de choix du modèle : ses
+  # séries vont dans data/experiments/e2a-essai, et cette section n'entre pas dans
+  # l'empreinte de configuration des séries officielles. Groq ne permet de figer ni
+  # point d'accès ni quantification : provider_tag est informatif.
+  trial_profiles:
+    essai-groq-gpt-oss-120b:
+      model: openai/gpt-oss-120b
+      backend: groq
+      provider_tag: groq
+      provider_name: Groq
+      quantization: null
+
+api:
+  # Questions traitées en même temps ; au-delà, 429. Chaque emplacement ouvre sa propre
+  # connexion PostgreSQL (une connexion ne se partage pas entre transactions).
+  max_concurrency: 4
+  # Délai total d'une question (analyse, recherche, génération) ; au-delà, 503.
+  request_timeout_s: 120
+  # Corps de requête maximal ; au-delà, 413.
+  max_body_bytes: 8192
+  # Documentation OpenAPI : désactivée (aucun client ne la consomme).
+  openapi: false

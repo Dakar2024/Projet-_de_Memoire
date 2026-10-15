@@ -1,0 +1,70 @@
+# Questions de la comparaison des modèles d'embedding (spec E1, §6).
+# Famille A : rôle d'un gène, un seul document pertinent (gene:<SYMBOLE>).
+# Famille B : maladie dans un gène, recherche filtrée sur ce gène.
+# Famille C : signification et maladie, tout le panel, sans filtre.
+# Les questions reformulent au lieu de recopier les documents.
+# Validées par l'utilisateur le 2026-10-04.
+
+- {id: A01, family: A, question: "What is the function of the BRCA1 protein in the cell?", relevant: {doc_id: "gene:BRCA1"}}
+- {id: A02, family: A, question: "What does the BRCA2 gene do in DNA repair?", relevant: {doc_id: "gene:BRCA2"}}
+- {id: A03, family: A, question: "What is the role of the TP53 gene product in tumor suppression?", relevant: {doc_id: "gene:TP53"}}
+- {id: A04, family: A, question: "What is the role of PALB2 in DNA repair?", relevant: {doc_id: "gene:PALB2"}}
+- {id: A05, family: A, question: "What does the PTEN gene encode and which signaling pathway does it regulate?", relevant: {doc_id: "gene:PTEN"}}
+- {id: A06, family: A, question: "What is the biological function of the CDH1 gene?", relevant: {doc_id: "gene:CDH1"}}
+- {id: A07, family: A, question: "What kind of enzyme is encoded by STK11?", relevant: {doc_id: "gene:STK11"}}
+- {id: A08, family: A, question: "What is the role of the ATM kinase in the response to DNA damage?", relevant: {doc_id: "gene:ATM"}}
+- {id: A09, family: A, question: "What does the CHEK2 gene do in cell cycle control?", relevant: {doc_id: "gene:CHEK2"}}
+- {id: A10, family: A, question: "Which protein does BARD1 partner with, and what is its function?", relevant: {doc_id: "gene:BARD1"}}
+- {id: A11, family: A, question: "What is the function of RAD51C in homologous recombination?", relevant: {doc_id: "gene:RAD51C"}}
+- {id: A12, family: A, question: "What is the role of the RAD51D gene?", relevant: {doc_id: "gene:RAD51D"}}
+- {id: A13, family: A, question: "Which protein chain is encoded by the HBB gene?", relevant: {doc_id: "gene:HBB"}}
+- {id: A14, family: A, question: "How does BCL11A regulate fetal hemoglobin expression?", relevant: {doc_id: "gene:BCL11A"}}
+- {id: A15, family: A, question: "What is known about the HBS1L gene?", relevant: {doc_id: "gene:HBS1L"}}
+- {id: A16, family: A, question: "What is the function of the MYB transcription factor?", relevant: {doc_id: "gene:MYB"}}
+- {id: A17, family: A, question: "What role does KLF1 play in red blood cell development?", relevant: {doc_id: "gene:KLF1"}}
+- {id: A18, family: A, question: "Which enzyme is encoded by G6PD and what does it protect red blood cells from?", relevant: {doc_id: "gene:G6PD"}}
+
+# Famille B : maladie dans un gène, recherche filtrée sur ce gène.
+- {id: B01, family: B, question: "ATM variants causing a progressive childhood neurodegenerative disorder with dilated blood vessels in the eyes and immune deficiency", filter_gene: ATM, relevant: {gene: ATM, disease_pattern: "ataxia-telangiectasia"}}
+- {id: B02, family: B, question: "BRCA1 variants linked to a bone marrow failure disorder with chromosomal fragility", filter_gene: BRCA1, relevant: {gene: BRCA1, disease_pattern: "fanconi anemia"}}
+- {id: B03, family: B, question: "BRCA2 variants conferring inherited susceptibility to breast and ovarian tumors", filter_gene: BRCA2, relevant: {gene: BRCA2, disease_pattern: "breast-ovarian cancer, familial, susceptibility to, 2"}}
+- {id: B04, family: B, question: "CDH1 variants predisposing to an inherited form of signet ring cell stomach cancer", filter_gene: CDH1, relevant: {gene: CDH1, disease_pattern: "diffuse gastric"}}
+- {id: B05, family: B, question: "CHEK2 variants reported in a malignant bone tumor", filter_gene: CHEK2, relevant: {gene: CHEK2, disease_pattern: "osteosarcoma"}}
+- {id: B06, family: B, question: "CHEK2 variants associated with inherited prostate tumors", filter_gene: CHEK2, relevant: {gene: CHEK2, disease_pattern: "prostate"}}
+- {id: B07, family: B, question: "PALB2 variants causing a recessive bone marrow failure syndrome", filter_gene: PALB2, relevant: {gene: PALB2, disease_pattern: "fanconi anemia"}}
+- {id: B08, family: B, question: "PALB2 variants increasing the risk of tumors of the pancreas", filter_gene: PALB2, relevant: {gene: PALB2, disease_pattern: "pancreatic"}}
+- {id: B09, family: B, question: "PTEN variants causing a syndrome of multiple benign overgrowths with increased cancer risk", filter_gene: PTEN, relevant: {gene: PTEN, disease_pattern: "hamartoma"}}
+- {id: B10, family: B, question: "PTEN variants found in children with an enlarged head and autism spectrum disorder", filter_gene: PTEN, relevant: {gene: PTEN, disease_pattern: "macrocephaly-autism"}}
+- {id: B11, family: B, question: "RAD51C variants responsible for a chromosomal instability disorder with bone marrow failure", filter_gene: RAD51C, relevant: {gene: RAD51C, disease_pattern: "fanconi anemia"}}
+- {id: B12, family: B, question: "RAD51D variants associated with inherited tumors of the ovary", filter_gene: RAD51D, relevant: {gene: RAD51D, disease_pattern: "ovarian cancer"}}
+- {id: B13, family: B, question: "STK11 variants causing intestinal polyps and dark freckles on the lips", filter_gene: STK11, relevant: {gene: STK11, disease_pattern: "peutz-jeghers"}}
+- {id: B14, family: B, question: "STK11 variants related to susceptibility to skin melanoma", filter_gene: STK11, relevant: {gene: STK11, disease_pattern: "melanoma"}}
+- {id: B15, family: B, question: "TP53 variants causing an inherited syndrome of multiple early-onset cancers", filter_gene: TP53, relevant: {gene: TP53, disease_pattern: "li-fraumeni"}}
+- {id: B16, family: B, question: "TP53 variants predisposing to tumors of the adrenal gland cortex", filter_gene: TP53, relevant: {gene: TP53, disease_pattern: "adrenocortical"}}
+- {id: B17, family: B, question: "HBB variants reducing the production of beta-globin chains", filter_gene: HBB, relevant: {gene: HBB, disease_pattern: "thalassemia"}}
+- {id: B18, family: B, question: "HBB variants responsible for sickle cell disease", filter_gene: HBB, relevant: {gene: HBB, disease_pattern: "hb ss"}}
+- {id: B19, family: B, question: "G6PD variants causing destruction of red blood cells through an enzyme deficiency", filter_gene: G6PD, relevant: {gene: G6PD, disease_pattern: "g6pd deficiency"}}
+- {id: B20, family: B, question: "KLF1 variants causing abnormal red blood cell precursors in the bone marrow", filter_gene: KLF1, relevant: {gene: KLF1, disease_pattern: "dyserythropoietic"}}
+- {id: B21, family: B, question: "BCL11A variants linked to a neurodevelopmental syndrome with persistent fetal hemoglobin", filter_gene: BCL11A, relevant: {gene: BCL11A, disease_pattern: "dias-logan"}}
+
+# Famille C : signification et maladie, tout le panel, sans filtre.
+- {id: C01, family: C, question: "disease-causing variants in hereditary signet ring cell stomach cancer", relevant: {significance: ["Pathogenic", "Likely pathogenic", "Pathogenic/Likely pathogenic"], disease_pattern: "diffuse gastric"}}
+- {id: C02, family: C, question: "pathogenic variants causing a familial multi-cancer syndrome with sarcomas and early breast cancer", relevant: {significance: ["Pathogenic", "Likely pathogenic", "Pathogenic/Likely pathogenic"], disease_pattern: "li-fraumeni"}}
+- {id: C03, family: C, question: "harmful variants responsible for hamartomatous intestinal polyposis with mucocutaneous pigmentation", relevant: {significance: ["Pathogenic", "Likely pathogenic", "Pathogenic/Likely pathogenic"], disease_pattern: "peutz-jeghers"}}
+- {id: C04, family: C, question: "pathogenic variants causing a DNA repair disorder with congenital malformations and bone marrow failure", relevant: {significance: ["Pathogenic", "Likely pathogenic", "Pathogenic/Likely pathogenic"], disease_pattern: "fanconi anemia"}}
+- {id: C05, family: C, question: "disease-causing variants in a recessive neurodegenerative disorder with radiosensitivity", relevant: {significance: ["Pathogenic", "Likely pathogenic", "Pathogenic/Likely pathogenic"], disease_pattern: "ataxia-telangiectasia"}}
+- {id: C06, family: C, question: "pathogenic variants causing an inherited anemia from reduced hemoglobin synthesis", relevant: {significance: ["Pathogenic", "Likely pathogenic", "Pathogenic/Likely pathogenic"], disease_pattern: "thalassemia"}}
+- {id: C07, family: C, question: "harmful variants in a tumor syndrome with macrocephaly and benign overgrowths", relevant: {significance: ["Pathogenic", "Likely pathogenic", "Pathogenic/Likely pathogenic"], disease_pattern: "hamartoma"}}
+- {id: C08, family: C, question: "pathogenic variants causing drug-induced hemolysis from an enzyme deficiency", relevant: {significance: ["Pathogenic", "Likely pathogenic", "Pathogenic/Likely pathogenic"], disease_pattern: "g6pd deficiency"}}
+- {id: C09, family: C, question: "disease-causing variants that strongly increase lifetime breast and ovarian cancer risk", relevant: {significance: ["Pathogenic", "Likely pathogenic", "Pathogenic/Likely pathogenic"], disease_pattern: "hereditary breast ovarian cancer syndrome"}}
+- {id: C10, family: C, question: "pathogenic variants raising the risk of pancreatic adenocarcinoma", relevant: {significance: ["Pathogenic", "Likely pathogenic", "Pathogenic/Likely pathogenic"], disease_pattern: "pancreatic"}}
+- {id: C11, family: C, question: "harmless variants found in genes tested for inherited breast and ovarian cancer risk", relevant: {significance: ["Benign", "Likely benign", "Benign/Likely benign"], disease_pattern: "hereditary breast ovarian cancer syndrome"}}
+- {id: C12, family: C, question: "benign variants reported in a familial multi-cancer predisposition gene", relevant: {significance: ["Benign", "Likely benign", "Benign/Likely benign"], disease_pattern: "li-fraumeni"}}
+- {id: C13, family: C, question: "variants judged not disease-causing for a recessive neurodegenerative immunodeficiency", relevant: {significance: ["Benign", "Likely benign", "Benign/Likely benign"], disease_pattern: "ataxia-telangiectasia"}}
+- {id: C14, family: C, question: "benign changes observed in hereditary stomach cancer testing", relevant: {significance: ["Benign", "Likely benign", "Benign/Likely benign"], disease_pattern: "diffuse gastric"}}
+- {id: C15, family: C, question: "variants without clinical effect in a hamartomatous polyposis syndrome gene", relevant: {significance: ["Benign", "Likely benign", "Benign/Likely benign"], disease_pattern: "peutz-jeghers"}}
+- {id: C16, family: C, question: "variants of unknown clinical meaning detected in inherited breast tumor predisposition testing", relevant: {significance: ["Uncertain significance"], disease_pattern: "familial cancer of breast"}}
+- {id: C17, family: C, question: "variants of uncertain clinical impact in bone marrow failure syndrome genes", relevant: {significance: ["Uncertain significance"], disease_pattern: "fanconi anemia"}}
+- {id: C18, family: C, question: "unclassified variants in a familial multi-cancer syndrome", relevant: {significance: ["Uncertain significance"], disease_pattern: "li-fraumeni"}}
+- {id: C19, family: C, question: "variants of unknown significance in inherited anemia from reduced hemoglobin production", relevant: {significance: ["Uncertain significance"], disease_pattern: "thalassemia"}}
+- {id: C20, family: C, question: "variants of uncertain significance in a syndrome of benign overgrowths and macrocephaly", relevant: {significance: ["Uncertain significance"], disease_pattern: "hamartoma"}}

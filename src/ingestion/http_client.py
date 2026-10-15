@@ -16,7 +16,23 @@ RETRY_STATUSES = (429, 500, 502, 503, 504)
 MAX_RETRIES = 3
 
 
-def _build_session() -> requests.Session:
+class NcbiRequestError(RuntimeError):
+    """Échec d'un appel E-utilities, message expurgé de la clé API.
+
+    NCBI attend la clé en paramètre d'URL. Or le message d'une `HTTPError`
+    reproduit l'URL complète, et Airflow journalise l'exception d'une tâche en
+    échec : sans masquage, la clé finit en clair dans des logs conservés et
+    consultables depuis l'interface web.
+    """
+
+
+def build_retrying_session() -> requests.Session:
+    """Session `requests` avec retry/backoff sur les erreurs transitoires (429/5xx).
+
+    Partagée par tous les clients HTTP du projet (NCBI E-utilities, API HPO) : une collecte
+    complète fait des centaines d'appels sur plusieurs minutes, un 429/5xx ponctuel ne doit
+    pas faire perdre le travail déjà accompli.
+    """
     session = requests.Session()
     retry = Retry(
         total=MAX_RETRIES,
@@ -65,7 +81,7 @@ class NcbiClient:
         self._email = email
         self._api_key = api_key
         self._rate_limiter = rate_limiter or RateLimiter(0.11 if api_key else 0.34)
-        self._session = session or _build_session()
+        self._session = session or build_retrying_session()
 
     def _params(self, extra: dict) -> dict:
         # NCBI demande `tool` et `email` pour identifier l'appelant : sans eux, un usage
@@ -75,22 +91,32 @@ class NcbiClient:
             params["api_key"] = self._api_key
         return params
 
-    def esearch(self, db: str, term: str) -> list[str]:
+    def _mask(self, message: str) -> str:
+        """Remplace la clé API par `***` partout où elle apparaît."""
+        if not self._api_key:
+            return message
+        return message.replace(self._api_key, "***")
+
+    def _get(self, endpoint: str, params: dict) -> requests.Response:
+        """Appel E-utilities rate-limité, dont toute erreur est relevée sans la clé.
+
+        Le masquage porte sur le message, pas sur la requête : la clé doit bien
+        partir chez NCBI, elle ne doit simplement jamais être journalisée.
+        """
         self._rate_limiter.wait()
-        resp = self._session.get(
-            f"{EUTILS_BASE_URL}/esearch.fcgi",
-            params=self._params({"db": db, "term": term}),
-            timeout=30,
-        )
-        resp.raise_for_status()
+        try:
+            resp = self._session.get(
+                f"{EUTILS_BASE_URL}/{endpoint}", params=self._params(params), timeout=30
+            )
+            resp.raise_for_status()
+        except requests.RequestException as exc:
+            raise NcbiRequestError(self._mask(str(exc))) from None
+        return resp
+
+    def esearch(self, db: str, term: str) -> list[str]:
+        resp = self._get("esearch.fcgi", {"db": db, "term": term})
         return resp.json()["esearchresult"]["idlist"]
 
     def esummary(self, db: str, uid: str) -> dict:
-        self._rate_limiter.wait()
-        resp = self._session.get(
-            f"{EUTILS_BASE_URL}/esummary.fcgi",
-            params=self._params({"db": db, "id": uid}),
-            timeout=30,
-        )
-        resp.raise_for_status()
+        resp = self._get("esummary.fcgi", {"db": db, "id": uid})
         return resp.json()["result"][uid]

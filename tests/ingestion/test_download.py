@@ -2,7 +2,7 @@ import pytest
 import responses
 from requests.exceptions import ConnectionError
 
-from ingestion.download import download_to_file
+from ingestion.download import download_to_file, IncompleteDownloadError
 
 URL = "https://example.org/big-file.txt"
 
@@ -69,3 +69,33 @@ def test_download_to_file_keeps_previous_file_when_refresh_fails(tmp_path):
         download_to_file(URL, destination, force=True)
 
     assert destination.read_bytes() == b"ancienne version valide"
+
+
+@responses.activate
+def test_download_to_file_rejects_a_truncated_response(tmp_path):
+    """Un fichier tronqué ne doit jamais être conservé : le skip-si-présent le
+    réutiliserait ensuite comme complet."""
+    responses.add(
+        responses.GET,
+        URL,
+        body=b"court",
+        status=200,
+        headers={"Content-Length": "999999"},
+    )
+    destination = tmp_path / "external" / "big-file.txt"
+
+    with pytest.raises(IncompleteDownloadError):
+        download_to_file(URL, destination)
+
+    assert not destination.exists()
+    assert list(destination.parent.iterdir()) == []
+
+
+@responses.activate
+def test_download_to_file_accepts_a_response_without_content_length(tmp_path):
+    responses.add(responses.GET, URL, body=b"sans entete de taille", status=200)
+    destination = tmp_path / "external" / "big-file.txt"
+
+    download_to_file(URL, destination)
+
+    assert destination.read_bytes() == b"sans entete de taille"

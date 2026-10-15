@@ -4,11 +4,24 @@ __pycache__/
 .pytest_cache/
 .env
 
-# Fichiers de travail internes (outils Claude Code / workflow), non destinés au partage
+# Fichiers de travail internes (outillage et workflow), non destinés au partage
 .claude/
 .superpowers/
 SESSION_HANDOFF.md
+CLAUDE.md
+docs/
 data/external/*
 data/raw/*
+data/lake/
 !data/external/.gitkeep
 !data/raw/.gitkeep
+
+# RAG : consignes et schéma de référence de l'auteur, jamais versionnés
+RAG/consigne.md
+RAG/architecture RAG.jpeg
+# Modèles d'embedding exportés (centaines de Mo, régénérables par docker/embeddings/)
+data/models/*
+!data/models/.gitkeep
+# Résultats intermédiaires des expériences (vecteurs, rapports bruts)
+data/experiments/*
+!data/experiments/.gitkeep

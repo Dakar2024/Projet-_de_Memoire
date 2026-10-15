@@ -7,6 +7,8 @@ from requests.exceptions import ConnectionError
 
 from ingestion.clinvar import (
     CLINVAR_BULK_URL,
+    archive_url_for,
+    archive_version_for,
     download_variant_summary,
     filter_clinvar,
 )
@@ -91,3 +93,25 @@ def test_download_variant_summary_force_redownloads_existing_file(tmp_path):
 
     assert result_path == destination
     assert destination.read_bytes() == body
+
+
+def test_archive_url_for_pins_the_monthly_release():
+    """ClinVar publie des archives mensuelles immuables. Le fichier « latest »
+    change sous les pieds : rejouer août téléchargerait septembre."""
+    assert archive_url_for("2026-09-01") == (
+        "https://ftp.ncbi.nlm.nih.gov/pub/clinvar/tab_delimited/archive/"
+        "variant_summary_2026-09.txt.gz"
+    )
+
+
+def test_archive_version_for_is_the_year_month():
+    assert archive_version_for("2026-09-01") == "2026-09"
+    assert archive_version_for("2026-12-31") == "2026-12"
+
+
+def test_archive_version_for_rejects_a_malformed_logical_date():
+    """Sans garde, `logical_date[:7]` produirait une version syntaxiquement valide
+    mais fausse, et donc une URL d'archive silencieusement erronée."""
+    for mauvais in ("", "2026/09/01", "09-2026", "2026-9-1"):
+        with pytest.raises(ValueError, match="date logique invalide"):
+            archive_version_for(mauvais)

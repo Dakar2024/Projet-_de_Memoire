@@ -2,6 +2,7 @@ import json
 
 import polars as pl
 
+import ingestion.orchestrate as orchestrate_module
 from ingestion.orchestrate import (
     add_medgen_cuis,
     build_gene_documents,
@@ -26,6 +27,26 @@ def test_add_medgen_cuis_extracts_list_column():
     )
     result = add_medgen_cuis(df)
     assert result["medgen_cuis"].to_list() == [["C3661900"]]
+
+
+def test_add_medgen_cuis_dedupes_preserving_order():
+    df = pl.DataFrame(
+        {
+            "#AlleleID": ["1"],
+            "GeneSymbol": ["HBB"],
+            "PhenotypeIDS": ["MedGen:C1|MedGen:C2,MedGen:C1"],
+        }
+    )
+    result = add_medgen_cuis(df)
+    assert result["medgen_cuis"].to_list() == [["C1", "C2"]]
+
+
+def test_add_medgen_cuis_returns_empty_list_for_null_or_absent():
+    df = pl.DataFrame(
+        {"#AlleleID": ["1", "2"], "GeneSymbol": ["HBB", "KLF1"], "PhenotypeIDS": [None, "na"]}
+    )
+    result = add_medgen_cuis(df)
+    assert result["medgen_cuis"].to_list() == [[], []]
 
 
 def test_build_gene_documents_assembles_variant_gene_medgen_hpo():
@@ -101,6 +122,57 @@ def test_build_gene_documents_parses_medgen_conceptmeta():
         {"hpo_id": "HP:0004840", "hpo_name": "Hypochromic microcytic anemia"}
     ]
     assert concept["conceptmeta"] == conceptmeta
+
+
+def test_build_gene_documents_survives_malformed_conceptmeta(capsys):
+    # Une collecte complète fait ~1200 appels NCBI et rien n'est écrit avant la toute fin
+    # du run : un seul conceptmeta mal formé ne doit pas faire perdre tout ce travail.
+    variants = add_medgen_cuis(
+        pl.DataFrame(
+            {"#AlleleID": ["1"], "GeneSymbol": ["HBB"], "PhenotypeIDS": ["MedGen:C9999999"]}
+        )
+    )
+    broken_conceptmeta = "<Definitions><Definition>fermeture manquante"
+    medgen = {"C9999999": {"title": "concept cassé", "conceptmeta": broken_conceptmeta}}
+
+    documents = build_gene_documents(variants, {"HBB": {}}, medgen, {})
+
+    assert documents["HBB"]["medgen_concepts"] == [
+        {"title": "concept cassé", "conceptmeta": broken_conceptmeta}
+    ]
+    assert "conceptmeta invalide" in capsys.readouterr().err
+
+
+def test_build_gene_documents_parses_shared_conceptmeta_only_once(monkeypatch):
+    # BRCA1, BRCA2, PALB2... partagent souvent le même CUI MedGen : le XML de ce CUI ne
+    # doit être parsé qu'une fois, pas une fois par gène qui le référence.
+    original_parse = orchestrate_module.parse_medgen_conceptmeta
+    call_count = {"n": 0}
+
+    def counting_parse(conceptmeta):
+        call_count["n"] += 1
+        return original_parse(conceptmeta)
+
+    monkeypatch.setattr(orchestrate_module, "parse_medgen_conceptmeta", counting_parse)
+
+    variants = add_medgen_cuis(
+        pl.DataFrame(
+            {
+                "#AlleleID": ["1", "2"],
+                "GeneSymbol": ["HBB", "KLF1"],
+                "PhenotypeIDS": ["MedGen:C0005283", "MedGen:C0005283"],
+            }
+        )
+    )
+    medgen = {
+        "C0005283": {"title": "beta Thalassemia", "conceptmeta": "<OMIM><MIM>141900</MIM></OMIM>"}
+    }
+
+    documents = build_gene_documents(variants, {"HBB": {}, "KLF1": {}}, medgen, {})
+
+    assert call_count["n"] == 1
+    assert documents["HBB"]["medgen_concepts"][0]["mim_number"] == "141900"
+    assert documents["KLF1"]["medgen_concepts"][0]["mim_number"] == "141900"
 
 
 def test_build_gene_documents_leaves_concept_without_conceptmeta_untouched():
