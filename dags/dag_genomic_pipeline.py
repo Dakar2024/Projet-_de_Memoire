@@ -5,8 +5,8 @@ import datetime as dt
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(REPO_ROOT / "src"), str(REPO_ROOT)]
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from airflow.sdk import DAG, task
 from airflow.sdk.exceptions import AirflowFailException
@@ -26,6 +26,8 @@ from dags.common.panels import (
 from ingestion.errors import ConfigurationError
 from ingestion.http_client import NcbiClient
 from ingestion.storage import assert_partitions_complete
+from RAG.src.ingestion.indexer import run_index
+from RAG.src.utils.errors import RagPermanentError
 from scripts.ingest_hpo_terms import ingest_hpo_terms
 from scripts.ingest_medgen import ingest_medgen
 from scripts.ingest_ncbi_gene import build_client, ingest_ncbi_gene
@@ -36,9 +38,6 @@ from transformations.quality_check_silver import quality_check_silver
 from transformations.raw_to_bronze import raw_to_bronze
 from transformations.silver_to_gold_analytique import silver_to_gold_analytique
 from transformations.silver_to_gold_rag import silver_to_gold_rag
-
-from RAG.src.ingestion.indexer import run_index
-from RAG.src.utils.errors import RagPermanentError
 
 DEFAULT_ARGS = {
     **alert_args(),

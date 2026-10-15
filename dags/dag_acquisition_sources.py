@@ -5,8 +5,8 @@ import datetime as dt
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(REPO_ROOT / "src"), str(REPO_ROOT)]
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from airflow.sdk import DAG, task
 from airflow.sdk.exceptions import AirflowFailException
