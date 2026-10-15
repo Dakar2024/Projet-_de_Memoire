@@ -5,7 +5,8 @@ import argparse
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path[:0] = [str(REPO_ROOT / "src"), str(REPO_ROOT)]
 
 from ingestion.config import RAW
 from ingestion.http_client import NcbiClient

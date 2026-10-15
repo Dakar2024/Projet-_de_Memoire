@@ -1,4 +1,4 @@
-"""Contrôles déterministes de la réponse (citations, identifiants, significations actuelles) ; l'historique est restitué par le code."""
+"""Contrôles déterministes de la réponse : citations, identifiants, significations actuelles."""
 from __future__ import annotations
 
 import html
@@ -214,6 +214,7 @@ def strip_cited_labels(answer: str, citations: Sequence[str]) -> str:
     cited = {re.sub(r"\s", "", c).upper() for c in citations}
 
     def replace(match: re.Match) -> str:
+        """Retire la référence si toutes ses étiquettes sont citées."""
         return "" if _label_set(match.group("labels")) <= cited else match.group()
 
     stripped = _PAREN_REFERENCE.sub(replace, answer)
@@ -737,6 +738,7 @@ _SAME = re.compile(r"\b(?:aussi|[ée]galement|de\s+m[êe]me|idem|pareillement|l[
 def _check_inherited(variants: list[str], said: list[str], keyed, sentence: str) -> None:
     """Vérifie des termes hérités d'une phrase voisine contre les fiches des variants visés."""
     def significances(key: str) -> set[str]:
+        """Significations actuelles des fiches d'un identifiant."""
         return {sig for ids, sigs, _ in keyed if key in ids for sig in sigs}
 
     for key in variants:

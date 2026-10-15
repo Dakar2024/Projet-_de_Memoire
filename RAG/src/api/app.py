@@ -111,6 +111,7 @@ async def ask_question(data: QuestionIn, state: State, request: Request) -> dict
 
     def run():
         # Emplacement rendu à la fin du fil : occupé tant que la génération tourne, même après le délai.
+        """Répond dans le fil de l'emplacement et le rend à la fin."""
         try:
             return pipeline.ask(slot, data.question)
         finally:
@@ -127,6 +128,7 @@ async def ask_question(data: QuestionIn, state: State, request: Request) -> dict
 
     def consume(f: asyncio.Future) -> None:
         # Issue toujours consommée (sinon trace asyncio) ; après le délai, seule la classe est journalisée.
+        """Consomme l'issue du fil ; après le délai, journalise l'erreur ou le coût tardif."""
         if f.cancelled() or not timed_out:
             return
         exc = f.exception()
@@ -163,6 +165,7 @@ def create_app(pipeline_factory: Callable[[], object] | None = None, *, api_conf
         from RAG.src.generation.pipeline import QuestionPipeline
 
         def pipeline_factory():
+            """Crée le pipeline réel."""
             return QuestionPipeline(config.max_concurrency)
 
     @asynccontextmanager

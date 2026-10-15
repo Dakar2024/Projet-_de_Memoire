@@ -411,11 +411,12 @@ class OfflineAnalysisClient:
     """`lancer` refait la recherche avec les analyses en cache seulement : aucune analyse payée."""
 
     def complete_json(self, *args, **kwargs):
+        """Lève toujours : l'analyse doit venir du cache."""
         from RAG.src.utils.errors import LlmUnavailableError
         raise LlmUnavailableError("analyse absente du cache de E3a : relancer `rechercher`")
 
     def close(self) -> None:
-        pass
+        """Ne fait rien (aucune session)."""
 
 
 def select_repeats(llm_ids: list[str], n: int, seed: int) -> list[str]:

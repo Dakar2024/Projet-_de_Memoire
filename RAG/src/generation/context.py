@@ -1,4 +1,4 @@
-"""Contexte du LLM de génération : un bloc par document, en-tête produit par le code, texte échappé contre l'injection."""
+"""Contexte du LLM de génération : un bloc échappé par document, en-tête produit par le code."""
 from __future__ import annotations
 
 from collections.abc import Sequence

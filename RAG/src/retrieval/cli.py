@@ -1,4 +1,4 @@
-"""Essai manuel d'une recherche : python -m RAG.src.retrieval.cli "Le variant rs80357906 est-il pathogène ?""""
+"""Essai manuel d'une recherche : python -m RAG.src.retrieval.cli « Le variant rs80357906 est-il pathogène ? »"""
 from __future__ import annotations
 
 import argparse

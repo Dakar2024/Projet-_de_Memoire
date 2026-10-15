@@ -1,4 +1,4 @@
-"""Règle de choix du modèle de génération, fixée avant la mesure (spec E3a §8) : élimination, fidélité, pertinence, coût, latence."""
+"""Règle de choix du modèle de génération, fixée avant la mesure (spec E3a §8)."""
 
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ class Decision:
 
 def bootstrap_mean_ci(diffs, n_resamples: int = 10_000, seed: int = 20261001,
                       alpha: float = 0.05) -> tuple[float, float, float]:
-    """Calcule moyenne et IC bootstrap des écarts appariés (même algorithme que comparaison_embeddings, vérifié par test)."""
+    """Calcule moyenne et IC bootstrap des écarts appariés (algorithme de comparaison_embeddings)."""
     values = np.asarray(diffs, dtype=float)
     rng = np.random.default_rng(seed)
     means = values[rng.integers(0, len(values), size=(n_resamples, len(values)))].mean(axis=1)

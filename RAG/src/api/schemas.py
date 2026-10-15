@@ -7,5 +7,6 @@ import msgspec
 
 
 class QuestionIn(msgspec.Struct, forbid_unknown_fields=True):
+    """Corps de POST /v1/questions."""
     question: Annotated[str, msgspec.Meta(min_length=1, max_length=1000)]
     trace: bool = False
