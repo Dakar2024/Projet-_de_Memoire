@@ -1,0 +1,11 @@
+# Racines des sources pour les analyseurs (Pylance, pyright, ruff) : `src` pour `ingestion` et `transformations`, `.` pour `scripts`, `dags` et `RAG`.
+[tool.pyright]
+extraPaths = ["src", "."]
+pythonVersion = "3.12"
+exclude = ["venv", "data", "archive"]
+
+[tool.ruff]
+src = ["src", "."]
+target-version = "py312"
+line-length = 120
+extend-exclude = ["venv", "data", "archive"]

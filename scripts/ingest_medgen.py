@@ -8,8 +8,8 @@ import io
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-sys.path[:0] = [str(REPO_ROOT / "src"), str(REPO_ROOT)]
+sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from ingestion.config import RAW
 from ingestion.http_client import NcbiClient
