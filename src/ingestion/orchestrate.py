@@ -1,3 +1,4 @@
+"""Assemblage des documents par gène de la collecte historique (`scripts/run_collection.py`)."""
 from __future__ import annotations
 
 import json
@@ -11,14 +12,7 @@ from ingestion.medgen import MEDGEN_CUI_PATTERN, parse_medgen_conceptmeta
 
 
 def _parsed_conceptmeta_fields(concept: dict, cui: str, cache: dict[str, dict | None]) -> dict | None:
-    """Parse le XML `conceptmeta` d'un CUI une seule fois, quel que soit le nombre de gènes
-    qui le référencent (ex. le concept « syndrome sein-ovaire héréditaire » est partagé par
-    BRCA1, BRCA2, PALB2, ATM, CHEK2...) : sans cache, il serait reparsé une fois par gène.
-
-    Renvoie `None` si le concept n'a pas de `conceptmeta`, ou si son XML est mal formé — une
-    collecte complète fait ~1200 appels NCBI et rien n'est écrit avant la toute fin du run
-    (voir http_client.py) ; un concept malformé isolé ne doit pas faire perdre tout ce travail.
-    """
+    """Lit le `conceptmeta` d'un CUI une seule fois (cache) ; `None` s'il est absent ou mal formé."""
     if cui in cache:
         return cache[cui]
     conceptmeta = concept.get("conceptmeta") if concept else None
@@ -38,11 +32,7 @@ def _parsed_conceptmeta_fields(concept: dict, cui: str, cache: dict[str, dict | 
 
 
 def _enrich_medgen_concept(concept: dict, parsed_fields: dict | None, cui: str) -> dict:
-    """Ajoute les champs extraits du XML `conceptmeta` sans retirer les données brutes.
-
-    Un concept vide signale un CUI que MedGen ne résout pas : on conserve au moins
-    son identifiant, sans quoi le CUI en échec serait irrécupérable depuis le document.
-    """
+    """Ajoute les champs du `conceptmeta` au concept brut ; un CUI non résolu garde son identifiant."""
     if not concept:
         return {"conceptid": cui}
     if parsed_fields is None:
@@ -51,9 +41,7 @@ def _enrich_medgen_concept(concept: dict, parsed_fields: dict | None, cui: str) 
 
 
 def add_medgen_cuis(df: pl.DataFrame) -> pl.DataFrame:
-    """Ajoute une colonne `medgen_cuis` (liste de CUI dédupliqués, dans l'ordre d'apparition)
-    dérivée de PhenotypeIDS, par extraction polars vectorisée (pas de callback Python par
-    ligne)."""
+    """Ajoute la colonne `medgen_cuis` : CUI dédoublonnés de PhenotypeIDS, dans l'ordre d'apparition."""
     return df.with_columns(
         pl.col("PhenotypeIDS")
         .fill_null("")
@@ -71,11 +59,7 @@ def build_gene_documents(
     hpo_rows_by_gene: dict[str, list[dict]],
     provenance: dict | None = None,
 ) -> dict[str, dict]:
-    """Assemble un document par gène combinant ClinVar, NCBI Gene, MedGen et HPO.
-
-    `provenance`, si fourni, est copié dans chaque document sous la clé `_provenance`
-    (date de collecte, versions des sources) pour rendre la couche RAW traçable.
-    """
+    """Assemble un document par gène (ClinVar, NCBI Gene, MedGen, HPO), avec `_provenance` si fournie."""
     documents: dict[str, dict] = {}
     parsed_conceptmeta_cache: dict[str, dict | None] = {}
     for gene_symbol in gene_info_by_symbol:
@@ -111,15 +95,7 @@ def build_gene_documents(
 
 
 def find_empty_genes(documents: dict[str, dict]) -> list[str]:
-    """Retourne les gènes auxquels il manque les variants ou les métadonnées NCBI Gene.
-
-    `build_gene_documents` émet un document par gène demandé : n'alerter que sur les
-    documents entièrement vides ne détecterait que l'échec total. Un gène résolu par
-    NCBI Gene mais sans aucun variant ClinVar est le défaut le plus probable (symbole
-    absent du bulk, filtre d'assemblage cassé) — il doit alerter aussi.
-
-    Volontairement muet sur les termes HPO : HBS1L et MYB en ont légitimement zéro.
-    """
+    """Renvoie les gènes sans variants ou sans métadonnées NCBI Gene (HPO ignoré : HBS1L et MYB n'en ont pas)."""
     return [
         gene_symbol
         for gene_symbol, document in documents.items()

@@ -1,3 +1,4 @@
+"""Entrées-sorties du lac médaillon (`file://` ou `s3://`) et protocole de partition."""
 from __future__ import annotations
 
 import json
@@ -19,13 +20,9 @@ MANIFEST_NAME = "manifest.json"
 
 
 def layer_uri(layer: str, lake_uri: str | None = None) -> str:
-    """URI d'une couche du médaillon.
-
-    Sur MinIO chaque couche est un bucket (`s3://raw`) ; en local c'est un
-    sous-dossier de la racine du lac.
-    """
+    """Renvoie l'URI d'une couche : un bucket sur MinIO, un sous-dossier en local."""
     base = lake_uri if lake_uri is not None else current_lake_uri()
-    # "s3://".rstrip("/") vaut "s3:" : c'est la forme "racine S3, la couche est le bucket".
+    # Racine `s3://` : la couche est le bucket.
     if base.rstrip("/") == "s3:":
         return f"{S3_SCHEME}{layer}"
     return f"{base.rstrip('/')}/{layer}"
@@ -38,11 +35,7 @@ def partition_uri(
     panel: str | None = None,
     lake_uri: str | None = None,
 ) -> str:
-    """Chemin d'une partition : `<couche>/<source>/dt=<date>[/panel=<panel>]`.
-
-    La date logique est le seul discriminant : rejouer un run réécrit cette
-    partition et aucune autre.
-    """
+    """Renvoie le chemin d'une partition : `<couche>/<source>/dt=<date>[/panel=<panel>]`."""
     parts = [layer_uri(layer, lake_uri), source, f"dt={logical_date}"]
     if panel:
         parts.append(f"panel={panel}")
@@ -69,6 +62,7 @@ def _s3_client():
 
 
 def put_bytes(uri: str, data: bytes, client=None) -> None:
+    """Écrit des octets à `uri`."""
     if uri.startswith(S3_SCHEME):
         bucket, key = _split_s3(uri)
         (client or _s3_client()).put_object(Bucket=bucket, Key=key, Body=data)
@@ -79,10 +73,7 @@ def put_bytes(uri: str, data: bytes, client=None) -> None:
 
 
 def put_file(uri: str, local_path: Path, client=None) -> None:
-    """Dépose un fichier depuis le disque, sans le charger en mémoire.
-
-    Indispensable pour le bulk ClinVar (442 Mo).
-    """
+    """Dépose un fichier local sans le charger en mémoire."""
     if uri.startswith(S3_SCHEME):
         bucket, key = _split_s3(uri)
         (client or _s3_client()).upload_file(
@@ -95,6 +86,7 @@ def put_file(uri: str, local_path: Path, client=None) -> None:
 
 
 def get_bytes(uri: str, client=None) -> bytes:
+    """Lit un objet entier."""
     if uri.startswith(S3_SCHEME):
         bucket, key = _split_s3(uri)
         return (client or _s3_client()).get_object(Bucket=bucket, Key=key)["Body"].read()
@@ -102,11 +94,7 @@ def get_bytes(uri: str, client=None) -> bytes:
 
 
 def open_stream(uri: str, client=None):
-    """Ouvre un objet en lecture binaire, sans le matérialiser en mémoire.
-
-    Nécessaire pour le bulk ClinVar : 442 Mo compressés, ~4 Go décompressés, à
-    parcourir sur un worker qui ne dispose que de quelques Go.
-    """
+    """Ouvre un objet en flux binaire, sans le charger en mémoire."""
     if uri.startswith(S3_SCHEME):
         bucket, key = _split_s3(uri)
         return (client or _s3_client()).get_object(Bucket=bucket, Key=key)["Body"]
@@ -114,12 +102,7 @@ def open_stream(uri: str, client=None):
 
 
 def storage_options(uri: str) -> dict[str, str] | None:
-    """Options de connexion à passer à Polars/delta-rs (`scan_parquet`, `read_delta`,
-    `write_delta`, `DeltaTable`) : ils ne lisent pas la configuration boto3 du process.
-    En s3://, identifiants et endpoint viennent des mêmes variables que `_s3_client` ;
-    `None` en local. Aucun verrou n'est configuré : delta-rs 1.6 écrit sur MinIO sans
-    (vérifié en run réel), et le pool Airflow `SILVER_WRITE_POOL` sérialise déjà les
-    écrivains Silver."""
+    """Renvoie les options S3 pour Polars/delta-rs, ou `None` en local."""
     if not uri.startswith(S3_SCHEME):
         return None
     return {
@@ -132,23 +115,14 @@ def storage_options(uri: str) -> dict[str, str] | None:
 
 
 def scan_parquet(uri: str) -> pl.LazyFrame:
-    """Lit un Parquet en lazy : le filtre et la projection de l'appelant sont poussés
-    par Polars au moment du `.collect()`, sans matérialiser toute la partition en
-    mémoire au préalable — indispensable pour le bronze ClinVar (bulk non filtré, non
-    dédoublonné à ce stade, cf. `raw_to_bronze`)."""
+    """Lit un Parquet en lazy, pour que filtres et projections soient poussés à la lecture."""
     if uri.startswith(S3_SCHEME):
         return pl.scan_parquet(uri, storage_options=storage_options(uri))
     return pl.scan_parquet(_local_path(uri))
 
 
 def exists(uri: str, client=None) -> bool:
-    """Teste la présence d'un objet, sans masquer les pannes.
-
-    Seul un 404 signifie « absent ». Un 403 (identifiants invalides) ou une panne
-    réseau doivent remonter : les confondre avec une absence ferait lire une
-    partition complète comme incomplète, exactement le mode de défaillance que ce
-    module existe pour empêcher.
-    """
+    """Teste la présence d'un objet ; seul un 404 vaut absence, toute autre erreur remonte."""
     if uri.startswith(S3_SCHEME):
         bucket, key = _split_s3(uri)
         try:
@@ -162,7 +136,7 @@ def exists(uri: str, client=None) -> bool:
 
 
 def delete(uri: str, client=None) -> None:
-    """Supprime un objet ; une absence n'est pas une erreur (comme `delete_object` S3)."""
+    """Supprime un objet ; un objet absent n'est pas une erreur."""
     if uri.startswith(S3_SCHEME):
         bucket, key = _split_s3(uri)
         (client or _s3_client()).delete_object(Bucket=bucket, Key=key)
@@ -179,12 +153,7 @@ def build_manifest(
     record_count: int,
     panel: str | None = None,
 ) -> dict:
-    """Décrit une partition de façon auto-portante.
-
-    `source_version` est la version épinglée de la source (mois d'archive ClinVar,
-    tag de release HPO), et non l'horodatage local : c'est ce qui rend deux rejeux
-    du même `logical_date` comparables.
-    """
+    """Construit le manifest d'une partition, avec la version épinglée de la source."""
     return {
         "source": source,
         "logical_date": logical_date,
@@ -198,30 +167,19 @@ def build_manifest(
 
 
 def begin_partition(partition: str, client=None) -> None:
-    """Ouvre l'écriture d'une partition : retire son marqueur `_SUCCESS` éventuel.
-
-    Pendant de `finalize_partition`. Un rejeu réécrit la partition en place : sans
-    ce retrait, un rejeu interrompu laisserait l'ancien `_SUCCESS` à côté de données
-    à moitié réécrites, et la partition passerait pour complète. Le protocole est
-    donc begin → données → manifest → `_SUCCESS`.
-    """
+    """Retire le `_SUCCESS` d'une partition avant de la réécrire (begin → données → manifest → `_SUCCESS`)."""
     delete(f"{partition}/{SUCCESS_MARKER}", client=client)
 
 
 def finalize_partition(partition: str, manifest: dict, client=None) -> None:
-    """Clôt une partition : manifest d'abord, marqueur `_SUCCESS` en dernier.
-
-    L'ordre compte : sur un stockage objet il n'y a pas de renommage atomique, donc
-    `_SUCCESS` écrit en dernier est ce qui distingue une partition complète d'une
-    partition interrompue.
-    """
+    """Clôt une partition : manifest d'abord, `_SUCCESS` en dernier (pas de renommage atomique en S3)."""
     payload = json.dumps(manifest, indent=2, ensure_ascii=False).encode("utf-8")
     put_bytes(f"{partition}/{MANIFEST_NAME}", payload, client=client)
     put_bytes(f"{partition}/{SUCCESS_MARKER}", b"", client=client)
 
 
 def read_manifest(partition: str, client=None) -> dict | None:
-    """Manifest d'une partition, ou None si elle n'en a pas."""
+    """Renvoie le manifest d'une partition, ou None."""
     uri = f"{partition}/{MANIFEST_NAME}"
     if not exists(uri, client=client):
         return None
@@ -229,6 +187,7 @@ def read_manifest(partition: str, client=None) -> dict | None:
 
 
 def partition_is_complete(partition: str, client=None) -> bool:
+    """Indique si la partition porte son marqueur `_SUCCESS`."""
     return exists(f"{partition}/{SUCCESS_MARKER}", client=client)
 
 
@@ -237,17 +196,8 @@ class IncompletePartitionError(RuntimeError):
 
 
 def assert_partitions_complete(partitions: list[str], client=None) -> None:
-    """Lève si une partition est incomplète ou vide, en les nommant toutes.
-
-    Utilisée par les tâches de contrôle des DAGs pour bloquer la propagation vers la
-    couche suivante. Toutes les partitions sont vérifiées avant de lever.
-
-    Contrôle de complétude et de non-vacuité seulement : `_SUCCESS` présent et
-    `record_count` du manifest strictement positif. Les contrôles de contenu
-    (colonnes attendues, gènes résolus) relèvent de `check_bronze`.
-    """
+    """Lève si une partition est incomplète ou vide, en les nommant toutes."""
     if not partitions:
-        # Une liste vide ferait réussir le contrôle sans rien vérifier.
         raise IncompletePartitionError("aucune partition à contrôler")
     failures = []
     for partition in partitions:

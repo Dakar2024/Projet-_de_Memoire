@@ -1,12 +1,4 @@
-"""Passage silver -> gold/rag : un document textuel par variant et par gène.
-Voir docs/superpowers/specs/2026-09-22-sous-projet-d-silver-gold-design.md.
-
-Les fonctions de rendu ci-dessous sont pures (aucune E/S, aucune lecture du lac) :
-c'est le gabarit, la partie la plus sujette aux retouches, qui doit être testable
-sans lac. L'orchestration (lecture du Silver, écriture Delta par `MERGE`) vit dans
-`silver_to_gold_rag` ci-dessous.
-"""
-
+"""Passage silver → gold/rag : un document textuel anglais par variant et par gène."""
 from __future__ import annotations
 
 import hashlib
@@ -18,30 +10,23 @@ from ingestion.config import PANEL_GENES
 from ingestion.storage import layer_uri, storage_options
 from transformations.silver_io import read_silver
 
-# BioBERT tronque au-delà de 512 tokens : un document plus long serait vectorisé
-# amputé, sans erreur visible. Ces plafonds sont à revoir si le modèle change.
+# Plafonds de listes : le modèle d'embedding tronque silencieusement au-delà de 512 tokens.
 MAX_DISEASES = 5
 MAX_PHENOTYPES = 10
 
-# Le contrôle qualité Gold (tâche 7) rejette tout texte de document de plus de
-# 2000 caractères. Le plus long résumé NCBI réel de ce panel fait 1253 caractères ;
-# ajouté à l'en-tête, à 5 maladies et à 10 phénotypes, cela ne laisserait aucune
-# marge. La troncature est déterministe (coupe sur une frontière de mot) : la même
-# entrée produit toujours le même texte, car le SHA-256 du document (`chunk_id`)
-# sert à décider si l'étape RAG doit ré-embedder.
+# Garde chaque document sous les 2 000 caractères du contrôle qualité Gold.
 MAX_SUMMARY_CHARS = 800
 
 CLINVAR_VARIATION_URL = "https://www.ncbi.nlm.nih.gov/clinvar/variation/{variation_id}/"
 
 
 def chunk_id(text: str) -> str:
-    """Hash déterministe du contenu : il change si et seulement si le texte change,
-    ce qui permet à l'étape RAG de ne ré-embedder que les documents modifiés."""
+    """Renvoie le SHA-256 du texte, qui permet au RAG de ne ré-embedder que les documents modifiés."""
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def format_list(values: list[str], cap: int) -> str:
-    """Joint jusqu'à `cap` valeurs, et dit combien ont été omises."""
+    """Joint jusqu'à `cap` valeurs et indique combien ont été omises."""
     if not values:
         return ""
     kept = "; ".join(values[:cap])
@@ -50,16 +35,12 @@ def format_list(values: list[str], cap: int) -> str:
 
 
 def _blank(value: object) -> bool:
-    """True when `value` carries no information worth rendering: null, empty
-    string, ClinVar's literal "-" placeholder (real in `reviewstatus` and
-    `lastevaluated`), or the `-1` sentinel Silver keeps for "no dbSNP id". Gold may
-    omit these — that is shaping for the reader, not altering the value, which
-    stays untouched in the columns themselves; only the rendered text drops the
-    clause."""
+    """Indique une valeur à ne pas rendre : nulle, vide, « - » de ClinVar ou `-1` (pas d'identifiant dbSNP)."""
     return value is None or value == "" or value == "-" or value == -1
 
 
 def _format_disease(disease: dict) -> str:
+    """Rend une maladie avec son OMIM et son mode de transmission."""
     details = []
     if disease.get("omim_id"):
         details.append(f"OMIM {disease['omim_id']}")
@@ -70,25 +51,13 @@ def _format_disease(disease: dict) -> str:
 
 
 def _truncate_summary(summary: str) -> str:
-    """Coupe `summary` à `MAX_SUMMARY_CHARS` caractères au plus, sur une frontière de
-    mot, suivi de " …" quand une coupe a eu lieu. Déterministe : dépend uniquement de
-    `summary`, jamais d'un état externe (horloge, aléa, ordre d'itération).
-
-    Cas limite explicite : si les `MAX_SUMMARY_CHARS` premiers caractères ne
-    contiennent aucun espace (liste d'identifiants, texte sans espaces,
-    enregistrement malformé...), il n'existe aucune frontière de mot à respecter
-    dans la fenêtre autorisée ; on coupe alors au caractère `MAX_SUMMARY_CHARS`
-    tel quel plutôt que de chercher au-delà (ce qui romprait le plafond de
-    longueur). C'est un choix assumé, pas un repli silencieux : la coupe reste au
-    plus stricte à `MAX_SUMMARY_CHARS` caractères dans tous les cas."""
+    """Coupe le résumé de façon déterministe sur une frontière de mot (sinon au plafond), suivi de « … »."""
     if len(summary) <= MAX_SUMMARY_CHARS:
         return summary
     cut = summary[:MAX_SUMMARY_CHARS]
     last_space = cut.rfind(" ")
     if last_space != -1:
         cut = cut[:last_space]
-    # Sinon (`last_space == -1`) : pas d'espace trouvé, coupe brute assumée au
-    # caractère `MAX_SUMMARY_CHARS` — voir la docstring ci-dessus.
     return f"{cut} …"
 
 
@@ -98,15 +67,7 @@ def render_variant_document(
     phenotypes: list[str],
     previous_significance: tuple[str, str] | None,
 ) -> str:
-    """Texte anglais d'un document `variant`. Fonction pure : aucune E/S, pour que le
-    gabarit — la partie la plus sujette aux retouches — soit testable sans lac.
-
-    Chaque clause dont la valeur source est absente — nulle, vide, le "-" littéral
-    de ClinVar (2413 variants sur ce panel ont `reviewstatus == "-"` aujourd'hui),
-    ou le `-1` que Silver garde comme sentinelle "pas d'identifiant dbSNP" — est
-    omise plutôt que rendue littéralement ("rsNone", "dbSNP rs-1", "Review status:
-    -" n'apprennent rien au lecteur ni au modèle). Aucune valeur source n'est
-    modifiée ; seul le texte rendu s'adapte."""
+    """Rend le texte anglais d'un document variant (fonction pure), en omettant les clauses vides."""
     header = f"Variant {variant['name']}, gene {variant['gene_symbol']}"
     if not _blank(variant.get("cytogenetic")):
         header += f", chromosome {variant['cytogenetic']}"
@@ -138,6 +99,7 @@ def render_variant_document(
 
 
 def render_gene_document(gene: dict, diseases: list[str], phenotypes: list[str]) -> str:
+    """Rend le texte anglais d'un document gène (fonction pure)."""
     lines = [
         f"Gene {gene['gene_symbol']} ({gene.get('description') or gene['gene_symbol']}), "
         f"location {gene.get('maplocation') or 'unknown'}.",
@@ -152,27 +114,16 @@ def render_gene_document(gene: dict, diseases: list[str], phenotypes: list[str])
 
 
 def documents_uri(lake_uri: str | None = None) -> str:
+    """Renvoie l'URI de la table `gold/rag/documents`."""
     return f"{layer_uri('gold', lake_uri=lake_uri)}/rag/documents"
 
 
 def _previous_significance(variants: pl.DataFrame) -> dict[str, tuple[str, str]]:
-    """Dernière signification RÉELLEMENT différente de chaque alleleid, d'après
-    l'historique SCD2. Le SCD2 Silver clôture une ligne dès que `clinicalsignificance`,
-    `reviewstatus` OU `lastevaluated` change — donc la dernière ligne clôturée peut
-    très bien porter la même signification que la ligne courante (un simple
-    rafraîchissement du statut de revue ou de la date d'évaluation). Un variant
-    jamais reclassé, ou dont la seule clôture n'a pas changé la signification, est
-    absent du dictionnaire : sinon le document affirmerait à tort une
-    reclassification.
-
-    `maintain_order=True` sur le tri et le regroupement : sans lui, `.last()` sur
-    un groupe dont plusieurs lignes partagent le même `valid_to` (une clôture
-    multiple le même jour) n'a aucune garantie d'ordre documentée par Polars — un
-    choix instable ferait varier le texte, donc le hash du document, sans que rien
-    n'ait changé dans les données."""
+    """Renvoie, par variant reclassé, la dernière signification différente de l'actuelle et sa date de fin."""
     closed = variants.filter(pl.col("valid_to").is_not_null())
     if closed.is_empty():
         return {}
+    # Ordre stable : un choix instable ferait varier le texte, donc le hash du document.
     latest = (
         closed.sort("valid_to", maintain_order=True)
         .group_by("alleleid", maintain_order=True)
@@ -191,8 +142,7 @@ def _previous_significance(variants: pl.DataFrame) -> dict[str, tuple[str, str]]
 
 
 def _phenotypes_by_disease(hpo_gene_phenotype: pl.DataFrame) -> dict[tuple[str, str], list[str]]:
-    """(gène, identifiant de maladie) -> noms de phénotypes, triés. `disease_id` est
-    préfixé `OMIM:` ou `ORPHA:` — les deux formes existent dans HPO."""
+    """Associe (gène, `OMIM:`/`ORPHA:` maladie) aux noms de phénotypes, triés par identifiant HPO."""
     mapping: dict[tuple[str, str], list[str]] = {}
     for row in hpo_gene_phenotype.sort("hpo_id").iter_rows(named=True):
         key = (row["gene_symbol"], row["disease_id"])
@@ -201,7 +151,7 @@ def _phenotypes_by_disease(hpo_gene_phenotype: pl.DataFrame) -> dict[tuple[str, 
 
 
 def build_documents(logical_date: str, panel: str, lake_uri: str | None = None) -> pl.DataFrame:
-    """Un document par variant courant, plus un par gène du panel."""
+    """Construit un document par variant courant, plus un par gène du panel."""
     variants = read_silver("clinvar_variant", panel, lake_uri)
     variant_gene = read_silver("clinvar_variant_gene", panel, lake_uri)
     variant_disease = read_silver("clinvar_variant_disease", panel, lake_uri)
@@ -216,11 +166,7 @@ def build_documents(logical_date: str, panel: str, lake_uri: str | None = None) 
     phenotypes_of = _phenotypes_by_disease(gene_phenotype)
 
     diseases_of: dict[str, list[dict]] = {}
-    # `maintain_order=True` : deux lignes qui partagent (disease_name, medgen_cui)
-    # (même maladie citée deux fois pour le même variant, avec un OMIM différent
-    # par exemple) n'ont sinon aucun ordre relatif garanti par Polars — un ordre
-    # instable ferait varier le texte rendu, donc le hash du document, sans rien
-    # changer aux données.
+    # Tri stable : un ordre instable ferait varier le texte, donc le hash du document.
     for row in variant_disease.sort("disease_name", "medgen_cui", maintain_order=True).iter_rows(
         named=True
     ):
@@ -283,8 +229,7 @@ def build_documents(logical_date: str, panel: str, lake_uri: str | None = None) 
     return pl.DataFrame(rows, schema=_DOCUMENT_SCHEMA)
 
 
-# Schéma explicite : sans lui, une colonne entièrement nulle (rs_dbsnp sur un run
-# sans variant, par exemple) serait typée Null et ferait échouer le MERGE.
+# Schéma explicite : une colonne entièrement nulle serait typée `Null` et ferait échouer le MERGE.
 _DOCUMENT_SCHEMA = {
     "doc_id": pl.Utf8, "chunk_id": pl.Utf8, "doc_type": pl.Utf8, "text": pl.Utf8,
     "gene_symbol": pl.Utf8, "clinical_significance": pl.Utf8, "review_status": pl.Utf8,
@@ -295,9 +240,7 @@ _DOCUMENT_SCHEMA = {
 
 
 def write_documents(documents: pl.DataFrame, panel: str, lake_uri: str | None = None) -> None:
-    """`MERGE` sur `doc_id`, restreint au panel : un document inchangé n'est pas
-    réécrit, un document disparu du Silver est supprimé. Vérifié à la main sur
-    delta-rs 1.6.3, y compris l'absence de nouvelle version Delta sur un rejeu."""
+    """Fusionne les documents du panel sur `doc_id` : inchangés non réécrits, disparus supprimés."""
     uri = documents_uri(lake_uri)
     options = storage_options(uri)
     if not DeltaTable.is_deltatable(uri, storage_options=options):
@@ -326,7 +269,5 @@ def write_documents(documents: pl.DataFrame, panel: str, lake_uri: str | None = 
 
 
 def silver_to_gold_rag(logical_date: str, panel: str, lake_uri: str | None = None) -> None:
-    """Construit `gold/rag/documents` pour ce panel. Lit le Silver, jamais
-    `gold/analytique`. Ne nettoie rien : une donnée incorrecte se corrige dans
-    `bronze_to_silver`."""
+    """Construit `gold/rag/documents` du panel depuis le Silver, sans nettoyage."""
     write_documents(build_documents(logical_date, panel, lake_uri), panel, lake_uri)

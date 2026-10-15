@@ -1,3 +1,4 @@
+"""Fichier HPO genes_to_phenotype (release épinglée) et enrichissement des termes via ontology.jax.org."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -9,9 +10,7 @@ from ingestion.http_client import build_retrying_session
 
 GENES_TO_PHENOTYPE_URL = "https://purl.obolibrary.org/obo/hp/hpoa/genes_to_phenotype.txt"
 
-# HPO publie des releases taguées (`v2026-09-01`). La PURL pointe sur « latest »,
-# qui change : on résout le tag une fois, on l'enregistre au manifest, et on
-# télécharge l'URL taguée — un rejeu retéléchargera exactement le même fichier.
+# Le tag de la release courante est résolu puis épinglé : un rejeu retélécharge le même fichier.
 HPO_LATEST_RELEASE_URL = (
     "https://github.com/obophenotype/human-phenotype-ontology/releases/latest"
 )
@@ -20,13 +19,10 @@ HPO_RELEASE_URL_TEMPLATE = (
     "download/{release_tag}/genes_to_phenotype.txt"
 )
 
-# Service public ontology.jax.org (sans clé) : détails d'un terme HPO (definition, synonyms,
-# xrefs) — absents de genes_to_phenotype.txt, qui ne porte que l'id et le nom du terme.
+# API publique sans clé : definition, synonyms et xrefs absents de genes_to_phenotype.txt.
 HP_TERMS_URL = "https://ontology.jax.org/api/hp/terms"
 
-# Le paramètre `filter` de cette API est limité à 250 caractères côté serveur (spec OpenAPI
-# publiée sur /api/hp/docs) ; "HP:0000000," fait 11 caractères, 20 IDs par lot garde une
-# marge confortable.
+# `filter` est limité à 250 caractères : 20 identifiants de 11 caractères laissent de la marge.
 HP_TERMS_BATCH_SIZE = 20
 
 
@@ -35,18 +31,12 @@ class ReleaseTagResolutionError(RuntimeError):
 
 
 def release_url_for(release_tag: str) -> str:
-    """URL de téléchargement de `genes_to_phenotype.txt` pour un tag de release."""
+    """Renvoie l'URL de `genes_to_phenotype.txt` pour un tag de release."""
     return HPO_RELEASE_URL_TEMPLATE.format(release_tag=release_tag)
 
 
 def resolve_release_tag(session: requests.Session | None = None) -> str:
-    """Résout le tag de la release HPO courante via la redirection de `/releases/latest`.
-
-    Les 429 et 5xx sont déjà retentés par `build_retrying_session`. Le cas non couvert
-    est un statut non retenté sans redirection — GitHub renvoyant une page HTML, ou un
-    404 après un changement d'URL : lire `headers["Location"]` lèverait alors un
-    `KeyError` nu, illisible en tête d'un run mensuel.
-    """
+    """Résout le tag de la release HPO courante via la redirection de `/releases/latest`."""
     session = session or build_retrying_session()
     response = session.get(HPO_LATEST_RELEASE_URL, allow_redirects=False, timeout=30)
     location = response.headers.get("Location")
@@ -59,11 +49,11 @@ def resolve_release_tag(session: requests.Session | None = None) -> str:
 
 
 def parse_genes_to_phenotype(path: Path, genes: list[str]) -> list[dict]:
-    """Parse genes_to_phenotype.txt et filtre sur les gènes cibles."""
+    """Lit genes_to_phenotype.txt et garde les lignes des gènes cibles."""
     genes_set = set(genes)
     rows = []
     with open(path, encoding="utf-8") as fh:
-        next(fh, None)  # header (absent si le fichier est vide)
+        next(fh, None)  # en-tête
         for line in fh:
             parts = line.rstrip("\n").split("\t")
             if len(parts) < 4:
@@ -80,13 +70,7 @@ def parse_genes_to_phenotype(path: Path, genes: list[str]) -> list[dict]:
 def fetch_hpo_term_details(
     hpo_ids: list[str], session: requests.Session | None = None
 ) -> dict[str, dict]:
-    """Récupère definition/synonyms/xrefs pour des IDs HPO, par lots de `HP_TERMS_BATCH_SIZE`.
-
-    Les IDs sont dédupliqués avant l'appel — un même terme (ex. un HPO partagé par plusieurs
-    gènes du panel) n'est demandé qu'une fois. Un ID que l'API ne reconnaît plus (terme
-    retiré/fusionné côté HPO) est simplement absent du résultat plutôt que de faire échouer
-    l'appel — géré côté appelant via `enrich_hpo_rows`.
-    """
+    """Récupère definition/synonyms/xrefs des IDs HPO dédoublonnés, par lots ; un terme retiré est absent."""
     session = session or build_retrying_session()
     unique_ids = list(dict.fromkeys(hpo_ids))
     details: dict[str, dict] = {}
@@ -104,11 +88,7 @@ def fetch_hpo_term_details(
 
 
 def enrich_hpo_rows(rows: list[dict], term_details: dict[str, dict]) -> list[dict]:
-    """Ajoute definition/synonyms/xrefs à chaque ligne HPO à partir de `term_details`.
-
-    Un `hpo_id` absent de `term_details` garde des champs d'enrichissement vides plutôt que
-    de faire échouer l'assemblage — cohérent avec le traitement des CUI MedGen non résolus.
-    """
+    """Ajoute definition/synonyms/xrefs à chaque ligne HPO ; champs vides si le terme est inconnu."""
     enriched = []
     for row in rows:
         details = term_details.get(row["hpo_id"], {})
@@ -129,14 +109,7 @@ def download_file(url: str, destination: Path, force: bool = False) -> Path:
 
 
 def download_hpo_files(destination_dir: Path, force: bool = False) -> dict[str, Path]:
-    """Télécharge les fichiers HPO publics utilisés par la collecte dans `destination_dir`.
-
-    `phenotype.hpoa` (annotations par maladie, ~35 Mo) n'est volontairement pas téléchargé :
-    rien dans ce module ne le consomme, faute d'une jointure disease_id -> gène — l'ajouter
-    reviendrait à payer un téléchargement pour rien. `genes_to_phenotype.txt` porte déjà un
-    `disease_id` par ligne gène/HPO ; une future étape qui voudrait exploiter les fréquences
-    et l'âge d'apparition de `phenotype.hpoa` pourra joindre dessus.
-    """
+    """Télécharge les fichiers HPO utilisés par la collecte (`phenotype.hpoa` n'est consommé par rien)."""
     return {
         "genes_to_phenotype": download_file(
             GENES_TO_PHENOTYPE_URL, destination_dir / "genes_to_phenotype.txt", force=force
