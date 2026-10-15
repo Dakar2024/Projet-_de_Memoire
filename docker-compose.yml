@@ -416,7 +416,7 @@ services:
           memory: 2g
 
 #===================== RAG — embeddings (GPU) ==================#
-# Réindexation rapide sur GPU NVIDIA (profil « gpu », RAG/README.md §6)
+# Réindexation rapide sur GPU NVIDIA (profil « gpu », RAG/README.md §4)
 # Remplace rag-embeddings sous le même nom réseau : arrêter d'abord le service CPU
 #===============================================================#
   rag-embeddings-gpu:
