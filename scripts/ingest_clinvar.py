@@ -1,3 +1,4 @@
+"""Ingestion du bulk ClinVar mensuel dans la couche raw."""
 from __future__ import annotations
 
 import argparse
@@ -24,15 +25,9 @@ OBJECT_NAME = "variant_summary.txt.gz"
 def ingest_clinvar(
     logical_date: str, lake_uri: str | None = None, cache_dir: Path | None = None
 ) -> str:
-    """Dépose le bulk ClinVar du mois de `logical_date` dans la couche raw, sans le filtrer.
-
-    Le fichier est d'abord téléchargé sur disque puis téléversé en flux : à 442 Mo,
-    il ne doit jamais transiter par la mémoire du worker Airflow.
-    """
+    """Dépose le bulk ClinVar du mois dans la couche raw, sans filtre, via le disque et non la mémoire."""
     url = archive_url_for(logical_date)
     cache_dir = cache_dir or DATA_EXTERNAL_DIR
-    # Avant le transfert, pas pendant : un disque saturé se manifesterait sinon par
-    # une écriture en échec à la fin d'un téléchargement de 440 Mo.
     ensure_free_space(cache_dir)
     local = download_to_file(url, cache_dir / f"variant_summary_{archive_version_for(logical_date)}.txt.gz")
 
@@ -51,8 +46,7 @@ def ingest_clinvar(
             record_count=1,
         ),
     )
-    # Purge après coup seulement : tant que la partition n'est pas finalisée, le
-    # fichier local reste la seule copie exploitable.
+    # Purge après finalisation : avant, le fichier local est la seule copie.
     purge_old_downloads(cache_dir)
     return partition
 

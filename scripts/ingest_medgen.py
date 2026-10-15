@@ -1,5 +1,4 @@
 """Ingestion des concepts MedGen par panel dans la couche raw."""
-
 from __future__ import annotations
 
 import argparse
@@ -32,15 +31,7 @@ BULK_OBJECT = "variant_summary.txt.gz"
 def cuis_from_raw_clinvar(
     clinvar_partition: str, genes: list[str], client=None
 ) -> list[str]:
-    """Extrait les CUI MedGen du bulk ClinVar brut, pour les gènes du panel.
-
-    MedGen a une dépendance de données sur ClinVar : les CUI viennent du champ
-    `PhenotypeIDS`. Cette lecture pilote les appels d'API et ne persiste rien.
-
-    Le bulk est parcouru en flux : 442 Mo compressés, ~4 Go décompressés. La chaîne
-    `open_stream` -> `GzipFile` -> `TextIOWrapper` -> `DictReader` ne tient qu'une
-    ligne à la fois en mémoire.
-    """
+    """Extrait en flux, ligne à ligne, les CUI MedGen du bulk ClinVar brut pour les gènes du panel."""
     genes_set = set(genes)
     cuis: list[str] = []
 

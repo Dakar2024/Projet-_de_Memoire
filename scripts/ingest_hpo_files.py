@@ -1,3 +1,4 @@
+"""Ingestion du fichier HPO genes_to_phenotype dans la couche raw."""
 from __future__ import annotations
 
 import argparse
@@ -8,8 +9,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from ingestion.config import DATA_EXTERNAL_DIR, RAW
 from ingestion.download import download_to_file
-from ingestion.maintenance import ensure_free_space, purge_old_downloads
 from ingestion.hpo import release_url_for, resolve_release_tag
+from ingestion.maintenance import ensure_free_space, purge_old_downloads
 from ingestion.storage import (
     begin_partition,
     build_manifest,
@@ -28,16 +29,7 @@ def ingest_hpo_files(
     cache_dir: Path | None = None,
     release_tag: str | None = None,
 ) -> str:
-    """Dépose `genes_to_phenotype.txt` dans la couche raw, épinglé sur un tag de release.
-
-    Le tag résolu est inscrit au manifest : c'est lui, et non la date du run, qui
-    identifie la version de la source.
-
-    Choix du tag, par priorité : `release_tag` explicite ; sinon le `source_version`
-    du manifest existant de la partition ; sinon `/releases/latest`. Sans la reprise
-    du manifest, rejouer un mois passé écraserait sa partition avec la release
-    courante, et le rejeu ne reproduirait plus l'exécution d'origine.
-    """
+    """Dépose `genes_to_phenotype.txt` épinglé sur un tag : explicite, sinon celui du manifest, sinon le dernier."""
     partition = partition_uri(RAW, "hpo", logical_date, lake_uri=lake_uri)
     if not release_tag:
         manifest = read_manifest(partition)
@@ -61,8 +53,7 @@ def ingest_hpo_files(
             record_count=1,
         ),
     )
-    # Purge après coup seulement : tant que la partition n'est pas finalisée, le
-    # fichier local reste la seule copie exploitable.
+    # Purge après finalisation : avant, le fichier local est la seule copie.
     purge_old_downloads(cache_dir)
     return partition
 
