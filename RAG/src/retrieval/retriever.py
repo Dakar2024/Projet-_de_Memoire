@@ -1,15 +1,4 @@
-"""Recherche hybride (E2a) : exact → filtres → similarité, avec garde-fous.
-
-Toutes les étapes utilisent la recherche vectorielle exacte (l'index HNSW perd la moitié
-des documents pertinents sur ce corpus, cf. PgSearchStore) ; `force_exact=False` ne sert
-qu'à la mesure de diagnostic de l'index.
-
-`search()` ne connaît aucun service : l'analyse, la vectorisation et la base lui sont
-passées, ce qui la rend testable sans réseau. `Searcher` fait le câblage réel et
-vérifie d'abord, comme l'indexation, que le service d'embedding sert le modèle de
-l'index (empreinte, puis canari).
-"""
-
+"""Recherche hybride exact → filtres → similarité ; `search()` est pure, `Searcher` câble les services réels."""
 from __future__ import annotations
 
 import hashlib
@@ -54,6 +43,8 @@ _COLUMNS = ("doc_id", "doc_type", "text", "gene_symbol", "clinical_significance"
 
 @dataclass(frozen=True)
 class RetrievedDocument:
+    """Document retrouvé, avec sa similarité et l'étape qui l'a trouvé."""
+
     doc_id: str
     doc_type: str
     text: str
@@ -72,6 +63,8 @@ class RetrievedDocument:
 
 @dataclass
 class SearchTrace:
+    """Trace d'une recherche : identifiants, analyse, filtres, signaux et durées."""
+
     mode: str
     identifiers: Identifiers
     analysis: QueryAnalysis
@@ -85,11 +78,14 @@ class SearchTrace:
 
 @dataclass(frozen=True)
 class SearchResult:
+    """Documents retrouvés et trace d'une recherche."""
+
     question: str
     documents: tuple[RetrievedDocument, ...]
     trace: SearchTrace
 
     def as_dict(self) -> dict:
+        """Sérialise le résultat."""
         trace = asdict(self.trace)
         trace["identifiers"] = self.trace.identifiers.as_dict()
         trace["analysis"] = self.trace.analysis.as_dict()
@@ -98,12 +94,16 @@ class SearchResult:
 
 @dataclass(frozen=True)
 class SearchSettings:
+    """Réglages de la recherche."""
+
     k: int
     min_filtered: int
     max_question_chars: int
 
 
 class SearchStore(Protocol):
+    """Interface de lecture de la base dont dépend `search()`."""
+
     def known_significances(self) -> tuple[str, ...]: ...
     def exact_matches(self, *, rs: Sequence[int], hgvs_c: Sequence[str], hgvs_p: Sequence[str],
                       genes: Sequence[str], query_vector: np.ndarray, limit: int) -> list[RetrievedDocument]: ...
@@ -112,6 +112,7 @@ class SearchStore(Protocol):
 
 
 def validate_question(question: str, max_chars: int) -> str:
+    """Refuse une question vide ou trop longue ; renvoie le texte nettoyé."""
     text = (question or "").strip()
     if not text:
         raise QuestionRejectedError("question vide")
@@ -121,8 +122,7 @@ def validate_question(question: str, max_chars: int) -> str:
 
 
 def _missing_identifiers(ids: Identifiers, searched_hgvs: bool, found: list[RetrievedDocument]) -> list[str]:
-    """Identifiants cités sans document exact (formes normalisées). Un HGVS non cherché
-    (gène hors panneau seul) compte comme introuvable."""
+    """Renvoie les identifiants cités sans document exact (un HGVS non cherché compte comme introuvable)."""
     rs_found = {d.rs_dbsnp for d in found}
     c_found = {d.hgvs_c for d in found}
     p_found = {d.hgvs_p for d in found}
@@ -135,6 +135,7 @@ def _missing_identifiers(ids: Identifiers, searched_hgvs: bool, found: list[Retr
 def search(question: str, *, settings: SearchSettings, analyze: Callable[[str], QueryAnalysis],
            embed: Callable[[str], np.ndarray], store: SearchStore, mode: str = "full",
            force_exact: bool | None = None, clock: Callable[[], float] = time.perf_counter) -> SearchResult:
+    """Cherche les documents d'une question : correspondance exacte, puis similarité filtrée, assouplie si besoin."""
     if mode not in MODES:
         raise ValueError(f"mode inconnu : {mode!r}")
     text = validate_question(question, settings.max_question_chars)
@@ -161,8 +162,7 @@ def search(question: str, *, settings: SearchSettings, analyze: Callable[[str], 
     start = clock()
     documents: list[RetrievedDocument] = []
     if mode == "full" and ids.has_variant_identifier:
-        # Une position HGVS est relative à un gène : sans gène du panneau cité (seulement un gène
-        # hors panneau), elle correspondrait à d'autres gènes. On ne cherche alors que le `rs`.
+        # HGVS relatif à un gène : avec un seul gène hors panel cité, seul le `rs` est cherché.
         hgvs_searchable = not (ids.out_of_panel and not ids.genes)
         hgvs_c, hgvs_p = (ids.hgvs_c, ids.hgvs_p) if hgvs_searchable else ((), ())
         if ids.rs or hgvs_c or hgvs_p:
@@ -174,15 +174,13 @@ def search(question: str, *, settings: SearchSettings, analyze: Callable[[str], 
 
     remaining = settings.k - len(documents)
     if remaining > 0:
-        # Toujours exacte par défaut : l'index HNSW ne retrouve que la moitié des documents
-        # pertinents (voir PgSearchStore). `force_exact=False` ne sert qu'au diagnostic.
+        # Exacte par défaut (rappel HNSW 0,47) ; `force_exact=False` ne sert qu'au diagnostic.
         exact = force_exact if force_exact is not None else True
         found = store.similar(query_vector=vector, genes=genes, significances=labels,
                               exclude_doc_ids=[d.doc_id for d in documents], limit=remaining, exact=exact)
         if labels and len(found) < min(settings.min_filtered, remaining):
             trace.flags.append("significance_relaxed")
             labels = ()
-            exact = force_exact if force_exact is not None else True
             found = store.similar(query_vector=vector, genes=genes, significances=(),
                                   exclude_doc_ids=[d.doc_id for d in documents], limit=remaining, exact=exact)
         trace.exact_search = exact
@@ -194,29 +192,22 @@ def search(question: str, *, settings: SearchSettings, analyze: Callable[[str], 
 
 
 def _resorted(sql: str) -> str:
-    """`relaxed_order` peut rendre des lignes légèrement désordonnées : on retrie le
-    résultat (colonne `similarity`, en dernier, donc `_documents` reste valable). Les
-    égalités sont départagées par `doc_id` : une mesure rejouée garde le même ordre."""
+    """Retrie le résultat par similarité puis `doc_id`, pour un ordre stable d'un rejeu à l'autre."""
     return f"WITH r AS MATERIALIZED ({sql}) SELECT * FROM r ORDER BY similarity DESC, doc_id"
 
 
 def _inner_order(exact: bool) -> str:
-    """Tri de la requête interne. En recherche exacte, `doc_id` départage les égalités
-    de distance (sinon le choix des `limit` premiers dépend du plan). En recherche
-    approchée, un second critère empêcherait PostgreSQL d'utiliser l'index HNSW : les
-    égalités à la frontière de `limit` y restent non déterministes (limite connue)."""
+    """Renvoie le tri interne ; `doc_id` départage en exact (en approché, il empêcherait l'usage de HNSW)."""
     return "ORDER BY embedding <=> %(q)s, doc_id" if exact else "ORDER BY embedding <=> %(q)s"
 
 
 def doc_ids_sha256(doc_ids: Iterable[str]) -> str:
-    """Empreinte d'un ensemble de documents : `doc_id` triés en Python (pas par la base ni
-    par Polars, dont l'ordre des chaînes pourrait différer), joints par des retours à la
-    ligne. Calculée de la même façon sur le Gold (vérité terrain) et sur l'index (mesure)."""
+    """Calcule l'empreinte d'un ensemble de `doc_id`, triés en Python, identique sur le Gold et sur l'index."""
     return hashlib.sha256("\n".join(sorted(doc_ids)).encode("utf-8")).hexdigest()
 
 
 def check_index_models(models: Sequence[str], expected: str) -> None:
-    """L'index doit avoir été construit par un seul modèle : celui que sert le service."""
+    """Vérifie que l'index a été construit par le seul modèle servi."""
     if tuple(models) != (expected,):
         raise RagConfigurationError(
             f"modèles présents dans l'index : {list(models)} ; empreinte attendue : {expected}. "
@@ -224,14 +215,7 @@ def check_index_models(models: Sequence[str], expected: str) -> None:
 
 
 class PgSearchStore:
-    """Lecture seule (`rag_reader`). Délais bornés : connexion 10 s, requête 30 s.
-    La recherche est toujours exacte (balayage séquentiel). Mesuré le 05/10/2026 sur
-    l'index réel (59 questions) : le rappel@10 de l'index HNSW face à la recherche
-    exacte est de 0,47 à ef_search 40, 0,58 à 200, 0,66 à 400 et 1,00 seulement à 1000
-    (808 ms, pas plus rapide que l'exacte, 714 ms) ; le parcours itératif n'y change
-    rien. Cause probable, non vérifiée : 32 % des documents ont un corps identique, donc
-    des vecteurs identiques. L'index HNSW reste en place, inutilisé (`exact=False`
-    réservé au diagnostic) ; à réévaluer si le corpus grandit."""
+    """Base en lecture seule (`rag_reader`), délais bornés ; recherche exacte car le rappel HNSW mesuré n'est que de 0,47."""
 
     def __init__(self, conninfo: str) -> None:
         self._conninfo = conninfo
@@ -239,10 +223,7 @@ class PgSearchStore:
         self._known: tuple[str, ...] | None = None
 
     def __enter__(self) -> PgSearchStore:
-        # prepare_threshold=None : psycopg prépare sinon une requête après 5 exécutions, et
-        # PostgreSQL peut alors réutiliser un plan générique bâti sous un autre réglage
-        # `enable_indexscan` ; une recherche filtrée « exacte » redeviendrait silencieusement
-        # un parcours HNSW filtré après coup.
+        # Pas de requête préparée : un plan générique pourrait réutiliser HNSW malgré `enable_indexscan`.
         conn = psycopg.connect(self._conninfo, autocommit=True, connect_timeout=10, prepare_threshold=None)
         try:
             register_vector(conn)
@@ -264,6 +245,7 @@ class PgSearchStore:
         return self._conn
 
     def _rows(self, sql: str, params: dict, *, exact: bool, limit: int) -> list[tuple]:
+        """Exécute une recherche vectorielle exacte ou approchée, avec délai borné."""
         with self._db.transaction():
             self._db.execute("SELECT set_config('statement_timeout', '30s', true)")
             if exact:
@@ -274,21 +256,23 @@ class PgSearchStore:
             return self._db.execute(sql, params).fetchall()
 
     def ping(self) -> None:
-        """Vérifie que la base répond (`SELECT 1`, même délai que les requêtes)."""
+        """Vérifie que la base répond."""
         self._timed("SELECT 1", ())
 
     def _timed(self, sql: str, params: tuple) -> list[tuple]:
-        """Requête simple de lecture, avec le même délai de 30 s que les recherches."""
+        """Exécute une lecture simple avec le délai de 30 s."""
         with self._db.transaction():
             self._db.execute("SELECT set_config('statement_timeout', '30s', true)")
             return self._db.execute(sql, params).fetchall()
 
     @staticmethod
     def _documents(rows: list[tuple], stage: str) -> list[RetrievedDocument]:
+        """Convertit les lignes en documents retrouvés."""
         return [RetrievedDocument(**dict(zip(_COLUMNS, row[:-1], strict=True)), similarity=float(row[-1]),
                                   stage=stage) for row in rows]
 
     def known_significances(self) -> tuple[str, ...]:
+        """Renvoie les libellés de signification présents dans l'index (mis en cache)."""
         if self._known is None:
             rows = self._timed(
                 "SELECT DISTINCT clinical_significance FROM rag_documents "
@@ -298,16 +282,18 @@ class PgSearchStore:
         return self._known
 
     def index_models(self) -> tuple[str, ...]:
+        """Renvoie les modèles d'embedding présents dans l'index."""
         rows = self._timed("SELECT DISTINCT embedding_model FROM rag_documents "
                            "WHERE panel = ANY(%s::text[])", (list(PANELS),))
         return tuple(sorted(row[0] for row in rows))
 
     def doc_ids_sha256(self) -> str:
-        """Empreinte des documents indexés pour les panels mesurés (panel de test exclu)."""
+        """Calcule l'empreinte des documents indexés des panels (panel de test exclu)."""
         rows = self._timed("SELECT doc_id FROM rag_documents WHERE panel = ANY(%s::text[])", (list(PANELS),))
         return doc_ids_sha256(row[0] for row in rows)
 
     def exact_matches(self, *, rs, hgvs_c, hgvs_p, genes, query_vector, limit):
+        """Cherche les variants par rs ou HGVS exacts, filtrés par gène."""
         sql = f"""
             SELECT {', '.join(_COLUMNS)}, 1 - (embedding <=> %(q)s) AS similarity
             FROM rag_documents
@@ -320,6 +306,7 @@ class PgSearchStore:
         return self._documents(self._rows(_resorted(sql), params, exact=True, limit=limit), "exact")
 
     def similar(self, *, query_vector, genes, significances, exclude_doc_ids, limit, exact):
+        """Cherche les documents les plus proches, filtrés par gène et signification."""
         sql = f"""
             SELECT {', '.join(_COLUMNS)}, 1 - (embedding <=> %(q)s) AS similarity
             FROM rag_documents
@@ -335,8 +322,7 @@ class PgSearchStore:
 
 
 def build_llm_client(profile: LlmProfile, env, timeout_s: float) -> OpenRouterClient | GroqClient:
-    """Client du profil : OpenRouter (mesure officielle) ou Groq (essai gratuit). Seule la
-    clé du client choisi est exigée."""
+    """Crée le client LLM du profil (OpenRouter ou Groq) ; seule sa clé est exigée."""
     if profile.backend == "openrouter":
         return OpenRouterClient(load_openrouter_key(env), timeout_s=timeout_s)
     if profile.backend == "groq":
@@ -345,13 +331,11 @@ def build_llm_client(profile: LlmProfile, env, timeout_s: float) -> OpenRouterCl
 
 
 class Searcher:
-    """Câblage réel, ouvert une fois : vérifie le modèle d'embedding, puis assemble le
-    client LLM du profil, le service d'embedding et la base (`rag_reader`)."""
+    """Recherche câblée sur les services réels, après vérification du modèle d'embedding (empreinte et canari)."""
 
     def __init__(self, *, profile_name: str | None = None, cache_path: Path | None = None,
                  config_path: Path = DEFAULT_CONFIG_PATH, env=None, analysis_client=None) -> None:
-        """`analysis_client` remplace le client LLM du profil (rejeu hors ligne de la recette :
-        aucun client réseau construit, aucune clé exigée)."""
+        """`analysis_client` remplace le client LLM (rejeu hors ligne, sans clé)."""
         rag = load_config(config_path)
         self.config: SearchConfig = load_search_config(config_path, profile_name)
         services = load_service_settings(env)
@@ -383,17 +367,18 @@ class Searcher:
             self.close()
 
     def close(self) -> None:
-        """Ferme les sessions HTTP (service d'embedding et client LLM)."""
+        """Ferme les sessions HTTP de l'embedding et du LLM."""
         try:
             self._embedder.close()
         finally:
             self._llm.close()
 
     def index_doc_ids_sha256(self) -> str:
-        """Empreinte des documents de l'index, à comparer à celle de la vérité terrain."""
+        """Renvoie l'empreinte des documents de l'index."""
         return self._store.doc_ids_sha256()
 
     def search(self, question: str, mode: str = "full", force_exact: bool | None = None) -> SearchResult:
+        """Cherche les documents d'une question avec les services réels."""
         profile = self.config.analysis_profile
         return search(
             question, settings=self._settings, store=self._store, mode=mode, force_exact=force_exact,

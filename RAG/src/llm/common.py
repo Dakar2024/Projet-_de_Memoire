@@ -1,12 +1,4 @@
-"""Briques communes aux clients LLM (OpenRouter pour la mesure officielle, Groq pour
-l'essai) : résultat d'un appel, lecture d'une réponse de chat au format OpenAI, code
-d'erreur court.
-
-Les messages d'erreur ne citent jamais le corps d'une réponse : il peut reprendre la
-question (donnée de santé) ou des en-têtes. Seuls le statut, le profil et un code
-d'erreur court y figurent.
-"""
-
+"""Briques communes aux clients LLM ; les erreurs ne citent jamais le corps d'une réponse (donnée de santé)."""
 from __future__ import annotations
 
 import json
@@ -27,6 +19,8 @@ _MAX_CODE_CHARS = 40
 
 @dataclass(frozen=True)
 class LlmCall:
+    """Résultat d'un appel LLM : contenu JSON, fournisseur servi, coût et jetons."""
+
     content: dict
     generation_id: str
     provider_name: str
@@ -37,8 +31,7 @@ class LlmCall:
 
 @dataclass(frozen=True)
 class ChatReply:
-    """Champs utiles d'une réponse de chat. `data` et `usage` sont des objets JSON :
-    chaque client y lit ses propres champs (fournisseur, coût)."""
+    """Champs utiles d'une réponse de chat ; chaque client lit ses propres champs dans `data` et `usage`."""
 
     data: dict
     generation_id: str
@@ -50,15 +43,14 @@ class ChatReply:
 
     @property
     def truncated(self) -> bool:
-        """Réponse coupée par le plafond de jetons, ou vide."""
+        """Indique une réponse vide ou coupée par le plafond de jetons."""
         content = self.raw_content
         return (self.finish_reason == "length" or content is None
                 or (isinstance(content, str) and not content.strip()))
 
 
 def error_code(response: requests.Response) -> str:
-    """Code d'erreur du service, s'il est un entier ou une chaîne courte. Jamais
-    `error.message` ni le reste du corps : ils peuvent citer la question."""
+    """Renvoie le code d'erreur court du service, jamais `error.message` (il peut citer la question)."""
     try:
         code = response.json()["error"]["code"]
     except (ValueError, KeyError, TypeError):
@@ -71,21 +63,23 @@ def error_code(response: requests.Response) -> str:
 
 
 def is_cost(value: object) -> bool:
+    """Indique un coût valide : nombre fini et positif."""
     return (isinstance(value, (int, float)) and not isinstance(value, bool)
             and math.isfinite(value) and value >= 0)
 
 
 def chat_messages(system: str, user: str) -> list[dict]:
+    """Construit les messages système et utilisateur."""
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
 def json_schema_format(schema_name: str, schema: dict) -> dict:
-    """Sortie JSON imposée par schéma strict (décodage contraint)."""
+    """Impose une sortie JSON par schéma strict (décodage contraint)."""
     return {"type": "json_schema", "json_schema": {"name": schema_name, "strict": True, "schema": schema}}
 
 
 def read_chat_reply(response: requests.Response, service: str) -> ChatReply:
-    """Lit une réponse 200 au format OpenAI. Toute réponse illisible est transitoire."""
+    """Lit une réponse 200 au format OpenAI ; une réponse illisible est transitoire."""
     try:
         data = response.json()
         generation_id = str(data["id"])
@@ -105,7 +99,7 @@ def read_chat_reply(response: requests.Response, service: str) -> ChatReply:
 
 
 def json_object(raw_content: object, service: str) -> dict:
-    """Contenu de la réponse, décodé : un objet JSON, sinon transitoire."""
+    """Décode le contenu de la réponse en objet JSON, sinon erreur transitoire."""
     try:
         content = json.loads(raw_content)
     except (ValueError, TypeError) as exc:
@@ -116,6 +110,7 @@ def json_object(raw_content: object, service: str) -> dict:
 
 
 def _retry_after(response: requests.Response) -> float | None:
+    """Lit l'en-tête Retry-After en secondes, ou None."""
     value = response.headers.get("Retry-After")
     try:
         seconds = float(value) if value is not None else None
@@ -127,11 +122,7 @@ def _retry_after(response: requests.Response) -> float | None:
 def post_with_bounded_retry(send: Callable[[], requests.Response], *, sleep: Callable[[float], None],
                             max_retries: int = 2, base_delay_s: float = 1.0, max_delay_s: float = 30.0,
                             statuses: tuple[int, ...] = RETRY_STATUSES) -> requests.Response:
-    """Relance un appel seulement quand le service a RÉPONDU 429, 502 ou 503 : aucune
-    génération n'a eu lieu, rien n'est facturé. Jamais sur une erreur réseau ni un délai
-    dépassé, où la requête a pu être traitée (et facturée) sans que la réponse arrive.
-    L'attente respecte `Retry-After`, plafonnée à `max_delay_s` ; après `max_retries`
-    relances, la dernière réponse est rendue telle quelle."""
+    """Relance seulement sur 429/502/503 reçus (rien de facturé), jamais sur erreur réseau ; attente bornée."""
     response = send()
     for attempt in range(max_retries):
         if response.status_code not in statuses:

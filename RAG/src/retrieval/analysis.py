@@ -1,11 +1,4 @@
-"""Analyse de la question par un LLM, avec validation stricte, cache et dégradation.
-
-Le LLM n'est pas indispensable : s'il est indisponible, s'il est servi par le mauvais
-fournisseur ou s'il répond hors schéma, la recherche continue avec la question brute
-et sans filtre de signification, et la trace le dit. Seules les erreurs permanentes
-(clé refusée, crédit épuisé) interrompent la recherche.
-"""
-
+"""Analyse de la question par un LLM (validée, en cache) ; s'il échoue, la recherche continue sur la question brute."""
 from __future__ import annotations
 
 import hashlib
@@ -30,6 +23,8 @@ _MAX_DISEASE_CHARS = 300
 
 @dataclass(frozen=True)
 class QueryAnalysis:
+    """Résultat de l'analyse : requête anglaise, signification, maladie, et coût de l'appel."""
+
     english_query: str
     significance: str
     disease: str | None
@@ -42,12 +37,12 @@ class QueryAnalysis:
     error: str | None = None
 
     def as_dict(self) -> dict:
+        """Sérialise l'analyse pour la trace."""
         return asdict(self)
 
 
 def validate_analysis(content: Mapping) -> tuple[str, str, str | None]:
-    """Revérifie ce que le schéma impose déjà : un point d'accès peut traiter le schéma
-    comme une simple suggestion (documentation OpenRouter)."""
+    """Revalide la sortie du LLM, un point d'accès pouvant ignorer le schéma."""
     if set(content) != _KEYS:
         raise ValueError(f"clés attendues {sorted(_KEYS)}, reçues {sorted(content)}")
     query, significance, disease = content["english_query"], content["significance"], content["disease"]
@@ -61,14 +56,7 @@ def validate_analysis(content: Mapping) -> tuple[str, str, str | None]:
 
 
 class AnalysisCache:
-    """Analyses réussies, sur disque. Clé : version et empreinte du prompt, modèle, point
-    d'accès et texte exact de la question. Un rejeu redonne exactement la même analyse.
-
-    Une entrée relue conserve le coût, la latence et le fournisseur de l'appel d'origine :
-    la mesure compare le coût unitaire d'analyse par modèle, et une reprise doit donner le
-    même total. `from_cache` distingue les rejeux. Un seul écrivain à la fois (mesure
-    séquentielle). Le fichier est une entrée non fiable : illisible, il interrompt au lieu
-    d'être réinitialisé en silence (cela refacturerait)."""
+    """Cache disque des analyses (clé : prompt, modèle, point d'accès, question) ; illisible, il interrompt."""
 
     def __init__(self, path: Path) -> None:
         self._path = path
@@ -84,15 +72,17 @@ class AnalysisCache:
 
     @staticmethod
     def key(question: str, profile: LlmProfile) -> str:
-        # Empreinte relue à chaque appel : elle suit le prompt réellement en vigueur.
+        """Calcule la clé d'une analyse, avec l'empreinte du prompt en vigueur."""
         raw = "\0".join((prompts.PROMPT_VERSION, prompts.prompt_sha256(), profile.model,
                          profile.provider_tag, question))
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
     def get(self, question: str, profile: LlmProfile) -> dict | None:
+        """Renvoie l'analyse en cache, ou None."""
         return self._data.get(self.key(question, profile))
 
     def put(self, question: str, profile: LlmProfile, value: dict) -> None:
+        """Enregistre une analyse, par écriture atomique du fichier."""
         self._data[self.key(question, profile)] = value
         self._path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self._path.with_suffix(".tmp")
@@ -101,9 +91,7 @@ class AnalysisCache:
 
 
 def _valid_entry(entry: object, profile: LlmProfile) -> bool:
-    """Une entrée de cache éditée à la main ne doit jamais atteindre la recherche, ni une
-    entrée servie par un autre fournisseur que celui du profil (elle aurait été rejetée à
-    l'appel), ni un coût ou une latence qui fausseraient les totaux de la mesure."""
+    """Valide une entrée de cache : schéma, fournisseur du profil, coût et latence plausibles."""
     if not isinstance(entry, dict):
         return False
     try:
@@ -119,9 +107,7 @@ def _valid_entry(entry: object, profile: LlmProfile) -> bool:
 def analyze(question: str, *, client, profile: LlmProfile, max_tokens: int,
             cache: AnalysisCache | None = None,
             clock: Callable[[], float] = time.perf_counter) -> QueryAnalysis:
-    """Analyse la question. Limite connue : si le LLM est indisponible ou servi par le mauvais
-    fournisseur, le coût reste 0,0 (l'exception ne porte pas l'appel) ; une réponse payée
-    mais invalide conserve en revanche son coût et son fournisseur."""
+    """Analyse la question (cache d'abord) ; en cas d'échec du LLM, renvoie une analyse dégradée sur la question brute."""
     cached = cache.get(question, profile) if cache is not None else None
     if cached is not None and _valid_entry(cached, profile):
         stored = {k: cached[k] for k in (*_KEYS, "provider_name", "cost_usd", "latency_ms")}

@@ -1,10 +1,4 @@
-"""Accès à la base vectorielle (PostgreSQL + pgvector).
-
-`VectorStore` est l'interface dont dépend l'indexation ; `PgVectorStore` en est
-l'implémentation réelle. La passe rapide des tests utilise une fausse base qui
-respecte la même interface (RAG/tests/fakes.py).
-"""
-
+"""Accès à la base vectorielle (PostgreSQL + pgvector) : interface `VectorStore` et implémentation réelle."""
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
@@ -46,10 +40,13 @@ _ROW_FIELDS = (
 
 
 def _lock_key(panel: str) -> str:
+    """Clé du verrou consultatif d'indexation d'un panel."""
     return f"rag_index:{panel}"
 
 
 class VectorStore(Protocol):
+    """Interface de la base vectorielle dont dépend l'indexation."""
+
     def try_lock(self, panel: str) -> bool: ...
     def unlock(self, panel: str) -> None: ...
     def indexed_state(self, panel: str) -> dict[str, tuple[str, str]]: ...
@@ -64,9 +61,7 @@ class VectorStore(Protocol):
 
 
 class PgVectorStore:
-    """Une connexion unique, en autocommit, gardée pendant toute l'indexation : le
-    verrou consultatif PostgreSQL appartient à la session qui l'a pris. Chaque écriture
-    est une transaction explicite, validée entière ou annulée entière."""
+    """Connexion unique pour toute l'indexation (le verrou appartient à la session), une transaction par écriture."""
 
     def __init__(self, conninfo: str) -> None:
         self._conninfo = conninfo
@@ -89,19 +84,23 @@ class PgVectorStore:
         return self._conn
 
     def try_lock(self, panel: str) -> bool:
+        """Prend le verrou du panel sans attendre ; renvoie False s'il est déjà pris."""
         row = self._db.execute("SELECT pg_try_advisory_lock(hashtext(%s))", (_lock_key(panel),)).fetchone()
         return bool(row[0])
 
     def unlock(self, panel: str) -> None:
+        """Libère le verrou du panel."""
         self._db.execute("SELECT pg_advisory_unlock(hashtext(%s))", (_lock_key(panel),))
 
     def indexed_state(self, panel: str) -> dict[str, tuple[str, str]]:
+        """Renvoie, par `doc_id` indexé, son `chunk_id` et son modèle d'embedding."""
         rows = self._db.execute(
             "SELECT doc_id, chunk_id, embedding_model FROM rag_documents WHERE panel = %s", (panel,)
         ).fetchall()
         return {doc_id: (chunk, model) for doc_id, chunk, model in rows}
 
     def delete(self, panel: str, doc_ids: Sequence[str]) -> None:
+        """Supprime des documents du panel en une transaction."""
         if not doc_ids:
             return
         with self._db.transaction():
@@ -116,10 +115,10 @@ class PgVectorStore:
         vectors: np.ndarray,
         embedding_model: str,
     ) -> None:
+        """Insère ou met à jour un lot de documents et leurs vecteurs en une transaction."""
         if vectors.shape != (len(rows), EMBEDDING_DIM):
             raise ValueError(f"{len(rows)} lignes pour des vecteurs de forme {vectors.shape}")
-        # Les vecteurs passent en numpy float32 : psycopg refuse une liste Python
-        # pour une colonne `vector` (vérifié le 02/10/2026).
+        # float32 numpy : psycopg refuse une liste Python pour une colonne `vector`.
         params = [
             {**{field: row[field] for field in _ROW_FIELDS}, "panel": panel,
              "embedding": vector.astype(np.float32), "embedding_model": embedding_model}

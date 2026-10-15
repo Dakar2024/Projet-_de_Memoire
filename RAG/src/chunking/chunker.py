@@ -1,12 +1,4 @@
-"""Contrôle de longueur des documents, sans découpage.
-
-Aucun document du Gold n'a besoin d'être découpé : le plus long fait 257 tokens pour
-une fenêtre de 512 (mesure du 30/09/2026 sur les 96 910 documents). Ce module le
-vérifie à chaque indexation plutôt que de le supposer : un gabarit Gold allongé
-produirait sinon des vecteurs de documents amputés. Le comptage passe par le
-tokenizer du modèle servi, pas par une estimation en caractères.
-"""
-
+"""Contrôle de longueur des documents (pas de découpage : le plus long fait 257 tokens sur 512)."""
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
@@ -22,6 +14,7 @@ def check_token_lengths(
     token_counts: Callable[[Sequence[str]], list[int]],
     max_tokens: int,
 ) -> None:
+    """Lève si un document dépasse `max_tokens`, compté par le tokenizer du modèle servi."""
     if len(doc_ids) != len(texts):
         raise ValueError(f"{len(doc_ids)} identifiants pour {len(texts)} textes")
     counts = token_counts(texts)

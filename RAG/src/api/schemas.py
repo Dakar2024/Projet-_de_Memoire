@@ -1,6 +1,4 @@
-"""Schémas de l'API. La question est bornée ici (1–1 000 caractères) ; tout champ
-inconnu est refusé."""
-
+"""Schémas de l'API : question de 1 à 1 000 caractères, tout champ inconnu refusé."""
 from __future__ import annotations
 
 from typing import Annotated

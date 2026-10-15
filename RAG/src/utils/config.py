@@ -1,6 +1,4 @@
-"""Configuration du RAG : `config.yaml` pour les réglages, l'environnement pour les
-secrets et les adresses de service. Aucun secret n'est écrit dans le dépôt."""
-
+"""Configuration du RAG : réglages dans `config.yaml`, secrets et adresses dans l'environnement."""
 from __future__ import annotations
 
 import json
@@ -22,8 +20,7 @@ PROJECT_ROOT = RAG_ROOT.parent
 MODELS_DIR = PROJECT_ROOT / "data" / "models"
 EXPORT_MANIFEST = "export.json"
 
-# Plafond du service d'embedding (`--max-client-batch-size`, 32 par défaut) : au-delà,
-# il répond 422 (vérifié le 02/10/2026 sur l'image cpu-1.9).
+# Plafond de lot du service d'embedding : au-delà, 422.
 MAX_CLIENT_BATCH_SIZE = 32
 
 _SERVICE_VARIABLES = (
@@ -33,14 +30,15 @@ _SERVICE_VARIABLES = (
     "RAG_PG_DB",
     "RAG_PG_USER",
     "RAG_PG_PASSWORD",
-    # Même variable que celle qui choisit le dossier servi par rag-embeddings
-    # (docker-compose.yml) : c'est elle qui relie l'empreinte au modèle réellement servi.
+    # Dossier servi par rag-embeddings : relie l'empreinte au modèle réellement servi.
     "RAG_EMBEDDING_MODEL",
 )
 
 
 @dataclass(frozen=True)
 class EmbeddingSettings:
+    """Réglages d'embedding de `config.yaml`."""
+
     fingerprint: str
     canary_path: Path
     canary_min_cosine: float
@@ -50,33 +48,36 @@ class EmbeddingSettings:
 
 @dataclass(frozen=True)
 class IndexSettings:
+    """Réglages d'indexation de `config.yaml`."""
+
     max_delete_ratio: float
 
 
 @dataclass(frozen=True)
 class RagConfig:
+    """Configuration de l'indexation."""
+
     embedding: EmbeddingSettings
     index: IndexSettings
 
 
 @dataclass(frozen=True)
 class ServiceSettings:
+    """Adresses et secrets des services, lus dans l'environnement."""
+
     embeddings_url: str
     embeddings_api_key: str
     pg_conninfo: str
     served_model_dir: Path
 
 
-# Clients LLM connus. `openrouter` sert la mesure officielle ; `groq` ne sert qu'à l'essai
-# gratuit de validation de la chaîne (`llm.trial_profiles`).
+# `openrouter` pour la mesure officielle, `groq` pour les profils d'essai gratuits.
 LLM_BACKENDS = ("openrouter", "groq")
 
 
 @dataclass(frozen=True)
 class LlmProfile:
-    """Un modèle figé sur un point d'accès précis : le tag désigne le point d'accès dans
-    la requête OpenRouter, le nom est celui que renvoie le service pour dire qui a
-    réellement servi la requête. `backend` choisit le client (OpenRouter par défaut)."""
+    """Modèle figé sur un point d'accès : tag demandé, nom renvoyé par le fournisseur, client (`backend`)."""
 
     name: str
     model: str
@@ -88,6 +89,8 @@ class LlmProfile:
 
 @dataclass(frozen=True)
 class SearchConfig:
+    """Réglages de la recherche et du LLM d'analyse."""
+
     k: int
     min_filtered: int
     max_question_chars: int
@@ -101,6 +104,8 @@ class SearchConfig:
 
 @dataclass(frozen=True)
 class GenerationConfig:
+    """Réglages du LLM de génération."""
+
     profile: LlmProfile
     max_tokens: int
     timeout_s: float
@@ -108,6 +113,8 @@ class GenerationConfig:
 
 @dataclass(frozen=True)
 class ApiConfig:
+    """Réglages de l'API."""
+
     max_concurrency: int
     request_timeout_s: float
     max_body_bytes: int
@@ -118,8 +125,7 @@ MIN_API_KEY_CHARS = 32
 
 
 def load_config(path: Path = DEFAULT_CONFIG_PATH) -> RagConfig:
-    """Lit et valide `config.yaml`. Toute anomalie est une `RagConfigurationError` :
-    une configuration fausse ne se corrige pas en relançant."""
+    """Lit et valide la configuration d'indexation ; toute anomalie lève `RagConfigurationError`."""
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
         embedding, index = raw["embedding"], raw["index"]
@@ -151,8 +157,7 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> RagConfig:
 
 
 def load_service_settings(env: Mapping[str, str] | None = None) -> ServiceSettings:
-    """Adresses et secrets des services, lus dans l'environnement du conteneur.
-    Toutes les variables manquantes sont nommées d'un coup, pour un seul aller-retour."""
+    """Lit les adresses et secrets des services, en nommant d'un coup toutes les variables manquantes."""
     env = os.environ if env is None else env
     missing = [name for name in _SERVICE_VARIABLES if not env.get(name)]
     if missing:
@@ -163,8 +168,7 @@ def load_service_settings(env: Mapping[str, str] | None = None) -> ServiceSettin
             f"RAG_EMBEDDING_MODEL invalide ({model_name!r}) : attendu un nom de dossier de "
             f"{MODELS_DIR}, sans « / », « \\ » ni « .. »"
         )
-    # make_conninfo échappe chaque valeur : un mot de passe contenant une apostrophe
-    # ou un espace ne peut pas injecter un paramètre de connexion.
+    # make_conninfo échappe chaque valeur : pas d'injection de paramètre par le mot de passe.
     conninfo = make_conninfo(
         host=env["RAG_PG_HOST"],
         port=env.get("RAG_PG_PORT") or "5432",
@@ -181,7 +185,7 @@ def load_service_settings(env: Mapping[str, str] | None = None) -> ServiceSettin
 
 
 def served_fingerprint(model_dir: Path) -> str:
-    """Empreinte écrite par l'export dans `export.json` du dossier servi."""
+    """Renvoie l'empreinte écrite dans `export.json` du dossier servi."""
     path = model_dir / EXPORT_MANIFEST
     try:
         fingerprint = str(json.loads(path.read_text(encoding="utf-8"))["fingerprint"] or "").strip()
@@ -193,8 +197,7 @@ def served_fingerprint(model_dir: Path) -> str:
 
 
 def check_served_model(config_fingerprint: str, served: str) -> None:
-    """Refuse un modèle servi différent de celui que `config.yaml` attend : sans ce
-    contrôle, des vecteurs d'un modèle porteraient l'empreinte de l'autre."""
+    """Refuse un modèle servi différent de celui qu'attend `config.yaml`."""
     if served != config_fingerprint:
         raise RagConfigurationError(
             f"le dossier servi (RAG_EMBEDDING_MODEL) porte l'empreinte « {served} », "
@@ -204,6 +207,7 @@ def check_served_model(config_fingerprint: str, served: str) -> None:
 
 
 def _profile(name: str, raw: Mapping) -> LlmProfile:
+    """Valide et construit un profil LLM."""
     fields = {key: raw.get(key) for key in ("model", "provider_tag", "provider_name")}
     if not all(isinstance(value, str) and value.strip() for value in fields.values()):
         raise RagConfigurationError(f"profil LLM « {name} » incomplet : model, provider_tag, provider_name")
@@ -219,9 +223,7 @@ def _profile(name: str, raw: Mapping) -> LlmProfile:
 
 
 def load_search_config(path: Path = DEFAULT_CONFIG_PATH, profile: str | None = None) -> SearchConfig:
-    """Réglages de la recherche (E2a). `profile` remplace le profil d'analyse par
-    défaut : la mesure compare ainsi plusieurs modèles sans toucher au fichier. Il peut
-    désigner un profil d'essai (`llm.trial_profiles`), qui reste hors de `profiles`."""
+    """Lit les réglages de recherche ; `profile` remplace le profil d'analyse (officiel ou d'essai)."""
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
         search, llm = raw["search"], raw["llm"]
@@ -237,7 +239,7 @@ def load_search_config(path: Path = DEFAULT_CONFIG_PATH, profile: str | None = N
         raise RagConfigurationError(f"{path} : sections search/llm illisibles ou incomplètes : {exc!r}") from exc
     if not profiles:
         raise RagConfigurationError(f"{path} : aucun profil LLM")
-    # Un profil officiel concourt à la règle de choix, mesurée sur OpenRouter seulement.
+    # Les profils officiels concourent à la règle de choix, mesurée sur OpenRouter seulement.
     off_router = sorted(name for name, p in profiles.items() if p.backend != "openrouter")
     if off_router:
         raise RagConfigurationError(f"{path} : profils officiels hors OpenRouter {off_router} "
@@ -264,8 +266,7 @@ def load_search_config(path: Path = DEFAULT_CONFIG_PATH, profile: str | None = N
 
 
 def load_openrouter_key(env: Mapping[str, str] | None = None) -> str:
-    """Clé OpenRouter, lue dans l'environnement. Le message d'erreur nomme la variable,
-    jamais sa valeur."""
+    """Lit la clé OpenRouter ; l'erreur nomme la variable, jamais sa valeur."""
     env = os.environ if env is None else env
     key = (env.get("OPENROUTER_API_KEY") or "").strip()
     if not key:
@@ -274,8 +275,7 @@ def load_openrouter_key(env: Mapping[str, str] | None = None) -> str:
 
 
 def load_groq_key(env: Mapping[str, str] | None = None) -> str:
-    """Clé Groq (essai gratuit seulement), lue dans l'environnement. Le message d'erreur
-    nomme la variable, jamais sa valeur."""
+    """Lit la clé Groq (essai seulement) ; l'erreur nomme la variable, jamais sa valeur."""
     env = os.environ if env is None else env
     key = (env.get("GROQ_API_KEY") or "").strip()
     if not key:
@@ -284,7 +284,7 @@ def load_groq_key(env: Mapping[str, str] | None = None) -> str:
 
 
 def load_generation_config(path: Path = DEFAULT_CONFIG_PATH) -> GenerationConfig:
-    """Profil de génération (E2b), cherché parmi les profils officiels puis d'essai."""
+    """Lit le profil de génération, cherché parmi les profils officiels puis d'essai."""
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
         llm = raw["llm"]
@@ -304,6 +304,7 @@ def load_generation_config(path: Path = DEFAULT_CONFIG_PATH) -> GenerationConfig
 
 
 def load_api_config(path: Path = DEFAULT_CONFIG_PATH) -> ApiConfig:
+    """Lit et valide la section `api` de `config.yaml`."""
     try:
         api = yaml.safe_load(path.read_text(encoding="utf-8"))["api"]
         # Vrai booléen YAML exigé : bool("false") vaudrait True et exposerait /schema sans clé.
@@ -324,7 +325,7 @@ def load_api_config(path: Path = DEFAULT_CONFIG_PATH) -> ApiConfig:
 
 
 def load_api_key(env: Mapping[str, str] | None = None) -> str:
-    """Clé de l'API (RAG_API_KEY). Le message d'erreur nomme la variable, jamais sa valeur."""
+    """Lit la clé de l'API (≥ 32 caractères) ; l'erreur nomme la variable, jamais sa valeur."""
     env = os.environ if env is None else env
     key = (env.get("RAG_API_KEY") or "").strip()
     if len(key) < MIN_API_KEY_CHARS:

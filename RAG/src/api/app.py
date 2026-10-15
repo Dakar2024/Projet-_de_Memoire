@@ -1,9 +1,4 @@
-"""API du RAG (E2b), Litestar. Écoute en local seulement (port publié sur 127.0.0.1) ;
-clé d'API ; au plus N questions simultanées (emplacements du pipeline) ; délai total
-borné ; erreurs sans détail interne ; journal sans texte.
-
-Lancement : uvicorn RAG.src.api.app:create_app --factory"""
-
+"""API Litestar du RAG : clé d'API, concurrence et délai bornés, erreurs sans détail interne, journal sans texte."""
 from __future__ import annotations
 
 import asyncio
@@ -44,12 +39,15 @@ _MESSAGES = {
 
 
 class ApiError(Exception):
+    """Erreur renvoyée au client : code public, statut HTTP et éventuel Retry-After."""
+
     def __init__(self, code: str, http_status: int, retry_after: float | None = None) -> None:
         super().__init__(code)
         self.code, self.http_status, self.retry_after = code, http_status, retry_after
 
 
 def _classify(exc: BaseException) -> ApiError:
+    """Traduit une exception en erreur publique de l'API."""
     if isinstance(exc, ApiError):
         return exc
     if isinstance(exc, NotAuthorizedException):
@@ -57,7 +55,7 @@ def _classify(exc: BaseException) -> ApiError:
     if isinstance(exc, (ValidationException, QuestionRejectedError)):
         return ApiError("invalid_question", 422)
     if isinstance(exc, ClientException) and exc.status_code == 400:
-        # Corps JSON illisible : seule source de 400 ici, traitée comme une question invalide.
+        # Corps JSON illisible.
         return ApiError("invalid_question", 422)
     if isinstance(exc, HTTPException) and exc.status_code == 415:
         return ApiError("unsupported_media_type", 415)
@@ -73,14 +71,11 @@ def _classify(exc: BaseException) -> ApiError:
         return ApiError("unavailable", 503, getattr(exc, "retry_after_s", None))
     if isinstance(exc, (LlmUnavailableError, LlmProviderMismatchError, EmbeddingServiceError, psycopg.OperationalError)):
         return ApiError("unavailable", 503)
-    if isinstance(exc, RagPermanentError):
-        return ApiError("internal", 500)
     return ApiError("internal", 500)
 
 
 def _error_response(request: Request, exc: Exception) -> Response:
-    """Seul chemin d'erreur : corps fixe, journal sans message d'exception (il pourrait
-    contenir un extrait de la requête), seulement le nom de sa classe pour les 5xx."""
+    """Rend toute erreur avec un corps fixe ; le journal ne garde que la classe de l'exception (5xx)."""
     err = _classify(exc)
     request_id = getattr(request.state, "request_id", None) or uuid.uuid4().hex
     log_event(event="error", request_id=request_id, http_status=err.http_status, error=err.code,
@@ -94,16 +89,19 @@ def _error_response(request: Request, exc: Exception) -> Response:
 
 @get("/health", sync_to_thread=False)
 def health() -> dict:
+    """Indique que le processus répond."""
     return {"status": "ok"}
 
 
 @get("/ready", guards=[require_api_key], sync_to_thread=True)
 def ready(state: State) -> dict:
+    """Indique si la base, l'embedding et le LLM sont prêts."""
     return state.pipeline.ready()
 
 
 @post("/v1/questions", guards=[require_api_key, require_json], status_code=200)
 async def ask_question(data: QuestionIn, state: State, request: Request) -> dict:
+    """Répond à une question dans un emplacement libre du pipeline, avec délai borné."""
     request_id = uuid.uuid4().hex
     request.state.request_id = request_id
     pipeline = state.pipeline
@@ -112,16 +110,14 @@ async def ask_question(data: QuestionIn, state: State, request: Request) -> dict
         raise ApiError("busy", 429)
 
     def run():
-        # L'emplacement est rendu ici, une seule fois, quand le fil se termine : après un
-        # délai dépassé, il reste occupé tant que la génération tourne encore.
+        # Emplacement rendu à la fin du fil : occupé tant que la génération tourne, même après le délai.
         try:
             return pipeline.ask(slot, data.question)
         finally:
             try:
                 pipeline.release(slot)
             except RuntimeError:
-                # Toléré seulement si l'API s'arrête (pipeline fermé pendant que ce fil
-                # tournait) ; sinon c'est un double rendu, qui ferait partager une connexion.
+                # Toléré seulement pendant l'arrêt ; sinon double rendu, donc connexion partagée.
                 if not state.closing.is_set():
                     raise
                 log_event(event="release_after_shutdown", request_id=request_id)
@@ -130,17 +126,14 @@ async def ask_question(data: QuestionIn, state: State, request: Request) -> dict
     timed_out = False
 
     def consume(f: asyncio.Future) -> None:
-        # Toujours consommer l'issue du fil : sinon asyncio signalerait plus tard « Future
-        # exception was never retrieved », trace et message compris. Après un délai dépassé,
-        # l'erreur tardive est journalisée par sa seule classe.
+        # Issue toujours consommée (sinon trace asyncio) ; après le délai, seule la classe est journalisée.
         if f.cancelled() or not timed_out:
             return
         exc = f.exception()
         if exc is not None:
             log_event(event="late_error", request_id=request_id, exception=type(exc).__name__)
         else:
-            # Réponse arrivée après le délai : jamais livrée, mais son statut et son coût sont
-            # consignés (la dépense LLM a eu lieu).
+            # Réponse tardive non livrée, mais son coût LLM est consigné.
             a = f.result().answer
             log_event(event="late_result", request_id=request_id, status=a.status, cost_usd=a.cost_usd,
                       model=a.model, provider_name=a.provider_name)
@@ -162,6 +155,7 @@ async def ask_question(data: QuestionIn, state: State, request: Request) -> dict
 
 def create_app(pipeline_factory: Callable[[], object] | None = None, *, api_config: ApiConfig | None = None,
                api_key: str | None = None) -> Litestar:
+    """Crée l'application ; le pipeline est ouvert au démarrage et fermé après les fils actifs."""
     config = api_config or load_api_config()
     key = api_key or load_api_key()
 
@@ -173,8 +167,7 @@ def create_app(pipeline_factory: Callable[[], object] | None = None, *, api_conf
 
     @asynccontextmanager
     async def lifespan(app: Litestar):
-        # Le pipeline réel vérifie modèle, canari et index à l'entrée : en cas d'échec,
-        # l'application ne démarre pas.
+        # Modèle, canari et index vérifiés à l'ouverture : un échec empêche le démarrage.
         pipeline = await asyncio.get_running_loop().run_in_executor(None, lambda: pipeline_factory().__enter__())
         app.state.pipeline = pipeline
         app.state.closing = threading.Event()
@@ -183,13 +176,9 @@ def create_app(pipeline_factory: Callable[[], object] | None = None, *, api_conf
         try:
             yield
         finally:
-            # Le drapeau précède la fermeture : un fil encore actif qui rend son emplacement
-            # après coup sait que l'erreur de `release` vient de l'arrêt.
+            # Drapeau posé avant la fermeture, pour que les fils tardifs reconnaissent l'arrêt.
             app.state.closing.set()
-            # Les fils actifs sont attendus AVANT de fermer les connexions : psycopg ferme une
-            # connexion sans prendre son verrou, alors qu'un fil peut être dans libpq. Attente
-            # bornée par le délai d'une question ; au-delà (fil bloqué), fermeture quand même,
-            # consignée, et le rendu tardif est toléré (release_after_shutdown).
+            # Fils attendus avant de fermer les connexions (psycopg ferme sans verrou), au plus un délai de question.
             waiter = threading.Thread(target=app.state.executor.shutdown,
                                       kwargs={"wait": True, "cancel_futures": True}, daemon=True)
             waiter.start()
@@ -203,7 +192,7 @@ def create_app(pipeline_factory: Callable[[], object] | None = None, *, api_conf
         route_handlers=[health, ready, ask_question],
         lifespan=[lifespan],
         state=State({"api_key": key, "api_config": config, "pipeline": None, "closing": None, "executor": None}),
-        # OpenAPI seulement si la configuration le demande (désactivé en production).
+        # OpenAPI désactivé sauf configuration contraire.
         **({} if config.openapi else {"openapi_config": None}),
         logging_config=None,
         request_max_body_size=config.max_body_bytes,

@@ -1,11 +1,4 @@
-"""Indexation d'un panel : `gold/rag/documents` → `rag_documents` (pgvector).
-
-Ordre voulu : tout ce qui peut refuser (verrou, canari, garde-fou, longueur) passe
-avant la première écriture. Ensuite seulement viennent les suppressions, puis les
-vecteurs, lot par lot. Chaque lot est validé à part : une interruption ne perd que le
-lot en cours, et la relance recalcule l'écart pour ne faire que le reste.
-"""
-
+"""Indexation d'un panel, `gold/rag/documents` → `rag_documents` : tous les refus avant la première écriture."""
 from __future__ import annotations
 
 import logging
@@ -36,6 +29,8 @@ _PROGRESS_EVERY = 50
 
 @dataclass(frozen=True)
 class IndexReport:
+    """Bilan d'une indexation."""
+
     panel: str
     deleted: int
     embedded: int
@@ -53,6 +48,7 @@ def index_documents(
     canary: Canary,
     force_deletions: bool = False,
 ) -> IndexReport:
+    """Synchronise l'index du panel sur le Gold, lot par lot validé, puis vérifie l'égalité finale."""
     fingerprint = config.embedding.fingerprint
     if not store.try_lock(panel):
         raise IndexLockedError(f"une indexation du panel {panel} est déjà en cours")
@@ -94,13 +90,12 @@ def index_documents(
 
 
 def run_index(panel: str, lake_uri: str | None = None, force_deletions: bool = False) -> IndexReport:
-    """Câblage réel, appelé par la tâche Airflow `index_rag_documents`."""
+    """Indexe un panel avec les services réels (tâche Airflow `index_rag_documents`)."""
     if panel not in PANEL_GENES:
         raise RagConfigurationError(f"panel inconnu : {panel!r}")
     config = load_config()
     services = load_service_settings()
-    # Avant tout le reste : le canari ne prouve que l'égalité avec la référence, pas
-    # l'identité du modèle ; celle-ci vient de export.json du dossier réellement servi.
+    # Identité du modèle d'abord (export.json servi) ; le canari ne prouve que l'égalité avec la référence.
     check_served_model(config.embedding.fingerprint, served_fingerprint(services.served_model_dir))
     canary = load_canary(config.embedding.canary_path)
     client = EmbeddingClient(
