@@ -120,12 +120,14 @@ from RAG.src.ingestion.indexer import run_index
 for panel in ('brca', 'sickle'): print(run_index(panel))"
 ```
 
-**Sur GPU**, pour une réindexation complète rapide : démarrer le service avec la variante GPU,
-indexer, puis revenir au CPU.
+**Sur GPU**, pour une réindexation complète rapide : remplacer le service CPU par le service
+`rag-embeddings-gpu` (profil `gpu`, même nom réseau), indexer, puis revenir au CPU.
 
 ```bash
-docker compose --env-file .env -f docker-compose.yml -f docker-compose.gpu.yml up -d rag-embeddings
+docker compose --env-file .env stop rag-embeddings
+docker compose --env-file .env --profile gpu up -d --no-deps rag-embeddings-gpu
 # … run_index …
+docker compose --env-file .env --profile gpu stop rag-embeddings-gpu
 docker compose --env-file .env up -d rag-embeddings
 ```
 

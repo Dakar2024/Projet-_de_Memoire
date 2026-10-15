@@ -1,18 +1,14 @@
 #!/bin/sh
+# Crée un bucket par couche du médaillon et le compte de service d'Airflow (idempotent).
 set -e
 
-# Une couche du médaillon = un bucket. Idempotent : relancer la stack ne casse rien.
 mc alias set local "http://minio:9000" "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"
 for bucket in raw bronze silver gold; do
   mc mb --ignore-existing "local/${bucket}"
   echo "bucket ${bucket} pret"
 done
 
-# Compte de service pour Airflow : les tâches n'ont aucune raison de disposer des
-# droits root de MinIO. La politique se limite aux quatre buckets du médaillon et
-# aux actions dont Delta Lake a besoin (lire, écrire, supprimer, lister, et
-# abandonner un envoi multipart interrompu). Une tâche compromise ne peut alors ni
-# créer ni supprimer un bucket, ni toucher à la configuration du serveur.
+# Politique limitée aux quatre buckets et aux actions dont Delta Lake a besoin.
 cat > /tmp/airflow-lake.json <<'POLICY'
 {
   "Version": "2012-10-17",
@@ -47,9 +43,7 @@ cat > /tmp/airflow-lake.json <<'POLICY'
 }
 POLICY
 
-# `|| true` sur la création : rejouer la stack retombe sur une politique déjà
-# présente, ce qui n'est pas une erreur. Les deux commandes suivantes sont
-# idempotentes par nature (`mc admin user add` met à jour le secret).
+# `|| true` : politique déjà présente lors d'un redémarrage.
 mc admin policy create local airflow-lake /tmp/airflow-lake.json || true
 mc admin user add local "$MINIO_AIRFLOW_USER" "$MINIO_AIRFLOW_PASSWORD"
 mc admin policy attach local airflow-lake --user "$MINIO_AIRFLOW_USER" || true

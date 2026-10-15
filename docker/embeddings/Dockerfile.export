@@ -1,19 +1,12 @@
-# Export ONNX reproductible des modèles d'embedding. Tourne à la demande
-# (`docker compose run --rm rag-model-export …`), jamais en service permanent.
-# Environnement séparé : optimum-onnx 0.1.0 exige transformers < 4.58, incompatible
-# avec sentence-transformers 6 (vérifié le 30/09/2026).
+# Export ONNX reproductible des modèles d'embedding, lancé à la demande (service rag-model-export).
 FROM python:3.12-slim@sha256:dddfd7e07f9d15aeeca61529320492139d21cac7f0070c00609243e51e4e0016
 
-# torch seul, depuis l'index CPU de PyTorch uniquement (jamais d'index supplémentaire :
-# pip prendrait la version la plus haute de n'importe quel paquet sur l'un ou l'autre).
-# --no-deps : ses dépendances viennent du verrou ci-dessous, vérifiées par empreinte.
-# --require-hashes : la roue elle-même est vérifiée (empreinte dans requirements-torch.txt,
-# roue x86_64 uniquement).
+# torch seul depuis l'index CPU de PyTorch (jamais d'index mélangé), ses dépendances viennent du verrou suivant.
 COPY docker/embeddings/requirements-torch.txt /tmp/requirements-torch.txt
 RUN pip install --no-cache-dir --no-deps --require-hashes \
         --index-url https://download.pytorch.org/whl/cpu -r /tmp/requirements-torch.txt
 
-# Tout le reste depuis PyPI, versions et empreintes figées (verrou sans torch ni CUDA).
+# Tout le reste depuis PyPI, versions et empreintes figées.
 COPY docker/embeddings/requirements-export.txt /tmp/requirements-export.txt
 RUN pip install --no-cache-dir --require-hashes -r /tmp/requirements-export.txt
 

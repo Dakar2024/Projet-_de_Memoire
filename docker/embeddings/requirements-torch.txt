@@ -1,7 +1,3 @@
-# torch CPU seul, vérifié par empreinte : roue CPython 3.12 Linux x86_64 de l'index
-# https://download.pytorch.org/whl/cpu. Empreinte calculée sur la roue téléchargée
-# (sha256sum) et identique à celle que publie l'index (04/10/2026). L'image d'export ne
-# se construit donc que sur x86_64 : sur une autre architecture, aucune roue ne
-# correspond et pip refuse.
+# torch CPU (index https://download.pytorch.org/whl/cpu), roue CPython 3.12 x86_64 vérifiée par empreinte.
 torch==2.14.1+cpu \
     --hash=sha256:5a6363570c753812540a05eb82380e329469cbe668643e88111414c12627711f
