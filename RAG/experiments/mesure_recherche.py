@@ -40,10 +40,12 @@ _ID_KEYS = ("rs", "hgvs_c", "hgvs_p", "genes")
 
 
 def _sha256(path: Path) -> str:
+    """Calcule le SHA-256 d'un fichier."""
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _load_questions() -> list[dict]:
+    """Charge les questions de mesure."""
     return yaml.safe_load(QUESTIONS_PATH.read_text(encoding="utf-8"))
 
 
@@ -51,9 +53,7 @@ def _load_questions() -> list[dict]:
 
 def score_question(question: dict, doc_ids: list[str], flags: list[str], identifiers: dict,
                    relevant: set[str], k: int = K, stages: list[str] | None = None) -> float:
-    """Score d'une question. Partie 2 : le premier document doit être pertinent ET venir de
-    la correspondance exacte (`stages[0] == "exact"` quand les étapes sont connues), sans
-    `identifier_not_found` : un document trouvé par similarité ne compte pas."""
+    """Note une question ; en partie 2, le premier document doit être pertinent et issu de la correspondance exacte."""
     part = question["part"]
     if part == 1 and question["family"] == "A":
         for rank, doc_id in enumerate(doc_ids[:k], start=1):
@@ -72,9 +72,7 @@ def score_question(question: dict, doc_ids: list[str], flags: list[str], identif
 
 
 def choose_model(scores: dict[str, list[float]], costs: dict[str, float], seed: int = SEED) -> tuple[str, dict]:
-    """Règle fixée avant la mesure : le meilleur score moyen désigne le meilleur modèle ;
-    un modèle dont l'intervalle à 95 % de l'écart avec le meilleur contient zéro ne s'en
-    distingue pas ; on retient le moins cher des modèles indistinguables du meilleur."""
+    """Applique la règle fixée d'avance : le moins cher des modèles indistinguables du meilleur."""
     if not scores:
         raise ValueError("choose_model : aucun modèle à comparer")
     means = {name: float(np.mean(values)) for name, values in scores.items()}
@@ -94,14 +92,13 @@ def choose_model(scores: dict[str, list[float]], costs: dict[str, float], seed: 
 
 
 def significance_accuracy(questions: list[dict], analyses: dict[str, dict]) -> float:
+    """Calcule la part de significations correctement analysées."""
     pairs = [(q["expected_significance"], analyses[q["id"]]["significance"]) for q in questions]
     return sum(expected == got for expected, got in pairs) / len(pairs)
 
 
 def exact_doc_ids(documents: pl.DataFrame, identifiers) -> set[str]:
-    """Documents de variant que la correspondance exacte doit retrouver (même sémantique que
-    PgSearchStore.exact_matches : rs OU HGVS c. OU HGVS p., restreint aux gènes cités ; si seul un
-    gène hors panneau est cité, les HGVS sont ignorés et seul le rs compte)."""
+    """Renvoie les documents que la correspondance exacte doit retrouver (même sémantique que la recherche)."""
     hgvs_searchable = not (identifiers.out_of_panel and not identifiers.genes)
     hgvs_c, hgvs_p = (identifiers.hgvs_c, identifiers.hgvs_p) if hgvs_searchable else ((), ())
     match = (pl.col("rs_dbsnp").is_in(list(identifiers.rs)) | pl.col("hgvs_c").is_in(list(hgvs_c))
@@ -136,11 +133,7 @@ def load_v0_scores(path: Path, questions: list[dict]) -> dict[str, list[float]] 
 
 
 def config_sha256(raw_config: dict) -> str:
-    """Empreinte des sections `search` et `llm` de RAG/config.yaml, sans
-    `llm.analysis_profile` : ce choix change à la mise en service, pas les conditions de mesure ;
-    ni `llm.trial_profiles` : les séries officielles ne dépendent pas des essais. Sont aussi
-    exclus `llm.generation_profile`, `llm.generation_max_tokens` et toute la section `api` :
-    la mesure de la recherche ne dépend ni de la génération de la réponse ni de l'API."""
+    """Calcule l'empreinte des conditions de mesure (sections search et llm, sans les choix de mise en service)."""
     llm = {key: value for key, value in (raw_config.get("llm") or {}).items()
            if key not in ("analysis_profile", "trial_profiles", "generation_profile",
                           "generation_max_tokens")}
@@ -149,14 +142,12 @@ def config_sha256(raw_config: dict) -> str:
 
 
 def output_dir(config) -> Path:
-    """Dossier des séries et du cache du profil d'analyse : e2a-essai pour un profil
-    d'essai, e2a pour un profil officiel."""
+    """Renvoie le dossier des séries du profil : e2a-essai pour un essai, e2a sinon."""
     return OUT_ESSAI if config.analysis_profile.name in config.trial_profiles else OUT
 
 
 def check_trial_field(run_profiles: set[str], trial_profiles: set[str]) -> None:
-    """Les séries d'essai ne portent que sur des profils d'essai configurés : une série
-    d'un profil officiel n'a rien à faire dans e2a-essai."""
+    """Refuse une série d'essai sur un profil qui n'est pas un profil d'essai."""
     stray = sorted(run_profiles - trial_profiles)
     if stray:
         raise SystemExit(f"séries de profils qui ne sont pas des profils d'essai {stray} : fichiers à retirer "
@@ -164,9 +155,7 @@ def check_trial_field(run_profiles: set[str], trial_profiles: set[str]) -> None:
 
 
 def check_analysis_failure(question_id: str, analysis: dict, profile_name: str) -> None:
-    """Un mauvais fournisseur est systématique (profil mal décrit) : inutile de payer les
-    questions suivantes. Un quota épuisé aussi : chaque question suivante attendrait pour
-    rien. Les autres indisponibilités sont transitoires et rejouables."""
+    """Arrête la mesure sur une erreur systématique (mauvais fournisseur, quota épuisé)."""
     error = analysis.get("error") or ""
     if not analysis.get("available") and error.startswith("LlmQuotaExhaustedError"):
         raise SystemExit(f"{question_id} : {error[:200]}\nmesure interrompue : quota Groq épuisé — relancer "
@@ -177,8 +166,7 @@ def check_analysis_failure(question_id: str, analysis: dict, profile_name: str) 
 
 
 def permanent_error_exit(exc: Exception) -> SystemExit:
-    """Erreur permanente (clé, crédit, réponse coupée) : message court, sans trace d'appel.
-    Les messages du client OpenRouter ne citent ni la clé ni le corps des réponses."""
+    """Sort sur une erreur permanente avec un message court, sans trace."""
     message = f"mesure interrompue, erreur permanente : {type(exc).__name__}: {exc}"
     if hasattr(exc, "cost_usd"):
         cost = exc.cost_usd
@@ -188,8 +176,7 @@ def permanent_error_exit(exc: Exception) -> SystemExit:
 
 def check_run_manifest(name: str, manifest: dict, *, questions_sha: str, prompt_version: str, prompt_sha: str,
                        k: int) -> None:
-    """Refuse une mesure incohérente avec les questions, le prompt (version et empreinte), k
-    ou son propre nom de fichier."""
+    """Refuse une série incohérente avec les questions, le prompt, k ou son nom de fichier."""
     if "approx" not in manifest and "exact" in manifest:
         raise SystemExit(f"{name} : manifeste à l'ancien format (champ exact) : supprimer ou remesurer cette série")
     for key in ("questions_sha256", "prompt_version", "k", "profile", "mode", "approx",
@@ -211,8 +198,7 @@ def check_run_manifest(name: str, manifest: dict, *, questions_sha: str, prompt_
 
 
 def check_runs_consistency(manifests: dict[str, dict]) -> None:
-    """Toutes les mesures partagent le modèle d'embedding et la configuration (sections
-    `search` et `llm`) ; un profil garde son modèle et son fournisseur."""
+    """Exige le même modèle d'embedding et la même configuration dans toutes les séries."""
     fingerprints = {m["embedding_fingerprint"] for m in manifests.values()}
     if len(fingerprints) > 1:
         raise SystemExit("modèle d'embedding différent entre les mesures : remesurer")
@@ -227,8 +213,7 @@ def check_runs_consistency(manifests: dict[str, dict]) -> None:
 
 
 def check_index_matches_truth(manifests: dict[str, dict], truth_sha: str) -> None:
-    """Les mesures doivent porter sur le corpus de la vérité terrain : même ensemble de
-    `doc_id` dans l'index (au moment de chaque mesure) que dans le Gold lu par verite-terrain."""
+    """Exige que chaque série porte sur le corpus de la vérité terrain."""
     missing = sorted(name for name, m in manifests.items() if not m.get("index_doc_ids_sha256"))
     if missing:
         raise SystemExit(f"{missing} : empreinte de l'index absente du manifeste, remesurer")
@@ -253,6 +238,7 @@ def check_complete_field(full_profiles: set[str], configured: set[str]) -> None:
 # --- Sous-commandes --------------------------------------------------------------------
 
 def cmd_verite_terrain(args) -> None:
+    """Calcule les documents pertinents de chaque question depuis le Gold."""
     from RAG.experiments.comparaison_embeddings import _all_documents, _diseases_by_doc, _relevance
     from RAG.src.retrieval.identifiers import extract_identifiers
     from RAG.src.retrieval.retriever import doc_ids_sha256
@@ -286,6 +272,7 @@ def cmd_verite_terrain(args) -> None:
 
 
 def cmd_mesurer(args) -> None:
+    """Lance la recherche sur toutes les questions pour un profil et un mode."""
     from RAG.src.retrieval.retriever import Searcher
     from RAG.src.utils.config import load_search_config
     from RAG.src.utils.errors import LlmPermanentError
@@ -332,13 +319,13 @@ def cmd_mesurer(args) -> None:
 
 
 def _median_latency(run: dict) -> float:
+    """Calcule la latence médiane d'une série."""
     values = [r["analysis"].get("latency_ms") or 0.0 for r in run["results"].values()]
     return float(np.median(values))
 
 
 def _load_field(runs_dir: Path) -> tuple[list[dict], dict[str, set[str]], dict[str, dict]]:
-    """Questions, vérité terrain (toujours celle de e2a, lue seulement) et séries de
-    `runs_dir`, après tous les contrôles de cohérence."""
+    """Charge questions, vérité terrain et séries après tous les contrôles de cohérence."""
     from RAG.src.prompts.analysis import PROMPT_SHA, PROMPT_VERSION
 
     questions = _load_questions()
@@ -364,6 +351,7 @@ def _load_field(runs_dir: Path) -> tuple[list[dict], dict[str, set[str]], dict[s
 
 
 def _scores_of(run: dict, questions: list[dict], relevant: dict[str, set[str]]) -> dict[str, float]:
+    """Note chaque question d'une série."""
     return {q["id"]: score_question(q, run["results"][q["id"]]["doc_ids"], run["results"][q["id"]]["flags"],
                                     run["results"][q["id"]]["identifiers"], relevant[q["id"]], K,
                                     stages=run["results"][q["id"]].get("stages"))
@@ -417,6 +405,7 @@ def _print_ablation(profile: str, scored: dict, loaded: dict, questions: list[di
 
 
 def cmd_evaluer(args) -> None:
+    """Calcule les scores, le critère d'acceptation et le choix du modèle."""
     from RAG.src.utils.config import load_search_config
 
     questions, relevant, loaded = _load_field(OUT / "runs")
@@ -446,9 +435,7 @@ def cmd_evaluer(args) -> None:
 
 
 def cmd_evaluer_essai(args) -> None:
-    """Mêmes contrôles et scores que `evaluer`, sur les séries d'essai, sans choix de modèle.
-    Le critère de la partie 2 est affiché ; s'il échoue, tout est affiché puis la commande
-    sort en erreur."""
+    """Évalue les séries d'essai sans choix de modèle ; sort en erreur si la partie 2 échoue."""
     from RAG.src.utils.config import load_search_config
 
     print("# Essai de validation de la chaîne — ne sert pas au choix du modèle\n")
@@ -483,6 +470,7 @@ def cmd_evaluer_essai(args) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
+    """Point d'entrée en ligne de commande."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(required=True)
     sub.add_parser("verite-terrain").set_defaults(func=cmd_verite_terrain)

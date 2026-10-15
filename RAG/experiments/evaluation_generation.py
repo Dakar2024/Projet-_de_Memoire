@@ -79,12 +79,14 @@ def _write_json_atomic(path: Path, data) -> None:
 
 
 def _sha256(path: Path) -> str:
+    """Calcule le SHA-256 d'un fichier."""
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 # --- Tirage du jeu (spec §4.1) ---------------------------------------------------------------
 
 def _pick(rng: np.random.Generator, items: list):
+    """Tire un élément au hasard."""
     return items[int(rng.integers(0, len(items)))]
 
 
@@ -97,6 +99,7 @@ def _informative_diseases(documents, diseases):
 
 
 def _significance_class(label: str | None) -> str | None:
+    """Renvoie la classe (pathogène, bénin…) d'un libellé ClinVar, ou None."""
     for name, labels in SIGNIFICANCE_CLASSES.items():
         if label in labels:
             return name
@@ -104,6 +107,7 @@ def _significance_class(label: str | None) -> str | None:
 
 
 def _draw_identifier(rng, variants, genes, used: set[str], excluded: set[str], index: int) -> dict:
+    """Tire une question de strate I (variant cité par rs ou HGVS)."""
     import polars as pl
     for _ in range(_MAX_ATTEMPTS):
         gene = _pick(rng, genes)
@@ -124,6 +128,7 @@ def _draw_identifier(rng, variants, genes, used: set[str], excluded: set[str], i
 
 
 def _draw_disease(rng, table, genes, used: set[tuple], *, with_class: bool) -> dict:
+    """Tire une question de maladie, avec ou sans classe de signification."""
     import polars as pl
     for _ in range(_MAX_ATTEMPTS):
         gene = _pick(rng, genes)
@@ -157,8 +162,7 @@ def _draw_disease(rng, table, genes, used: set[tuple], *, with_class: bool) -> d
 
 def draw_questions(documents, diseases, *, strata: dict[str, int], seed: int,
                    excluded_doc_ids: set[str]) -> list[dict]:
-    """Tirage déterministe (graine) du jeu, strate par strate, dans l'ordre I, S, M, G.
-    `documents` : Gold (colonnes de RAG.src.ingestion.loader) ; `diseases` : (doc_id, disease_name)."""
+    """Tire le jeu de façon déterministe, strate par strate (I, S, M, G)."""
     import polars as pl
     rng = np.random.default_rng(seed)
     variants = documents.filter(pl.col("doc_type") == "variant")
@@ -204,8 +208,7 @@ def render_draft(questions: list[dict], *, seed: int) -> str:
 # --- Chargement et contrôles du jeu (spec §4.2) ---------------------------------------------
 
 def load_questions(path: Path, strata: dict[str, int]) -> list[dict]:
-    """Questions actives (non écartées). Refuse un jeu non conforme : effectifs, identifiants,
-    question hors périmètre, strate I dont le texte ne cite plus le variant tiré."""
+    """Charge les questions actives et refuse un jeu non conforme."""
     from RAG.src.generation.scope import detect_out_of_scope
     from RAG.src.retrieval.identifiers import extract_identifiers
 
@@ -241,8 +244,7 @@ def load_questions(path: Path, strata: dict[str, int]) -> list[dict]:
 
 
 def relevant_doc_ids(question: dict, documents, diseases) -> list[str]:
-    """Documents pertinents : correspondance exacte (strate I, même sémantique que la recherche),
-    sinon la règle `_relevance` de E1/E2a."""
+    """Renvoie les documents pertinents : correspondance exacte en strate I, sinon la règle de E1/E2a."""
     if question["strate"] == "I":
         from RAG.experiments.mesure_recherche import exact_doc_ids
         from RAG.src.retrieval.identifiers import extract_identifiers
@@ -267,12 +269,7 @@ class BudgetExceededError(Exception):
 
 
 class Budget:
-    """Dépense réelle cumulée (`usage.cost` de chaque appel payé), persistée de façon atomique.
-    `check` refuse un appel si dépensé + réserve dépasse le plafond : la réserve couvre le coût
-    maximal d'un appel au plafond de jetons, donc le plafond n'est jamais franchi.
-
-    Un verrou exclusif (fichier `.lock` à côté) est pris pour toute la vie de l'objet : deux
-    commandes payantes simultanées liraient le même total et le plafond pourrait être dépassé."""
+    """Dépense réelle cumulée sous plafond, persistée de façon atomique et protégée par un verrou exclusif."""
 
     def __init__(self, path: Path, limit_usd: float, reserve_usd: float) -> None:
         import fcntl
@@ -293,25 +290,26 @@ class Budget:
         self._lock.close()
 
     def check(self) -> None:
+        """Refuse un appel si dépense + réserve dépasse le plafond."""
         if self.spent + self.reserve > self.limit:
             raise BudgetExceededError(f"plafond de dépense : {self.spent:.4f} $ dépensés, réserve "
                                       f"{self.reserve} $, plafond {self.limit} $")
 
     def spend(self, cost_usd: float | None) -> None:
+        """Ajoute un coût et persiste le total."""
         self.calls += 1
         self.spent += float(cost_usd or 0.0)
         _write_json_atomic(self._path, {"total_usd": self.spent, "appels": self.calls})
 
 
 class BudgetedClient:
-    """Client réel sous plafond : vérifie avant, compte après. Une coupure facturée
-    (`LlmTruncatedError.cost_usd`) est comptée. Limite : une réponse rejetée par le client après
-    facturation (fournisseur inattendu, coût absent) n'a pas de coût lisible ; la réserve la couvre."""
+    """Client réel sous plafond : vérifie avant l'appel, compte après (coupures facturées comprises)."""
 
     def __init__(self, inner, budget: Budget) -> None:
         self._inner, self._budget = inner, budget
 
     def complete_json(self, profile, **kwargs):
+        """Appelle le client si le budget le permet et compte le coût."""
         from RAG.src.utils.errors import LlmTruncatedError
         self._budget.check()
         try:
@@ -323,6 +321,7 @@ class BudgetedClient:
         return call
 
     def close(self) -> None:
+        """Ferme le client enveloppé."""
         try:
             self._inner.close()
         finally:
@@ -330,16 +329,14 @@ class BudgetedClient:
 
 
 def call_cache_key(namespace: str, profile, *, system: str, user: str, schema_name: str, max_tokens: int) -> str:
-    """Clé d'un appel : espace (passage de génération, passage du juge), modèle, point d'accès,
-    plafond, schéma, prompt système et message exacts. Un changement de prompt change la clé."""
+    """Calcule la clé d'un appel : espace, modèle, point d'accès, plafond, schéma, prompts exacts."""
     payload = json.dumps([namespace, profile.model, profile.provider_tag, max_tokens, schema_name, system, user],
                          ensure_ascii=False)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 class CachedClient:
-    """Cache disque des appels réussis : une reprise ne repaie rien. Les échecs ne sont jamais
-    mis en cache. `last_hit` dit si le dernier appel vient du cache (latence non mesurée)."""
+    """Cache disque des appels réussis : une reprise ne repaie rien."""
 
     def __init__(self, inner, path: Path, namespace: str) -> None:
         self._inner, self._path, self._namespace = inner, path, namespace
@@ -348,13 +345,13 @@ class CachedClient:
         self._last_key: str | None = None
 
     def forget_last(self) -> None:
-        """Retire le dernier appel du cache : sa sortie a été refusée après coup (jugement
-        incohérent). Sans cela, la reprise relirait indéfiniment la même sortie refusée."""
+        """Retire du cache le dernier appel, dont la sortie a été refusée après coup."""
         if self._last_key is not None and self._cache.pop(self._last_key, None) is not None:
             _write_json_atomic(self._path, self._cache)
         self._last_key = None
 
     def complete_json(self, profile, *, system, user, schema_name, schema, max_tokens):
+        """Renvoie l'appel en cache, sinon appelle le client et le met en cache."""
         from RAG.src.llm.common import LlmCall
         key = call_cache_key(self._namespace, profile, system=system, user=user, schema_name=schema_name,
                              max_tokens=max_tokens)
@@ -372,41 +369,42 @@ class CachedClient:
         return call
 
     def close(self) -> None:
+        """Ferme le client enveloppé."""
         self._inner.close()
 
 
 class RecordingClient:
-    """Garde le contenu brut du dernier appel : la réponse du modèle AVANT les contrôles de E2b,
-    même quand ils la rejettent, sans toucher au code gelé."""
+    """Garde la réponse brute du dernier appel, avant les contrôles de E2b."""
 
     def __init__(self, inner) -> None:
         self._inner = inner
         self.last_content: dict | None = None
 
     def complete_json(self, profile, **kwargs):
+        """Appelle le client et garde le contenu brut."""
         self.last_content = None
         call = self._inner.complete_json(profile, **kwargs)
         self.last_content = call.content
         return call
 
     def close(self) -> None:
+        """Ferme le client enveloppé."""
         self._inner.close()
 
 
 class _WouldCallLlm(Exception):
-    pass
+    """Levée par la sonde quand la génération appellerait le LLM."""
 
 
 class ProbeClient:
-    """Sonde de `rechercher` : lève dès que la génération appellerait le LLM. Les cas à message
-    fixe (hors périmètre par règles, identifiant introuvable, aucun document) sont ainsi décidés
-    par le code gelé de E2b lui-même, sans le recopier."""
+    """Sonde : lève dès que la génération appellerait le LLM (les messages fixes sont décidés par le code de E2b)."""
 
     def complete_json(self, *args, **kwargs):
+        """Lève `_WouldCallLlm`."""
         raise _WouldCallLlm
 
     def close(self) -> None:
-        pass
+        """Ne fait rien (aucune session)."""
 
 
 class OfflineAnalysisClient:
@@ -430,8 +428,7 @@ def select_repeats(llm_ids: list[str], n: int, seed: int) -> list[str]:
 
 
 def generation_record(question: dict, answer, raw: dict | None, *, passage: int, from_cache: bool) -> dict:
-    """Enregistrement d'une génération : statut livré ET réponse brute du modèle (statut, texte,
-    citations), pour juger le modèle et non le filtre."""
+    """Construit l'enregistrement d'une génération : statut livré et réponse brute du modèle."""
     from RAG.src.generation.answer import validate_generation
     record = {"id": question["id"], "strate": question["strate"], "passage": passage,
               "status": answer.status, "rejected": answer.rejected, "cost_usd": answer.cost_usd,
@@ -451,22 +448,22 @@ def unavailable_record(question: dict, error: Exception, *, passage: int) -> dic
 
 
 def check_same_documents(question_id: str, stored: list[str], found: list[str]) -> None:
+    """Refuse une recherche qui ne redonne pas les documents figés."""
     if stored != found:
         raise SystemExit(f"{question_id} : la recherche ne redonne pas les documents de recherches.json "
                          "(index ou analyse changés) — aucune génération lancée")
 
 
 def check_manifest(path: Path, expected: dict, found: dict) -> None:
+    """Refuse de mêler deux séries aux conditions différentes."""
     if found != expected:
         diff = sorted(k for k in set(expected) | set(found) if expected.get(k) != found.get(k))
         raise SystemExit(f"{path.name} : conditions différentes de la série en cours ({', '.join(diff)}) — "
                          "ne pas mêler deux séries ; archiver le fichier pour recommencer")
 
 
-
 def search_record(question: dict, result, *, profile, max_tokens: int) -> dict:
-    """Recherche figée d'une question : documents transmis, contexte exact rendu pour le LLM
-    (celui que verra le juge), et si la génération appellera le LLM (sonde, §5.1)."""
+    """Fige la recherche d'une question : documents, contexte exact et appel au LLM prévu ou non."""
     from RAG.src.generation.answer import generate_answer
     from RAG.src.generation.context import build_context
     try:
@@ -484,25 +481,18 @@ def search_record(question: dict, result, *, profile, max_tokens: int) -> dict:
 
 
 class TransientGenerationError(Exception):
-    """Panne d'infrastructure (réseau, 5xx, réponse illisible du service) : pas une faute du
-    modèle ; rien n'est enregistré, la question sera reposée à la prochaine reprise."""
+    """Panne d'infrastructure, non imputable au modèle : rien n'est enregistré."""
 
 
 def is_model_fault(exc: Exception) -> bool:
-    """`generate_answer` enveloppe dans `LlmUnavailableError` deux fautes du modèle : une sortie
-    hors schéma (cause `ValueError`) et une réponse coupée par le plafond (cause
-    `LlmTruncatedError`). Toute autre indisponibilité vient du transport ou du fournisseur."""
+    """Indique une faute du modèle (sortie hors schéma ou coupée) plutôt qu'une panne de transport."""
     from RAG.src.utils.errors import LlmTruncatedError
     return isinstance(exc.__cause__, (ValueError, LlmTruncatedError))
 
 
 def generate_record(question: dict, stored: dict, result, *, recorder: RecordingClient, cached: CachedClient,
                     profile, max_tokens: int, passage: int) -> dict:
-    """Une génération sur la recherche figée. Refuse (SystemExit) si les documents ont changé.
-    Une faute du modèle (hors schéma, coupure) est consignée comme génération indisponible et
-    compte contre lui ; une panne d'infrastructure lève `TransientGenerationError` (rien n'est
-    consigné : on ne pénalise pas un candidat pour une panne réseau). Budget et refus
-    permanents remontent."""
+    """Génère sur la recherche figée ; une faute du modèle compte contre lui, une panne lève."""
     from RAG.src.generation.answer import generate_answer
     from RAG.src.utils.errors import LlmUnavailableError
     if not result.trace.analysis.available:
@@ -529,6 +519,7 @@ def judge_key(profile: str, passage: int, question_id: str, repetition: int = 1)
 
 
 def parse_judge_key(key: str) -> tuple[str, int, str, int]:
+    """Décompose une clé de jugement (profil, passage, question, répétition)."""
     profile, passage, question_id, repetition = key.split("|")
     return profile, int(passage[1:]), question_id, int(repetition[1:])
 
@@ -539,6 +530,7 @@ def judgeable(record: dict) -> bool:
 
 
 def load_generations(folder: Path = None) -> dict[tuple[str, int], dict]:
+    """Charge les séries de génération par (profil, passage)."""
     folder = folder or GENERATIONS
     out = {}
     for path in sorted(folder.glob("*__p*.json")) if folder.exists() else []:
@@ -567,9 +559,7 @@ def _allocate(total: int, weights: dict[str, int]) -> dict[str, int]:
 
 
 def draw_sample(eligible: list[dict], *, size: int, seed: int, candidates: tuple[str, ...]) -> list[str]:
-    """Échantillon d'annotation (spec §7.1) : `size` réponses réparties entre candidats (reste aux
-    premiers : 14/13/13), puis proportionnellement aux strates ; ordre de présentation aléatoire.
-    `eligible` : {"key", "profile", "strate"} des réponses jugées ayant au moins une affirmation."""
+    """Tire l'échantillon d'annotation, réparti entre candidats puis strates, dans un ordre aléatoire."""
     rng = np.random.default_rng(seed)
     base, extra = divmod(size, len(candidates))
     chosen: list[str] = []
@@ -590,23 +580,20 @@ _CONTROL = {c: None for c in range(32) if c not in (9, 10)} | {127: None} | {c: 
 
 
 def _safe(text: str) -> str:
-    """Retire les caractères de contrôle (sauf tabulation et saut de ligne) avant affichage : une
-    fiche ou une réponse de modèle contenant une séquence d'échappement ANSI ne doit pas agir sur
-    le terminal de l'annotateur."""
+    """Retire les caractères de contrôle (séquences ANSI) avant affichage."""
     return text.translate(_CONTROL)
 
 
 def _readable(context: str) -> str:
+    """Rend un contexte lisible pour l'annotateur."""
     from html import unescape
     return _safe(unescape(context))
 
 
 def annotate(items: list[dict], done: dict, *, ask, show, save) -> dict:
-    """Annotation en aveugle. `items` : {"n", "question", "context", "answer", "claims"} — ni
-    candidat ni verdict du juge. Saisie : par affirmation `s` (soutenue) ou `n` (non soutenue),
-    suivie de `m` si elle est mal découpée ; puis affirmation oubliée (o/n) ; puis pertinence 0/1/2.
-    `q` arrête (tout ce qui est fini est déjà enregistré). Une saisie invalide est redemandée."""
+    """Annote en aveugle chaque réponse (verdicts, découpage, pertinence) ; `q` arrête, tout est sauvegardé."""
     def prompt(text: str, valid: set[str]) -> str:
+        """Redemande la saisie jusqu'à une réponse valide."""
         while True:
             value = ask(text).strip().lower()
             if value == "q":
@@ -646,8 +633,7 @@ def annotate(items: list[dict], done: dict, *, ask, show, save) -> dict:
 
 def retrieval_metrics(searches: dict[str, dict], relevant: dict[str, list[str]], strata: dict[str, str],
                       k: int) -> dict[str, dict]:
-    """Par strate : précision (pertinents transmis / transmis), rappel@k (pertinents transmis /
-    min(|pertinents|, k)), et pour la strate I la part des questions dont le 1er document est pertinent."""
+    """Calcule par strate précision, rappel@k et, en strate I, la part de premiers documents pertinents."""
     by_stratum: dict[str, dict[str, list[float]]] = {}
     for qid, record in searches.items():
         sent, rel = record["doc_ids"], set(relevant[qid])
@@ -755,8 +741,7 @@ def _mean_or_none(values: list[float]) -> float | None:
 
 
 def agreement_report(sample: list[str], annotations: dict, judgements: dict[str, dict], *, seed: int) -> dict:
-    """Kappas juge/humain (fidélité par affirmation, pertinence pondérée), IC par grappes,
-    signalements de découpage, stabilité du juge (répétition 2), fidélité humaine par candidat."""
+    """Calcule kappas juge/humain, IC par grappes, signalements, stabilité du juge et fidélité humaine."""
     from RAG.src.evaluation.agreement import cluster_bootstrap_ci, cohen_kappa, weighted_kappa
     from RAG.src.evaluation.decision import bootstrap_mean_ci
     yes_no, notes = (True, False), (0, 1, 2)
@@ -776,9 +761,11 @@ def agreement_report(sample: list[str], annotations: dict, judgements: dict[str,
                 sum(human["verdicts"]) / len(human["verdicts"]))
 
     def kappa_f(a, b):
+        """Kappa de fidélité."""
         return cohen_kappa(a, b, yes_no)
 
     def kappa_r(a, b):
+        """Kappa pondéré de pertinence."""
         return weighted_kappa(a, b, notes)
 
     flat_f = [p for c in faith_clusters for p in c]
@@ -808,11 +795,13 @@ def agreement_report(sample: list[str], annotations: dict, judgements: dict[str,
 # --- Commandes -------------------------------------------------------------------------------
 
 def _e2a_identifier_doc_ids() -> set[str]:
+    """Renvoie les documents déjà utilisés par la partie 2 de E2a (exclus du tirage)."""
     items = yaml.safe_load(QUESTIONS_E2A.read_text(encoding="utf-8")) or []
     return {d for q in items if q.get("part") == 2 for d in q["relevant"]["doc_ids"]}
 
 
 def cmd_tirer(args) -> None:
+    """Tire le brouillon du jeu de questions, sans écraser un fichier existant."""
     from RAG.experiments.comparaison_embeddings import _all_documents, _diseases_by_doc
     from RAG.src.evaluation.settings import load_settings
     target = Path(args.sortie) if args.sortie else QUESTIONS_PATH
@@ -826,6 +815,7 @@ def cmd_tirer(args) -> None:
 
 
 def cmd_verite_terrain(args) -> None:
+    """Calcule les documents pertinents de chaque question."""
     from RAG.experiments.comparaison_embeddings import _all_documents, _diseases_by_doc
     from RAG.src.evaluation.settings import load_settings
     from RAG.src.retrieval.retriever import doc_ids_sha256
@@ -841,10 +831,12 @@ def cmd_verite_terrain(args) -> None:
 
 
 def _manifest_file(path: Path) -> dict:
+    """Lit un fichier JSON, ou renvoie un dictionnaire vide."""
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
 
 
 def _load_searches(questions: list[dict]) -> dict:
+    """Charge les recherches figées ; refuse un jeu incomplet."""
     data = _manifest_file(SEARCHES)
     missing = sorted({q["id"] for q in questions} - set(data.get("records", {})))
     if not data or missing:
@@ -858,6 +850,7 @@ def _stop(exc: Exception) -> SystemExit:
 
 
 def cmd_rechercher(args) -> None:
+    """Fige l'analyse et la recherche de chaque question."""
     from RAG.experiments.mesure_recherche import config_sha256
     from RAG.src.evaluation.settings import load_settings, settings_sha256
     from RAG.src.retrieval.retriever import Searcher, build_llm_client
@@ -903,6 +896,7 @@ def cmd_rechercher(args) -> None:
 
 
 def cmd_lancer(args) -> None:
+    """Génère les réponses d'un candidat sur les recherches figées."""
     from RAG.src.evaluation.settings import load_settings, settings_sha256
     from RAG.src.prompts.generation import GENERATION_PROMPT_SHA
     from RAG.src.retrieval.retriever import Searcher, build_llm_client
@@ -961,6 +955,7 @@ def cmd_lancer(args) -> None:
 
 
 def _judge_manifest(settings) -> dict:
+    """Décrit les conditions du juge pour le manifeste."""
     from RAG.src.evaluation.judge import JUDGE_PROMPT_SHA, JUDGE_PROMPT_VERSION
     return {"judge_prompt_version": JUDGE_PROMPT_VERSION, "judge_prompt_sha": JUDGE_PROMPT_SHA,
             "judge_model": settings.judge.model, "judge_provider_tag": settings.judge.provider_tag,
@@ -968,6 +963,7 @@ def _judge_manifest(settings) -> dict:
 
 
 def cmd_juger(args) -> None:
+    """Juge fidélité et pertinence de chaque réponse."""
     from RAG.src.evaluation.judge import JudgeOutputError, judge_answer
     from RAG.src.evaluation.settings import load_settings
     from RAG.src.llm.openrouter import OpenRouterClient
@@ -1024,6 +1020,7 @@ def cmd_juger(args) -> None:
 
 
 def cmd_echantillonner(args) -> None:
+    """Tire l'échantillon d'annotation humaine."""
     from RAG.src.evaluation.settings import load_settings
     settings = load_settings()
     if SAMPLE.exists():
@@ -1050,6 +1047,7 @@ def cmd_echantillonner(args) -> None:
 
 
 def cmd_annoter(args) -> None:
+    """Lance l'annotation humaine en aveugle."""
     from RAG.src.evaluation.settings import load_settings
     settings = load_settings()
     keys = _manifest_file(SAMPLE).get("cles")
@@ -1071,6 +1069,7 @@ def cmd_annoter(args) -> None:
 
 
 def cmd_evaluer(args) -> None:
+    """Calcule les métriques, l'accord juge/humain et applique la règle de choix."""
     from dataclasses import asdict
 
     from RAG.src.evaluation.decision import choose
@@ -1140,6 +1139,7 @@ def cmd_evaluer(args) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
+    """Point d'entrée en ligne de commande."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
     tirer = sub.add_parser("tirer")
