@@ -1,4 +1,4 @@
-"""Juge LLM de E3a : fidélité (RAGAS, deux appels) et pertinence (note 0/1/2), prompts versionnés par JUDGE_PROMPT_SHA."""
+"""Juge LLM de E3a : fidélité (RAGAS) et pertinence (0/1/2), prompts versionnés."""
 
 from __future__ import annotations
 

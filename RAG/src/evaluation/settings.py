@@ -1,4 +1,4 @@
-"""Réglages de l'évaluation E3a (evaluation_e3a.yaml), hors config.yaml pour ne pas changer l'empreinte des séries E2a."""
+"""Réglages de l'évaluation E3a, hors config.yaml pour garder l'empreinte des séries E2a."""
 
 from __future__ import annotations
 

@@ -120,6 +120,7 @@ class GroqClient:
     def _post(self, path: str, payload: dict) -> requests.Response:
         """Envoie la requête, relancée seulement sur 502/503."""
         def send() -> requests.Response:
+            """Envoie la requête ; une erreur réseau devient transitoire."""
             try:
                 return self._session.post(f"{self._base}{path}", headers=self._headers, json=payload,
                                           timeout=self._timeout)
