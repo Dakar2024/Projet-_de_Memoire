@@ -1,3 +1,4 @@
+"""Concepts MedGen : extraction des CUI, appel NCBI et lecture du XML conceptmeta."""
 from __future__ import annotations
 
 import re
@@ -45,9 +46,7 @@ def parse_medgen_conceptmeta(conceptmeta: str) -> dict:
     ]
 
     return {
-        # Champs singuliers : première occurrence, conservés pour compatibilité. Un concept
-        # peut porter plusieurs MIM, modes d'hérédité et définitions (beta Thalassemia en a
-        # 2, 2 et 7) — les pluriels sont la vue exhaustive.
+        # Singuliers : première occurrence, gardés par compatibilité ; les pluriels sont exhaustifs.
         "mim_number": mim_numbers[0] if mim_numbers else "",
         "mim_numbers": mim_numbers,
         "mode_inheritance": modes_inheritance[0] if modes_inheritance else "",

@@ -1,7 +1,4 @@
-"""Passage bronze -> silver : dix tables Delta typées, historique SCD2 sur
-`clinvar_variant`. Voir docs/superpowers/specs/2026-09-16-sous-projet-c-bronze-silver-design.md.
-"""
-
+"""Passage bronze → silver : dix tables Delta typées, historique SCD2 sur `clinvar_variant`."""
 from __future__ import annotations
 
 import io
@@ -16,27 +13,18 @@ from ingestion.medgen import parse_medgen_conceptmeta
 from ingestion.storage import get_bytes, partition_uri, scan_parquet, storage_options
 from transformations.silver_io import silver_table_uri
 
-
-# Jamais propagées dans une table Silver (contrainte globale de ce plan) : aucun
-# bâtisseur n'en a besoin, retirées une bonne fois ici plutôt que dans chacun.
-# `strict=False` : les fixtures de test, minimales, ne les incluent pas toujours —
-# ce n'est pas une erreur de les retirer quand elles sont déjà absentes.
+# Colonnes techniques bronze, jamais propagées en Silver.
 _BRONZE_TECHNICAL_COLUMNS = ["_source_version", "_logical_date", "_ingested_at"]
 
 
 def _read_bronze_table(bronze_partition: str) -> pl.DataFrame:
-    """Relit le Parquet d'une partition bronze (fichier unique `data.parquet`),
-    sans ses colonnes techniques (`_source_version`/`_logical_date`/`_ingested_at`)."""
+    """Lit le `data.parquet` d'une partition bronze, sans ses colonnes techniques."""
     df = pl.read_parquet(io.BytesIO(get_bytes(f"{bronze_partition}/data.parquet")))
     return df.drop(_BRONZE_TECHNICAL_COLUMNS, strict=False)
 
 
 def _write_silver_snapshot(df: pl.DataFrame, table_uri: str, panel: str) -> None:
-    """Remplace entièrement les lignes du panel dans une table Silver sans historique.
-
-    `predicate` scinde l'overwrite à la seule partition `panel` courante : sans lui,
-    chaque run écraserait la table entière et effacerait l'autre panel.
-    """
+    """Remplace les lignes du seul panel courant dans une table Silver sans historique."""
     df.write_delta(
         table_uri,
         mode="overwrite",
@@ -46,22 +34,13 @@ def _write_silver_snapshot(df: pl.DataFrame, table_uri: str, panel: str) -> None
 
 
 def _load_clinvar_variants(bronze_partition: str, genes: list[str]) -> pl.DataFrame:
-    """Lit la partition ClinVar bronze en lazy, filtrée GRCh38, restreinte aux
-    `alleleid` du panel et dédoublonnée sur `alleleid` — `clinvar_variant_gene` et
-    `clinvar_variant` en dérivent toutes les deux, pour ne jamais diverger sur
-    l'ensemble des `alleleid` qu'elles couvrent.
-
-    Le filtre au panel précède le `.collect()` : matérialiser tout le ClinVar GRCh38
-    fait tuer le worker Airflow par OOM (vérifié en run réel). Il retient un
-    `alleleid` dès qu'une de ses lignes GRCh38 cite un gène du panel ; le
-    dédoublonnage (première ligne gardée, ordre préservé) donne donc les mêmes lignes
-    que s'il était appliqué au bulk entier, et `_build_clinvar_variant_gene` refiltre
-    au panel sur la ligne retenue."""
+    """Lit les variants ClinVar GRCh38 du panel, dédoublonnés par `alleleid` (source commune des tables variant)."""
     grch38 = (
         scan_parquet(f"{bronze_partition}/data.parquet")
         .drop(_BRONZE_TECHNICAL_COLUMNS, strict=False)
         .filter(pl.col("assembly") == "GRCh38")
     )
+    # Filtre au panel avant `.collect()` : tout le ClinVar GRCh38 en mémoire tue le worker (OOM).
     panel_ids = (
         grch38.select("alleleid", pl.col("genesymbol").str.split(";").alias("gene_symbol"))
         .explode("gene_symbol", empty_as_null=True)
@@ -79,13 +58,7 @@ def _load_clinvar_variants(bronze_partition: str, genes: list[str]) -> pl.DataFr
 
 
 def _build_clinvar_variant_gene(clinvar_variants: pl.DataFrame, genes: list[str]) -> pl.DataFrame:
-    """Éclate `genesymbol` (jointure `;` pour les variants multi-gènes) et filtre au panel.
-
-    C'est cette table, et non `clinvar_variant`, qui décide quels `alleleid`
-    appartiennent au panel : `clinvar_variant` la consulte plutôt que de refiltrer
-    `genesymbol` elle-même. Reçoit `clinvar_variants` déjà filtré GRCh38 et
-    dédoublonné par `_load_clinvar_variants` : pas de filtre ni de dédoublonnage ici.
-    """
+    """Éclate `genesymbol` (gènes joints par `;`) et garde le panel : cette table définit les variants du panel."""
     exploded = (
         clinvar_variants.select(["alleleid", "genesymbol"])
         .with_columns(pl.col("genesymbol").str.split(";").alias("gene_symbol"))
@@ -95,8 +68,7 @@ def _build_clinvar_variant_gene(clinvar_variants: pl.DataFrame, genes: list[str]
     return exploded.filter(pl.col("gene_symbol").is_in(genes))
 
 
-# Identifiants portés par `phenotypeids`. `MedGen:` accepte la forme `CN123`
-# (concepts sans code UMLS), comme `ingestion.medgen.MEDGEN_CUI_PATTERN`.
+# Identifiants de maladie portés par `phenotypeids` (MedGen accepte aussi la forme `CN123`).
 _DISEASE_ID_PATTERNS = {
     "medgen_cui": r"MedGen:(CN?\d+)",
     "omim_id": r"OMIM:(\d+)",
@@ -104,21 +76,12 @@ _DISEASE_ID_PATTERNS = {
     "mondo_id": r"MONDO:(MONDO:\d+)",
 }
 
-# ClinVar emploie ces libellés quand le soumetteur n'a pas nommé de maladie. Ils
-# portent leur propre CUI vide côté MedGen (C3661900, CN169374, CN517202 — 31 875
-# occurrences sur le run de 2026-09), donc filtrer sur l'absence d'identifiant ne
-# suffirait pas.
+# Libellés « sans maladie » de ClinVar ; ils ont leur propre CUI, d'où un filtre sur le nom.
 _PLACEHOLDER_DISEASE_NAMES = ["not provided", "not specified"]
 
 
 def _build_clinvar_variant_disease(clinvar_variants: pl.DataFrame) -> pl.DataFrame:
-    """Éclate `phenotypelist`/`phenotypeids` en une ligne par (variant, maladie).
-
-    Les deux colonnes sont alignées sur `|`, puis sur `;` à l'intérieur d'un groupe
-    (vérifié sur le run réel : 96 892/96 892 sur `|`, 201 097/201 098 sur `;`). Un
-    groupe désaligné garde ses identifiants et laisse le nom nul : associer un nom à
-    la mauvaise maladie serait pire que de n'en donner aucun.
-    """
+    """Éclate `phenotypelist`/`phenotypeids` en une ligne par (variant, maladie) ; nom nul si désalignés."""
     groups = (
         clinvar_variants.select(
             "alleleid",
@@ -162,9 +125,7 @@ def _build_clinvar_variant_disease(clinvar_variants: pl.DataFrame) -> pl.DataFra
     )
 
 
-# `NM_014855.3(AP5Z1):c.80_83delinsTGCTG` -> accession, version, gène, HGVS coding.
-# Le HGVS protéique, s'il existe, apparaît entre parenthèses après le HGVS coding
-# (ex. "...c.1A>G (p.Met1?)") : capturé séparément, absent la plupart du temps.
+# `NM_014855.3(AP5Z1):c.80_83delinsTGCTG (p.X)` → accession, version, HGVS c. et p. (optionnel).
 _HGVS_PATTERN = re.compile(
     r"^(?P<accession>[A-Z]+_\d+)\.(?P<version>\d+)\([^)]+\):(?P<hgvs_c>[^\s(]+)"
     r"(?:\s*\((?P<hgvs_p>p\.[^)]+)\))?"
@@ -172,6 +133,7 @@ _HGVS_PATTERN = re.compile(
 
 
 def _parse_hgvs(name: str) -> dict:
+    """Extrait accession, version et HGVS d'un nom ClinVar ; champs nuls s'il n'est pas reconnu."""
     match = _HGVS_PATTERN.match(name)
     if not match:
         return {"refseq_accession": None, "refseq_version": None, "hgvs_c": None, "hgvs_p": None}
@@ -186,16 +148,7 @@ def _parse_hgvs(name: str) -> dict:
 def _build_clinvar_variant_rows(
     clinvar_variants: pl.DataFrame, refseq_df: pl.DataFrame, variant_gene: pl.DataFrame
 ) -> pl.DataFrame:
-    """Une ligne par variant du panel, sans l'historique SCD2 (ajouté à l'écriture).
-
-    `rs_dbsnp` en entier, HGVS parsé et validé contre le catalogue RefSeq du panel.
-    Ne filtre jamais sur la signification clinique. Reçoit `clinvar_variants` déjà
-    filtré GRCh38 et dédoublonné sur `alleleid` par `_load_clinvar_variants` — le même
-    ensemble de lignes que `_build_clinvar_variant_gene`, pour que les deux tables ne
-    divergent jamais sur les `alleleid` qu'elles couvrent.
-    """
-    # `.to_list()` : `is_in` avec une Series du même dtype est ambigu et dépréciée
-    # côté Polars (avertissement, comportement inchangé) — une liste lève l'ambiguïté.
+    """Construit une ligne par variant du panel, HGVS parsé et validé contre RefSeq (SCD2 ajouté à l'écriture)."""
     panel_ids = variant_gene["alleleid"].unique().to_list()
 
     filtered = (
@@ -216,8 +169,7 @@ def _build_clinvar_variant_rows(
     )
 
     known_accessions = set(refseq_df["accession"].to_list())
-    # `is_in` propage le null d'une accession non parsée au lieu de le traiter comme
-    # "absente" : `fill_null(False)` pour qu'un HGVS non reconnu reste `False`, pas `null`.
+    # `fill_null(False)` : un HGVS non reconnu vaut `False`, pas `null`.
     hgvs_df = hgvs_df.with_columns(
         pl.col("refseq_accession")
         .is_in(known_accessions)
@@ -229,9 +181,7 @@ def _build_clinvar_variant_rows(
 
 
 def _build_ncbi_gene(bronze_partition: str) -> pl.DataFrame:
-    """Extrait les champs connus d'`esummary_json`. Un gène non résolu (esummary
-    vide) garde sa ligne, champs nuls — le verdict qualité appartient à
-    `quality_check_silver`, pas à cette étape."""
+    """Extrait les champs connus d'`esummary_json` ; un gène non résolu garde sa ligne, champs nuls."""
     df = _read_bronze_table(bronze_partition)
     rows = [
         {
@@ -243,9 +193,7 @@ def _build_ncbi_gene(bronze_partition: str) -> pl.DataFrame:
         }
         for row in df.to_dicts()
     ]
-    # Schéma explicite : sans lui, une colonne entièrement nulle dans ce lot (ex.
-    # `summary` absent pour tous les gènes du panel) s'infère en type `Null`, que
-    # Delta refuse à l'écriture — pas seulement un artefact des fixtures de test.
+    # Schéma explicite : une colonne entièrement nulle serait typée `Null`, refusé par Delta.
     return pl.DataFrame(
         rows,
         schema={
@@ -256,9 +204,7 @@ def _build_ncbi_gene(bronze_partition: str) -> pl.DataFrame:
 
 
 def _build_refseq_transcript(bronze_partition: str) -> pl.DataFrame:
-    """Éclate `transcripts_json` (une ligne par transcrit), sépare `accessionversion`
-    (`"NM_007294.4"`) en `accession` + `version`. Un gène sans transcrit ne produit
-    aucune ligne (liste vide), sans que ce soit une erreur."""
+    """Éclate `transcripts_json` en une ligne par transcrit (`NM_007294.4` → accession + version)."""
     df = _read_bronze_table(bronze_partition)
     rows = []
     for row in df.to_dicts():
@@ -273,11 +219,7 @@ def _build_refseq_transcript(bronze_partition: str) -> pl.DataFrame:
 
 
 def _build_medgen_tables(bronze_partition: str) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
-    """Parse `esummary_json.conceptmeta` (réutilise `parse_medgen_conceptmeta`, déjà
-    testée) pour produire `medgen_concept`, `medgen_mim` et `medgen_inheritance`.
-
-    Un CUI non résolu (`esummary_json` vide) garde sa ligne dans `medgen_concept`,
-    XML nul, et n'explose aucune ligne dans les deux autres tables."""
+    """Construit `medgen_concept`, `medgen_mim` et `medgen_inheritance` depuis le `conceptmeta`."""
     df = _read_bronze_table(bronze_partition)
 
     concept_rows, mim_rows, inheritance_rows = [], [], []
@@ -300,10 +242,7 @@ def _build_medgen_tables(bronze_partition: str) -> tuple[pl.DataFrame, pl.DataFr
             {"cui": row["cui"], "mode_inheritance": mode} for mode in parsed["modes_inheritance"]
         )
 
-    # Schéma explicite sur `concept_rows` pour la même raison que `_build_ncbi_gene` :
-    # un CUI non résolu (cas fréquent, voir docstring) laisse `mim_number`/
-    # `mode_inheritance`/`clinical_summary`/`conceptmeta_xml` nuls sur toute la ligne,
-    # et un lot d'un seul CUI non résolu inférerait ces colonnes en type `Null`.
+    # Schéma explicite : un CUI non résolu laisse des colonnes entièrement nulles.
     return (
         pl.DataFrame(
             concept_rows,
@@ -318,15 +257,13 @@ def _build_medgen_tables(bronze_partition: str) -> tuple[pl.DataFrame, pl.DataFr
 
 
 def _build_hpo_gene_phenotype(bronze_partition: str, genes: list[str]) -> pl.DataFrame:
-    """Filtre le fichier plat HPO partagé aux gènes du panel. Un panel sans aucune
-    ligne (HBS1L, MYB) produit une table vide, légitime — voir `quality_check_silver`."""
+    """Garde les lignes HPO des gènes du panel (vide pour HBS1L et MYB, c'est attendu)."""
     df = _read_bronze_table(bronze_partition)
     return df.filter(pl.col("gene_symbol").is_in(genes))
 
 
 def _build_hpo_term(bronze_partition: str) -> pl.DataFrame:
-    """Extrait `definition`/`synonyms`/`xrefs` de `details_json`. Un terme retiré de
-    HPO (details vide) garde sa ligne, champs nuls."""
+    """Extrait definition/synonyms/xrefs de `details_json` ; un terme retiré garde sa ligne."""
     df = _read_bronze_table(bronze_partition)
     rows = []
     for row in df.to_dicts():
@@ -339,9 +276,7 @@ def _build_hpo_term(bronze_partition: str) -> pl.DataFrame:
             "synonyms": details.get("synonyms") or [],
             "xrefs": details.get("xrefs") or [],
         })
-    # Schéma explicite : `synonyms`/`xrefs` sont des listes vides quand `details_json`
-    # n'en fournit pas — sur un lot où c'est le cas pour toutes les lignes, Polars
-    # infère `List(Null)`, que Delta refuse à l'écriture, comme pour `_build_ncbi_gene`.
+    # Schéma explicite : des listes toutes vides seraient typées `List(Null)`, refusé par Delta.
     return pl.DataFrame(
         rows,
         schema={
@@ -351,33 +286,20 @@ def _build_hpo_term(bronze_partition: str) -> pl.DataFrame:
     )
 
 
-# Seuls ces champs, mesurés comme ayant varié d'un mois à l'autre (spec du 15/09,
-# §2.2), déclenchent une nouvelle version SCD2. Un autre champ qui change (ex. `name`
-# retraité par NCBI) n'est pas une reclassification et ne doit pas en créer une.
+# Seuls ces champs (reclassification) créent une nouvelle version SCD2.
 _CLINVAR_WATCHED_FIELDS = ["clinicalsignificance", "reviewstatus", "lastevaluated"]
 
 
 def _write_clinvar_variant(
     rows: pl.DataFrame, table_uri: str, panel: str, logical_date: str
 ) -> None:
-    """Écrit `clinvar_variant` avec historique SCD2 : MERGE si la table existe déjà
-    (pour n'importe quel panel), création directe sinon.
-
-    `rows` doit déjà porter une colonne `panel` — comme pour `_write_silver_snapshot`,
-    c'est à l'appelant de l'ajouter (cohérent avec l'orchestration de `bronze_to_silver`,
-    qui l'ajoute de la même façon aux huit autres tables avant d'écrire).
-
-    Le rejeu du même mois est idempotent : un variant dont les champs surveillés
-    n'ont pas changé ne génère aucune ligne — voir `_CLINVAR_WATCHED_FIELDS`.
-    """
+    """Écrit `clinvar_variant` en SCD2 (création, sinon MERGE) ; `rows` porte déjà `panel`, rejeu idempotent."""
     if not DeltaTable.is_deltatable(table_uri, storage_options=storage_options(table_uri)):
         initial = rows.with_columns([
             pl.lit(logical_date).alias("valid_from"),
             pl.lit(None, dtype=pl.Utf8).alias("valid_to"),
             pl.lit(True).alias("is_current"),
         ])
-        # Toutes les colonnes ClinVar d'origine sont conservées (Silver type, il ne
-        # retire jamais une colonne) — seules les trois colonnes SCD2 sont ajoutées.
         initial.write_delta(
             table_uri,
             mode="overwrite",
@@ -391,21 +313,14 @@ def _write_clinvar_variant(
     )
     current_ids = current["alleleid"].to_list()
 
-    # `_matched_current` : littéral posé avant le left join, il survit à celui-ci
-    # (`null` côté non-matché). Sert d'indicateur de correspondance fiable — contrairement
-    # à `cur_<champ>.is_null()`, qui confondrait à tort un champ surveillé réellement
-    # `null` côté `current` avec une absence de correspondance, cassant l'idempotence
-    # du rejeu.
+    # `_matched_current` distingue « sans correspondance » d'un champ surveillé réellement nul.
     current_watched = (
         current.select(["alleleid"] + _CLINVAR_WATCHED_FIELDS)
         .rename({f: f"cur_{f}" for f in _CLINVAR_WATCHED_FIELDS})
         .with_columns(pl.lit(True).alias("_matched_current"))
     )
     joined = rows.join(current_watched, on="alleleid", how="left")
-    # `ne_missing` (et non `!=`) : `!=` renvoie `null` dès qu'un des deux côtés est
-    # `null`, ce qui masque une vraie transition `null -> valeur` (ignorée par
-    # `any_horizontal`). `ne_missing` traite `null != null` comme `False` et
-    # `null != valeur` comme `True`, la sémantique voulue ici.
+    # `ne_missing` et non `!=` : détecte aussi la transition `null → valeur`.
     changed = pl.any_horizontal(
         [pl.col(f).ne_missing(pl.col(f"cur_{f}")) for f in _CLINVAR_WATCHED_FIELDS]
     ) | pl.col("_matched_current").is_null()
@@ -445,8 +360,6 @@ def _write_clinvar_variant(
             "target_alias": "target",
         },
     )
-    # Toutes les colonnes réelles, hors les deux colonnes techniques du merge lui-même
-    # (`merge_key`, `action`) qui n'ont pas leur place dans la table finale.
     write_cols = [c for c in staged.columns if c not in ("merge_key", "action")]
     (
         merger.when_matched_update(
@@ -462,13 +375,7 @@ def _write_clinvar_variant(
 
 
 def bronze_to_silver(logical_date: str, panel: str, lake_uri: str | None = None) -> None:
-    """Construit les dix tables Silver du panel à partir du Bronze.
-
-    Un seul appel par run de panel : lit les bronze partagés (`clinvar`, `hpo`,
-    filtrés au panel) et les bronze du panel (`ncbi_gene`, `refseq`, `medgen`,
-    `hpo_terms`). `clinvar_variant` seule porte un historique SCD2 ; les neuf autres
-    tables sont remplacées entièrement pour ce panel à chaque run.
-    """
+    """Construit les dix tables Silver du panel ; seule `clinvar_variant` garde un historique (SCD2)."""
     genes = PANEL_GENES[panel]
 
     clinvar_partition = partition_uri(BRONZE, "clinvar", logical_date, lake_uri=lake_uri)
@@ -477,8 +384,6 @@ def bronze_to_silver(logical_date: str, panel: str, lake_uri: str | None = None)
     refseq_partition = partition_uri(BRONZE, "refseq", logical_date, panel=panel, lake_uri=lake_uri)
     medgen_partition = partition_uri(BRONZE, "medgen", logical_date, panel=panel, lake_uri=lake_uri)
     hpo_terms_partition = partition_uri(BRONZE, "hpo_terms", logical_date, panel=panel, lake_uri=lake_uri)
-
-    silver_uri = lambda table: silver_table_uri(table, lake_uri)
 
     clinvar_variants = _load_clinvar_variants(clinvar_partition, genes)
     variant_gene = _build_clinvar_variant_gene(clinvar_variants, genes)
@@ -495,7 +400,7 @@ def bronze_to_silver(logical_date: str, panel: str, lake_uri: str | None = None)
 
     _write_clinvar_variant(
         variant_rows.with_columns(pl.lit(panel).alias("panel")),
-        silver_uri("clinvar_variant"), panel, logical_date,
+        silver_table_uri("clinvar_variant", lake_uri), panel, logical_date,
     )
     for table, df in [
         ("clinvar_variant_disease", variant_disease),
@@ -508,4 +413,6 @@ def bronze_to_silver(logical_date: str, panel: str, lake_uri: str | None = None)
         ("hpo_gene_phenotype", hpo_gene_phenotype),
         ("hpo_term", hpo_term),
     ]:
-        _write_silver_snapshot(df.with_columns(pl.lit(panel).alias("panel")), silver_uri(table), panel)
+        _write_silver_snapshot(
+            df.with_columns(pl.lit(panel).alias("panel")), silver_table_uri(table, lake_uri), panel
+        )

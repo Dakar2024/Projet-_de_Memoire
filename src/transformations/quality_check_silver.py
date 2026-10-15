@@ -1,6 +1,4 @@
-"""Contrôle qualité de la couche Silver : bloque la propagation vers le Gold en cas
-d'échec, comme `assert_partitions_complete` le fait pour raw/bronze."""
-
+"""Contrôle qualité de la couche Silver : bloque la propagation vers le Gold en cas d'échec."""
 from __future__ import annotations
 
 import polars as pl
@@ -9,17 +7,10 @@ from deltalake.exceptions import TableNotFoundError
 from ingestion.config import PANEL_GENES, SILVER_TABLES
 from transformations.silver_io import read_silver
 
-# hpo_gene_phenotype peut être vide (HBS1L, MYB : loci GWAS absents des annotations
-# HPO) — déjà légitime en raw/bronze, ne pas le traiter comme un échec ici.
+# Vide légitimement pour HBS1L et MYB (loci GWAS absents de HPO).
 _TABLES_ALLOWED_EMPTY = {"hpo_gene_phenotype"}
 
-# Proportion maximale de variants encore `is_current` mais absents de l'instantané
-# du mois. ClinVar en retire quelques-uns d'un mois sur l'autre : c'est normal. Une
-# proportion massive ne l'est pas — elle signale une archive tronquée ou une
-# conversion partielle. Le seuil vaut parce que le `MERGE` SCD2 ne clôture jamais un
-# variant absent du nouveau lot : sans ce contrôle, `clinvar_variant` conserverait
-# des variants périmés pendant que les tables instantanées rétréciraient, et tous
-# les autres contrôles resteraient verts.
+# Au-delà de 5 % de variants courants absents du mois, l'archive est probablement tronquée.
 MAX_RETIRED_VARIANT_RATIO = 0.05
 
 
@@ -28,12 +19,7 @@ class SilverQualityError(RuntimeError):
 
 
 def quality_check_silver(logical_date: str, panel: str, lake_uri: str | None = None) -> None:
-    """Vérifie la complétude et la cohérence des neuf tables Silver pour ce panel.
-
-    Toutes les erreurs sont rassemblées avant de lever, comme
-    `assert_partitions_complete` le fait déjà pour raw/bronze — un message qui n'en
-    citerait qu'une obligerait à relancer pour découvrir la suivante.
-    """
+    """Vérifie complétude et cohérence des tables Silver du panel, en levant toutes les erreurs à la fois."""
     errors: list[str] = []
 
     for table in SILVER_TABLES:
@@ -62,10 +48,7 @@ def quality_check_silver(logical_date: str, panel: str, lake_uri: str | None = N
             f"{duplicated['alleleid'].to_list()}"
         )
 
-    # Intégrité référentielle C4 : tout alleleid présent dans clinvar_variant_gene
-    # (la table qui décide l'appartenance au panel) doit avoir une ligne
-    # correspondante dans clinvar_variant (courante ou historique), sans quoi une
-    # jointure en aval produirait une référence pendante.
+    # Intégrité référentielle : chaque variant du panel existe dans clinvar_variant.
     known_alleleids = set(
         read_silver("clinvar_variant", panel, lake_uri=lake_uri)["alleleid"].to_list()
     )
@@ -86,9 +69,7 @@ def quality_check_silver(logical_date: str, panel: str, lake_uri: str | None = N
             f"clinvar_variant : {sorted(dangling_disease)}"
         )
 
-    # Plausibilité d'un mois sur l'autre : les variants encore courants que
-    # l'instantané du mois ne mentionne plus. `variant` ne contient que les lignes
-    # courantes du panel, `variant_gene` est réécrit intégralement à chaque run.
+    # Plausibilité d'un mois à l'autre : variants courants absents de l'instantané du mois.
     courants = set(variant["alleleid"].to_list())
     if courants:
         retires = courants - set(variant_gene["alleleid"].to_list())

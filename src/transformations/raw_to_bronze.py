@@ -1,10 +1,4 @@
-"""Passage raw -> bronze : conversion en Parquet, colonnes techniques, rien d'autre.
-
-Deux convertisseurs génériques (`_convert_flat_source` pour les sources TSV,
-`_convert_jsonl_source` pour les sources JSONL) dispatchés par une table déclarative
-par source. Voir docs/superpowers/specs/2026-09-16-sous-projet-b-raw-bronze-design.md.
-"""
-
+"""Passage raw → bronze : conversion en Parquet et ajout des colonnes techniques, rien d'autre."""
 from __future__ import annotations
 
 import gzip
@@ -30,23 +24,12 @@ from ingestion.storage import (
 
 
 def _normalize_column_name(name: str) -> str:
-    """Minuscule, tout non-alphanumérique devient `_`, runs fusionnés, bords retirés.
-
-    Mécanique et sans exception : `#AlleleID` -> `alleleid` (pas de coupure aux
-    frontières minuscule->MAJUSCULE, qui serait incohérente avec un sigle comme
-    `dbSNP` dans `RS# (dbSNP)` -> `rs_dbsnp`, laissé tel quel). Le découpage en mots
-    est une décision Silver, pas Bronze.
-    """
+    """Normalise un nom de colonne : minuscules, non-alphanumériques en `_` (`#AlleleID` → `alleleid`)."""
     return re.sub(r"[^0-9a-zA-Z]+", "_", name).strip("_").lower()
 
 
 def _download_to_local(raw_partition: str, object_name: str, work_dir: Path) -> Path:
-    """Copie un objet raw vers un fichier local, en flux, sans le charger en mémoire.
-
-    Le nom de fichier local reprend `object_name` (donc son extension `.gz` le cas
-    échéant) : Polars détecte la compression gzip d'un CSV local sur l'extension,
-    déjà le comportement dont dépend `ingestion.clinvar.filter_clinvar`.
-    """
+    """Copie un objet raw en local, en flux ; le nom garde l'extension dont Polars déduit le gzip."""
     local_path = work_dir / object_name
     with open_stream(f"{raw_partition}/{object_name}") as src, open(local_path, "wb") as dst:
         while chunk := src.read(1024 * 1024):
@@ -60,17 +43,13 @@ def _convert_flat_source(
     technical_columns: dict[str, str],
     work_dir: Path,
 ) -> Path:
-    """Convertit une source flat (TSV) en Parquet, en lazy, sans jamais tout charger.
-
-    Colonnes renommées (mécaniquement), lignes entièrement vides retirées, colonnes
-    techniques ajoutées après ce filtre (elles ne sont jamais vides, ce qui
-    fausserait la détection d'une ligne vide si elles étaient ajoutées avant).
-    """
+    """Convertit une source TSV en Parquet, en flux : noms normalisés, lignes vides retirées."""
     local_input = _download_to_local(raw_partition, object_name, work_dir)
     lf = pl.scan_csv(local_input, separator="\t", infer_schema_length=0)
     original_names = lf.collect_schema().names()
     lf = lf.rename({name: _normalize_column_name(name) for name in original_names})
     lf = lf.filter(~pl.all_horizontal(pl.all().is_null()))
+    # Colonnes techniques ajoutées après le filtre : jamais vides, elles masqueraient les lignes vides.
     lf = lf.with_columns(
         [pl.lit(value).alias(key) for key, value in technical_columns.items()]
     )
@@ -87,13 +66,7 @@ def _convert_jsonl_source(
     technical_columns: dict[str, str],
     work_dir: Path,
 ) -> Path:
-    """Convertit une source JSONL en Parquet : champs scalaires en colonnes, champs
-    imbriqués sérialisés en chaîne JSON (`<champ>_json`), jamais aplatis.
-
-    Volume par gène/CUI du panel (quelques dizaines d'enregistrements au plus) :
-    traitement en mémoire, pas de mode lazy nécessaire, contrairement aux sources
-    flat.
-    """
+    """Convertit une source JSONL en Parquet : scalaires en colonnes, imbriqués en chaîne `<champ>_json`."""
     raw = gzip.decompress(get_bytes(f"{raw_partition}/{object_name}")).decode("utf-8")
     rows: list[dict] = []
     for line in raw.splitlines():
@@ -129,9 +102,7 @@ class _JsonlSource:
     nested_fields: tuple[str, ...]
 
 
-# Une source flat : uniquement son nom de fichier raw, converti tel quel colonne
-# par colonne. Une source JSONL : en plus, quels champs sont scalaires (colonnes
-# directes) et lesquels sont imbriqués (sérialisés en `<champ>_json`).
+# Table déclarative des sources : fichier raw et, pour le JSONL, champs scalaires et imbriqués.
 _FLAT_SOURCES: dict[str, _FlatSource] = {
     "clinvar": _FlatSource("variant_summary.txt.gz"),
     "hpo": _FlatSource("genes_to_phenotype.txt"),
@@ -157,30 +128,7 @@ def raw_to_bronze(
     panel: str | None = None,
     lake_uri: str | None = None,
 ) -> list[str]:
-    """Convertit les partitions raw des sources données en Parquet dans la couche bronze.
-
-    Contrat d'entrée : partitions `raw/<source>/dt=<date>[/panel=<panel>]` complètes
-    (marqueur `_SUCCESS` présent, vérifié par `check_raw` en amont — pas revérifié ici).
-
-    Contrat de sortie : partitions `bronze/<source>/dt=<date>[/panel=<panel>]` en
-    Parquet (`data.parquet`), écrites selon le protocole `begin_partition` → données →
-    manifest → `_SUCCESS`. Renvoie leurs URI.
-
-    Règle : ce passage change le format et rien d'autre. Colonnes lues en chaînes,
-    noms de colonnes normalisés (sources flat), colonnes techniques
-    `_source_version`/`_logical_date`/`_ingested_at` propagées depuis le manifest
-    raw. Aucun filtre, aucun typage métier, aucun dédoublonnage ; seule une ligne
-    entièrement vide peut être retirée. Les payloads imbriqués des sources JSONL
-    restent des chaînes JSON, jamais aplatis. Le bulk ClinVar se lit en mode lazy et
-    s'écrit en flux, jamais chargé entièrement en mémoire.
-
-    Une source inconnue de la table déclarative lève immédiatement, avant tout accès
-    à sa partition raw (elle peut ne pas exister) : le message reste `ValueError`,
-    jamais un `TypeError` accidentel sur un manifest absent. Une source en échec
-    n'annule pas les sources précédentes du même appel, déjà finalisées (§4 de la
-    spec) : le message n'est levé qu'après que begin_partition/finalize_partition de
-    la source précédente ont eu lieu.
-    """
+    """Convertit les partitions raw complètes des sources en partitions bronze Parquet et renvoie leurs URI."""
     partitions: list[str] = []
     for source in sources:
         if source in _FLAT_SOURCES:

@@ -1,3 +1,4 @@
+"""Métadonnées NCBI Gene d'un gène."""
 from __future__ import annotations
 
 from ingestion.http_client import NcbiClient

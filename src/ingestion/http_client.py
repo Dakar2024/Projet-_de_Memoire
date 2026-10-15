@@ -1,3 +1,4 @@
+"""Client HTTP NCBI E-utilities : relances, limitation de débit et masquage de la clé API."""
 from __future__ import annotations
 
 import time
@@ -9,30 +10,17 @@ from urllib3.util.retry import Retry
 
 from ingestion.config import EUTILS_BASE_URL, TOOL_NAME
 
-# Une collecte complète fait ~1 200 requêtes sur plusieurs minutes : un 429 ou un 5xx
-# ponctuel côté NCBI ferait perdre tout le travail déjà accompli, rien n'étant écrit
-# avant la toute fin du run.
+# Erreurs transitoires relancées : un 429/5xx isolé ne doit pas perdre une collecte de ~1 200 appels.
 RETRY_STATUSES = (429, 500, 502, 503, 504)
 MAX_RETRIES = 3
 
 
 class NcbiRequestError(RuntimeError):
-    """Échec d'un appel E-utilities, message expurgé de la clé API.
-
-    NCBI attend la clé en paramètre d'URL. Or le message d'une `HTTPError`
-    reproduit l'URL complète, et Airflow journalise l'exception d'une tâche en
-    échec : sans masquage, la clé finit en clair dans des logs conservés et
-    consultables depuis l'interface web.
-    """
+    """Échec d'un appel E-utilities, dont le message (journalisé par Airflow) ne contient pas la clé API."""
 
 
 def build_retrying_session() -> requests.Session:
-    """Session `requests` avec retry/backoff sur les erreurs transitoires (429/5xx).
-
-    Partagée par tous les clients HTTP du projet (NCBI E-utilities, API HPO) : une collecte
-    complète fait des centaines d'appels sur plusieurs minutes, un 429/5xx ponctuel ne doit
-    pas faire perdre le travail déjà accompli.
-    """
+    """Crée une session `requests` qui relance les erreurs transitoires (429/5xx) avec backoff."""
     session = requests.Session()
     retry = Retry(
         total=MAX_RETRIES,
@@ -60,6 +48,7 @@ class RateLimiter:
         self._last_call = None
 
     def wait(self) -> None:
+        """Attend le temps restant depuis le dernier appel."""
         if self._last_call is not None:
             elapsed = self._now() - self._last_call
             remaining = self._min_interval - elapsed
@@ -84,8 +73,7 @@ class NcbiClient:
         self._session = session or build_retrying_session()
 
     def _params(self, extra: dict) -> dict:
-        # NCBI demande `tool` et `email` pour identifier l'appelant : sans eux, un usage
-        # jugé excessif est bloqué au lieu de donner lieu à une prise de contact.
+        # `tool` et `email` exigés par NCBI pour identifier l'appelant.
         params = {"tool": TOOL_NAME, "email": self._email, "retmode": "json", **extra}
         if self._api_key:
             params["api_key"] = self._api_key
@@ -98,11 +86,7 @@ class NcbiClient:
         return message.replace(self._api_key, "***")
 
     def _get(self, endpoint: str, params: dict) -> requests.Response:
-        """Appel E-utilities rate-limité, dont toute erreur est relevée sans la clé.
-
-        Le masquage porte sur le message, pas sur la requête : la clé doit bien
-        partir chez NCBI, elle ne doit simplement jamais être journalisée.
-        """
+        """Appelle E-utilities en respectant le débit ; toute erreur est relevée sans la clé."""
         self._rate_limiter.wait()
         try:
             resp = self._session.get(
@@ -114,9 +98,11 @@ class NcbiClient:
         return resp
 
     def esearch(self, db: str, term: str) -> list[str]:
+        """Renvoie les UID correspondant à `term` dans la base `db`."""
         resp = self._get("esearch.fcgi", {"db": db, "term": term})
         return resp.json()["esearchresult"]["idlist"]
 
     def esummary(self, db: str, uid: str) -> dict:
+        """Renvoie le résumé d'un UID de la base `db`."""
         resp = self._get("esummary.fcgi", {"db": db, "id": uid})
         return resp.json()["result"][uid]
