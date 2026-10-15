@@ -1,12 +1,13 @@
-# RAG génomique — E1 : indexation, E2a : recherche, E2b : génération et API
+# RAG génomique — E1 : indexation, E2a : recherche, E2b : génération et API, E3a : évaluation
 
 E1 copie les documents de `gold/rag/documents` dans une base vectorielle (PostgreSQL +
 pgvector), avec leurs vecteurs, de façon incrémentale, reprenable et vérifiée (§1 à §7).
 E2a cherche dans cette base à partir d'une question en français (§8). E2b génère une réponse
 vérifiée contre les fiches retrouvées et l'expose par une API locale Litestar, derrière une
-passerelle et un proxy sortant filtrant (§9). Reste :
+passerelle et un proxy sortant filtrant (§9). E3a mesure la fidélité et la pertinence des
+réponses et choisit le modèle de génération par une règle fixée d'avance (§10). Reste :
 
-- **E3** (à venir) : évaluation RAGAS, choix du modèle de génération et audit.
+- **E3b, E3c** (à venir) : évaluation du pipeline de données, audit général.
 
 Documents de référence :
 
@@ -740,3 +741,84 @@ rejets : `reference/recette_e2b.md`.
   client se déconnecte avant la réponse (seul le délai dépassé l'est).
 - Le cache des analyses et les enregistrements de recette (`data/experiments/`, non versionnés)
   contiennent des questions en clair.
+
+## 10. Évaluation de la génération (E3a)
+
+Spec : `docs/superpowers/specs/2026-10-14-sous-projet-e3a-evaluation-generation-design.md` ;
+rapport de conception et d'implémentation : `reference/rapport_e3a.md`.
+
+### 10.1 Ce qui est mesuré
+
+Les trois candidats officiels (`llm.profiles`) répondent aux **mêmes 70 questions, sur les mêmes
+documents** (recherche faite une fois, puis refaite et comparée avant chaque génération). On juge la
+**réponse brute du modèle**, avant les contrôles de E2b :
+
+| Mesure | Comment |
+|---|---|
+| Fidélité | définition RAGAS : découpage en affirmations, puis verdict soutenue / non soutenue de chacune contre les documents transmis (juge LLM) |
+| Pertinence | note 0/1/2 du juge sur une grille (pas d'embeddings : PubMedBERT est anglais seulement) |
+| Taux de rejet | réponses rejetées par les contrôles + générations indisponibles |
+| Abstention à tort | `not_in_sources` / `out_of_scope` du modèle alors qu'un document pertinent est transmis |
+| Recherche | précision, rappel@k par strate, contre la vérité terrain par règles (sans LLM) |
+
+Juge : `google/gemini-3.8-flash` (`google-vertex/global`, zéro rétention, sorties structurées),
+famille distincte des candidats, **sans température envoyée** (recommandation de Google pour
+Gemini 3). Il est validé contre une **annotation humaine en aveugle** de 40 réponses : kappa de
+Cohen ≥ 0,6 pour la fidélité, kappa pondéré ≥ 0,6 pour la pertinence. Sans cela, ses scores sont
+indicatifs et `evaluer` n'applique pas la règle.
+
+Règle (fixée d'avance, `RAG/experiments/evaluation_e3a.yaml`) : élimination si fidélité < 0,90,
+rejet > 25 % ou abstention à tort > 10 % ; puis le plus fidèle, égalité si l'IC bootstrap apparié
+contient 0 ou si l'écart est sous le bruit mesuré entre passages ; départage : pertinence, coût,
+latence.
+
+### 10.2 Commandes, dans l'ordre
+
+À lancer **après** la mesure officielle de E2a (qui fixe `llm.analysis_profile`) et **après** la fin
+de la recette E2b. Les commandes payantes sont plafonnées à 25 $ au total (`depenses.json`) et ne
+peuvent pas tourner en même temps.
+
+```bash
+mkdir -p data/experiments/e3a
+# 1. Vérité terrain, sur l'hôte (variables MinIO comme au §8.5)
+venv/bin/python -m RAG.experiments.evaluation_generation verite-terrain
+# 2. Recherches figées, puis les trois candidats (passage 1 = 70 questions ; 2 et 3 = 20 reprises)
+R="docker compose --env-file .env --profile outils run --rm rag-search -m RAG.experiments.evaluation_generation"
+$R rechercher
+for p in gpt-oss-120b mistral-medium claude-opus-5.5; do for n in 1 2 3; do $R lancer --profil $p --passage $n; done; done
+# 3. Jugement, échantillon aveugle, annotation humaine, rejugement de l'échantillon (stabilité)
+$R juger
+PYTHONPATH=src:. venv/bin/python -m RAG.experiments.evaluation_generation echantillonner
+PYTHONPATH=src:. venv/bin/python -m RAG.experiments.evaluation_generation annoter   # ne pas ouvrir echantillon.json avant la fin
+$R juger --rejuger-echantillon
+# 4. Conclusion
+PYTHONPATH=src:. venv/bin/python -m RAG.experiments.evaluation_generation evaluer
+```
+
+Toutes les commandes reprennent là où elles se sont arrêtées (caches et écritures atomiques).
+`tirer` a servi une seule fois à produire `questions_evaluation_e3a.yaml` et refuse d'écraser un
+fichier existant.
+
+### 10.3 Garde-fous
+
+- `lancer` refuse de générer si la recherche ne redonne pas exactement les documents de
+  `recherches.json`, ou si l'index a changé ; il n'appelle jamais le LLM d'analyse (cache seul).
+- Chaque série porte un manifeste (questions, index, prompts de génération et du juge, profils,
+  réglages) ; `evaluer` refuse de conclure si deux séries divergent, s'il manque une génération, un
+  jugement ou une annotation.
+- Une sortie du juge incohérente (verdicts en nombre faux, note hors grille) n'est **jamais** un
+  score : elle quitte le cache et sera redemandée.
+- Données envoyées au juge : question, réponse et fiches ClinVar publiques, échappées et balisées
+  comme pour la génération ; l'écran d'annotation retire les caractères de contrôle.
+
+### 10.4 Limites
+
+- Juge LLM : validé par un kappa sur 40 réponses (≈ 13 par candidat), pas sur tout le jeu.
+- L'aveugle de l'annotation est procédural (`echantillon.json` contient la correspondance).
+- La fidélité dépend du découpage en affirmations par le juge ; les découpages fautifs signalés par
+  l'annotateur sont comptés, pas corrigés.
+- Un appel rejeté par le client après facturation (fournisseur inattendu, coût absent) n'a pas de
+  coût lisible : la réserve par appel (0,25 $) le couvre.
+- 70 questions écrites à partir d'un tirage : les noms de maladie tirés au hasard sont parfois
+  inattendus (variants listés pour de nombreuses affections) ; c'est le prix d'un tirage sans choix
+  humain.
