@@ -1,6 +1,4 @@
-"""Prompt de génération de la réponse (E2b). Versionné comme du code : toute
-modification change GENERATION_PROMPT_SHA, donc les clés de cache de la recette."""
-
+"""Prompt de génération de la réponse, versionné ; son empreinte entre dans les clés de cache de la recette."""
 from __future__ import annotations
 
 import hashlib
@@ -63,14 +61,13 @@ items, then write "et N autres (voir la fiche ClinVar)"."""
 
 
 def _sha(system: str, schema: dict) -> str:
+    """Calcule l'empreinte du prompt système, du schéma et du gabarit de message."""
     raw = system + "\0" + json.dumps(schema, sort_keys=True) + "\0" + user_message("{q}<&>", "{c}", [])
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def user_message(question: str, context: str, flags: list[str]) -> str:
-    """Message utilisateur. La question est échappée (« & » et « < ») pour ne pas fermer sa balise
-    ni en ouvrir une autre ; `context` doit déjà être échappé par
-    RAG/src/generation/context.py."""
+    """Rend le message utilisateur ; la question est échappée, `context` doit l'être déjà."""
     question = escape_data(question)
     notes = ", ".join(flags) if flags else "none"
     return (f"<question>\n{question}\n</question>\n<search_flags>{notes}</search_flags>\n"

@@ -1,7 +1,4 @@
-"""Textes fixes de la réponse (E2b), écrits par nous et non par le LLM : messages hors
-périmètre, absence de document, réponse non vérifiable, avertissement, et traduction
-des significations ClinVar. Une traduction médicale n'est jamais improvisée."""
-
+"""Textes fixes de la réponse, jamais écrits par le LLM : messages, avertissement et traduction des significations."""
 from __future__ import annotations
 
 import re
@@ -23,8 +20,7 @@ _SPLIT = re.compile(r"(/|; |, )")
 
 
 def translate_significance(label: str | None) -> str | None:
-    """Traduit terme à terme un libellé ClinVar, y compris composite (« Pathogenic/Likely
-    pathogenic », « Pathogenic; other ») ; un terme inconnu est gardé tel quel."""
+    """Traduit terme à terme un libellé ClinVar, même composite ; un terme inconnu est gardé tel quel."""
     if label is None:
         return None
     parts = _SPLIT.split(label)
@@ -40,8 +36,7 @@ def translate_significance(label: str | None) -> str | None:
 
 
 def significance_terms_fr() -> tuple[str, ...]:
-    """Termes français de signification, du plus long au plus court (pour la recherche
-    dans une réponse : « probablement pathogène » avant « pathogène »)."""
+    """Renvoie les termes français de signification, du plus long au plus court."""
     main = [SIGNIFICANCE_FR[k] for k in ("Pathogenic", "Likely pathogenic", "Benign", "Likely benign",
                                          "Uncertain significance",
                                          "Conflicting classifications of pathogenicity")]
@@ -49,6 +44,7 @@ def significance_terms_fr() -> tuple[str, ...]:
 
 
 def disclaimer(archive: str | None) -> str:
+    """Rend l'avertissement affiché sous chaque réponse."""
     label = f"archive {archive}" if archive else "archive inconnue"
     return (f"Aide à la consultation de ClinVar ({label}) ; ne remplace pas l'interprétation "
             "clinique d'un biologiste.")
@@ -76,16 +72,14 @@ UNVERIFIABLE = ("La réponse générée n'a pas pu être vérifiée contre les f
 
 
 def identifiers_not_found(identifiers: list[str]) -> str:
+    """Rend le message des identifiants sans fiche."""
     listed = ", ".join(identifiers)
     return (f"Aucune fiche ClinVar du panel ne correspond à : {listed}. Vérifiez l'identifiant "
             "(les noms historiques comme « 5382insC » ou « Glu6Val » ne sont pas reconnus).")
 
 
 def history_sentence(variant: str | None, variation_id: str | None, previous_fr: str, until: str) -> str:
-    """Phrase d'historique écrite par le code, jamais par le LLM, pour une source citée.
-    Le variant est désigné par son nom HGVS et son Variation ID ClinVar, tous deux issus de
-    la fiche ; l'AlleleID interne (doc_id) n'est jamais affiché, un lecteur le prendrait pour
-    un Variation ID et tomberait sur un autre variant. Sans l'un ni l'autre : aucune parenthèse."""
+    """Rend la phrase d'historique d'une source (nom HGVS et Variation ID, jamais l'AlleleID interne)."""
     designation = ", ".join(part for part in (variant, f"Variation ID {variation_id}" if variation_id else None)
                             if part)
     where = f" ({designation})" if designation else ""

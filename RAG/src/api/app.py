@@ -95,7 +95,7 @@ def health() -> dict:
 
 @get("/ready", guards=[require_api_key], sync_to_thread=True)
 def ready(state: State) -> dict:
-    """Indique si la base, l'embedding et le LLM sont prêts."""
+    """Indique si la base et le service d'embedding répondent."""
     return state.pipeline.ready()
 
 

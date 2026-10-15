@@ -1,8 +1,4 @@
-"""Prompt d'analyse de la question (E2a). Versionné comme du code : toute
-modification change `PROMPT_VERSION`. L'empreinte `PROMPT_SHA` (prompt système,
-schéma, gabarit du message) entre aussi dans la clé du cache et dans le manifeste de
-la mesure : un changement oublié dans `PROMPT_VERSION` ne passe donc pas inaperçu."""
-
+"""Prompt d'analyse de la question, versionné ; son empreinte `PROMPT_SHA` entre dans les clés de cache."""
 from __future__ import annotations
 
 import hashlib
@@ -44,11 +40,12 @@ pathogenic, disease "Fanconi anemia".
 
 
 def user_message(question: str) -> str:
+    """Rend le message utilisateur d'analyse."""
     return f"<question>\n{question}\n</question>"
 
 
 def prompt_sha256() -> str:
-    """Empreinte du prompt tel qu'il est envoyé, calculée sur les valeurs courantes."""
+    """Calcule l'empreinte du prompt tel qu'il est envoyé."""
     raw = SYSTEM_PROMPT + json.dumps(ANALYSIS_SCHEMA, sort_keys=True) + user_message("{q}")
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 

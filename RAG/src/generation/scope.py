@@ -1,30 +1,17 @@
-"""Hors périmètre détecté par règles, avant tout appel au LLM (E2b).
-
-Constat de la recette : le prompt seul ne suffit pas (« Combien de variants pathogènes
-compte BRCA2 ? » a reçu « Le gène BRCA2 compte 1 variant pathogène »). Ces règles
-déterministes tranchent d'abord ; la règle du prompt reste un second filet.
-
-Règles écrites avec la série de développement (`questions_recette_e2b.yaml`) et des
-phrases inventées, jamais avec la série de contrôle, réservée à la mesure. Elles vont dans
-le sens prudent : une question détectée à tort reçoit un message fixe, jamais une réponse
-fausse. Les faux positifs sont vérifiés sur les 89 questions de `questions_recherche.yaml`.
-"""
-
+"""Détection du hors-périmètre par règles, avant le LLM (le prompt seul ne suffisait pas) ; sens prudent."""
 from __future__ import annotations
 
 import re
 import unicodedata
 
-# Contexte personnel (texte normalisé : sans accents). Les verbes ambigus « peut-il » et « indiqué »
-# ne valent conseil clinique qu'avec lui : « Ce variant peut-il causer une anémie ? » est factuelle.
+# Contexte personnel : « peut-il » et « indiqué » ne valent conseil clinique qu'avec lui.
 _PERSONAL = (
     r"(?=.*(?:\b(?:je|moi|mon|ma|mes|nous|notre|nos|vous|votre|vos|soeur|mere|fille|fils|frere|"
     r"pere|tante|oncle|cousines?|femme|mari|enfants?|famille|patiente?s?|porteu(?:r|se)s?)\b"
     r"|\b[jm]'|\bme\b))"
 )
 
-# Ordre d'examen : du plus spécifique au plus général. « Classe selon les critères ACMG »
-# reste « acmg » même si la phrase contient aussi « nombre de ».
+# Examinées du plus spécifique au plus général.
 _RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("acmg", (
         r"\bacmg\b",
@@ -33,8 +20,7 @@ _RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
         r"\bcriteres?\s+de\s+classification\b",
         r"\bamerican\s+college\s+of\s+medical\s+genetics\b",
         r"\bgrilles?\s+de\s+classification\b",
-        # « Classe(r) le variant X selon les critères… » ; « classé selon ClinVar », « selon les
-        # laboratoires » ou « selon les soumissionnaires » n'en sont pas (donnée ClinVar).
+        # « Classer … selon », sauf « selon ClinVar / les laboratoires / les soumissionnaires ».
         r"\bclasse[rz]?\b(?:\s+\S+){0,8}?\s+selon\b"
         r"(?!\s+(?:clinvar|les\s+(?:laboratoires|soumissionnaires)\b))",
     )),
@@ -45,7 +31,7 @@ _RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
         r"\bproportion\s+de\s+la\s+population\b",
         r"\bgnomad\b",
         r"\balleles?\b.*\bpopulations?\b",
-        # « maladie rare » désigne une catégorie de maladies, « au courant » est une locution.
+        # Sauf « maladie rare » et la locution « au courant ».
         r"(?<!maladie )(?<!maladies )\brares?\b",
         r"(?<!\bau )\bcourante?s?\b",
         r"\brepandue?s?\b",
@@ -73,21 +59,19 @@ _RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
         r"\bpuis[- ]je\b",
         r"^" + _PERSONAL + r".*\bpeu(?:t|vent)[- ](?:il|elle|ils|elles)\b",
         r"\bconsulter\b",
-        # « indiquée(s) », « indiqués » ; « indiqué » masculin seulement après « est/sont » (sinon
-        # « Qu'indique ClinVar » serait pris, les accents étant retirés).
-        # Seulement avec un contexte personnel (« indiqué comme pathogène par ClinVar » est une donnée).
+        # « indiqué(e)(s) » avec contexte personnel seulement (« Qu'indique ClinVar » est une donnée).
         r"^" + _PERSONAL + r".*\b(?:indiquees?|indiques)\b",
         r"^" + _PERSONAL + r".*\b(?:est|sont|serai(?:t|ent))(?:[- ](?:t[- ])?(?:il|elle|ils|elles))?\s+indique\b",
         r"\b[ms]'inquieter\b",
         r"\bavoir\s+des\s+enfants\b",
         r"\brisques?\b.*\bpour\s+(?:moi|elle|lui)\b",
         r"\bretirer\b.*\bovaires?\b",
-        # « ablation de l'exon / du gène / du domaine / de la région » est un événement génétique.
+        # Sauf « ablation de l'exon / du gène / du domaine / de la région » (événement génétique).
         r"\bablations?\b(?!(?:\s+(?:de\s+l'|du|de\s+la|des))?\s*(?:exon|gene|domaine|region))",
     )),
     ("counting", (
         r"\bcombien\b",
-        # « nombre de soumissionnaires » est une donnée de la fiche, pas un comptage.
+        # Sauf « nombre de soumissionnaires », donnée de la fiche.
         r"\bnombre\s+(?:de|d')(?!\s*soumissionnaires?\b)",
         r"\blistes?\s+(?:complete|exhaustive)s?\b",
         r"\btous\s+les\s+variants?\b",
@@ -104,13 +88,7 @@ _RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
         r"\ble\s+plus\s+grand\s+nombre\b",
         r"\bquel(?:le)?s?\s+genes?\b.*\ble\s+plus\b",
     )),
-    # Correctif post-recette n° 5 (2026-10-14) : « other » n'avait aucune règle et le LLM
-    # répondait `not_in_sources` au lieu de `out_of_scope` (recette E2b, P4-10 de la série de
-    # développement). Deux listes FERMÉES, examinées en dernier : une demande de création
-    # (poème, chanson, blague…) et des sujets de culture générale sans lien avec la génomique.
-    # Une liste fermée plutôt qu'une règle « aucun mot du domaine » : le vocabulaire médical est
-    # ouvert (« macrocéphalie », « retard de croissance »…) et une telle règle bloquerait des
-    # questions légitimes. Limite : un hors-sujet absent des listes reste au LLM (second filet).
+    # Listes fermées (création, culture générale) : le vocabulaire médical est ouvert, le reste va au LLM.
     ("other", (
         r"\b(?:ecri[st]|ecrire|redige[sz]?|rediger|compose[sz]?|composer|invente[sz]?|inventer"
         r"|raconte[sz]?|raconter)\b.*\b(?:poemes?|chansons?|blagues?|histoires?|contes?|recits?"
@@ -129,15 +107,14 @@ _APOSTROPHES = str.maketrans({"’": "'", "‘": "'", "`": "'", "´": "'"})
 
 
 def normalize(question: str) -> str:
-    """Minuscules, Unicode NFKC, accents retirés (une question tapée sans accent est
-    reconnue de même), apostrophes typographiques ramenées à « ' », espaces réduits."""
+    """Normalise une question : minuscules, NFKC, sans accents, apostrophes droites, espaces réduits."""
     text = unicodedata.normalize("NFKC", question).translate(_APOSTROPHES).lower()
     text = "".join(c for c in unicodedata.normalize("NFD", text) if unicodedata.category(c) != "Mn")
     return re.sub(r"\s+", " ", text).strip()
 
 
 def detect_out_of_scope(question: str) -> str | None:
-    """Raison hors périmètre (counting, acmg, frequency, clinical_advice, other) ou `None`."""
+    """Renvoie la raison hors périmètre (counting, acmg, frequency, clinical_advice, other), ou None."""
     text = normalize(question)
     for reason, patterns in _COMPILED:
         if any(p.search(text) for p in patterns):
