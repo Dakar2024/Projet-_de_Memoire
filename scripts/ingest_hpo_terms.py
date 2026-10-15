@@ -1,5 +1,4 @@
 """Ingestion des détails de termes HPO par panel dans la couche raw."""
-
 from __future__ import annotations
 
 import argparse
@@ -28,11 +27,7 @@ GENES_TO_PHENOTYPE_OBJECT = "genes_to_phenotype.txt"
 def ingest_hpo_terms(
     logical_date: str, panel: str, genes: list[str], lake_uri: str | None = None
 ) -> str:
-    """Dépose les détails des termes HPO du panel dans la couche raw.
-
-    Les IDs viennent du fichier plat déposé par le DAG d'acquisition ; leur
-    enrichissement dépend des gènes du panel, d'où le partitionnement `panel=`.
-    """
+    """Dépose dans la couche raw les détails des termes HPO des gènes du panel."""
     hpo_partition = partition_uri(RAW, "hpo", logical_date, lake_uri=lake_uri)
     flat = get_bytes(f"{hpo_partition}/{GENES_TO_PHENOTYPE_OBJECT}")
 
@@ -45,10 +40,7 @@ def ingest_hpo_terms(
         flat_path.unlink(missing_ok=True)
 
     details = fetch_hpo_term_details([row["hpo_id"] for row in rows])
-    # Une ligne déposée par ligne du panel, même quand l'API ne reconnaît plus le
-    # terme (retiré ou fusionné) : ses détails restent vides plutôt que la ligne ne
-    # disparaisse. Construire les enregistrements depuis la réponse de l'API perdrait
-    # silencieusement ces termes, comme pour un CUI MedGen non résolu.
+    # Une ligne par terme du panel, même retiré par HPO (détails vides).
     records = [
         {**row, "details": details.get(row["hpo_id"], {})} for row in rows
     ]

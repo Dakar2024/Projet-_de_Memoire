@@ -1,3 +1,4 @@
+"""Collecte historique : un JSON par gène dans `data/raw/` (hors pipeline médaillon)."""
 from __future__ import annotations
 
 import argparse
@@ -34,11 +35,7 @@ from ingestion.orchestrate import (
 def run_collection(
     genes: list[str] = ALL_GENES, refresh: bool = False
 ) -> tuple[list[Path], list[str]]:
-    """Collecte les 4 sources et écrit un JSON par gène.
-
-    Retourne les fichiers écrits et les gènes incomplets, pour que l'appelant décide
-    quoi faire d'une collecte partielle.
-    """
+    """Collecte les 4 sources, écrit un JSON par gène et renvoie les fichiers écrits et les gènes incomplets."""
     load_dotenv()
     if not os.environ.get("NCBI_EMAIL"):
         raise SystemExit(
@@ -109,8 +106,7 @@ if __name__ == "__main__":
     print(f"{len(written_files)} fichiers écrits dans {DATA_RAW_DIR}/")
 
     if incomplete_genes:
-        # Les fichiers sont déjà écrits : on sort en erreur pour qu'un appelant
-        # automatisé distingue une collecte partielle d'une collecte complète.
+        # Code 1 : distingue une collecte partielle d'une collecte complète.
         print(
             f"ATTENTION : variants ou métadonnées NCBI Gene manquants pour "
             f"{', '.join(incomplete_genes)} (symbole invalide ou collecte en échec).",

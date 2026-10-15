@@ -27,6 +27,7 @@ OBJECT_NAME = "gene_summaries.jsonl.gz"
 
 
 def build_client() -> NcbiClient:
+    """Crée le client NCBI depuis l'environnement ; `NCBI_EMAIL` est obligatoire."""
     load_dotenv()
     if not os.environ.get("NCBI_EMAIL"):
         raise ConfigurationError(
@@ -44,11 +45,7 @@ def ingest_ncbi_gene(
     client: NcbiClient,
     lake_uri: str | None = None,
 ) -> str:
-    """Dépose les esummary NCBI Gene du panel dans la couche raw, un enregistrement par gène.
-
-    Un gène que NCBI Gene ne résout pas conserve une entrée à `esummary` vide : le
-    verdict qualité appartient à la tâche `check_raw`, pas à l'ingestion.
-    """
+    """Dépose un esummary NCBI Gene par gène du panel (vide si non résolu) dans la couche raw."""
     records = [
         {"gene_symbol": gene, "esummary": fetch_gene_info(client, gene)}
         for gene in genes

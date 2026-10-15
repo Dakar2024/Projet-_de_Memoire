@@ -1,12 +1,4 @@
-"""Date de travail des DAGs, quel que soit le mode de déclenchement.
-
-Dans Airflow 3, seuls les runs planifiés ont une date logique. Un run déclenché par un
-Asset, ou lancé à la main sans `--logical-date`, a `logical_date = None` : la clé `ds`
-est alors absente du contexte. La date doit donc être résolue explicitement.
-
-Ce module n'importe pas Airflow : sa logique se teste dans la passe rapide.
-"""
-
+"""Date de travail des DAGs, résolue explicitement (Airflow 3 n'en donne qu'aux runs planifiés)."""
 from __future__ import annotations
 
 from typing import Any
@@ -18,12 +10,7 @@ SOURCES_DATE_KEY = "sources_date"
 
 
 def require_logical_date(ds: str | None) -> str:
-    """Date de travail du DAG d'acquisition, ramenée au premier jour du mois.
-
-    Le run planifié tombe le 10 (le temps que l'archive ClinVar du mois paraisse), un
-    rejeu manuel peut porter n'importe quel jour : tous deux doivent écrire la même
-    partition `dt=AAAA-MM-01`, d'autant que `archive_version_for` ne dépend que du mois.
-    """
+    """Valide la date du DAG d'acquisition et la ramène au premier du mois (partition `dt=AAAA-MM-01`)."""
     if not ds:
         raise ConfigurationError(
             "date logique absente : un run manuel du DAG d'acquisition doit être "
@@ -37,6 +24,7 @@ def require_logical_date(ds: str | None) -> str:
 
 
 def _first_of_month(date: str) -> str:
+    """Ramène une date `AAAA-MM-JJ` au premier du mois."""
     return f"{date[:7]}-01"
 
 
@@ -46,13 +34,7 @@ def record_sources_date(outlet_events: Any, asset: Any, sources_date: str) -> No
 
 
 def resolve_sources_date(triggering_events: Any, asset: Any, conf: dict | None) -> str:
-    """Date des sources partagées sur laquelle travaille un run de panel.
-
-    Priorité à l'événement d'Asset le plus récent qui porte une date : plusieurs
-    événements s'accumulent si plusieurs acquisitions ont eu lieu depuis le dernier run
-    de panel. À défaut (déclenchement manuel), `sources_date` de la configuration du
-    run, au format AAAA-MM-JJ, ramenée au premier du mois comme la date d'acquisition.
-    """
+    """Renvoie la date des sources d'un run de panel : événement d'Asset le plus récent, sinon `--conf`."""
     events = triggering_events[asset] if triggering_events is not None else []
     dated = [
         (event.timestamp, event.extra[SOURCES_DATE_KEY])

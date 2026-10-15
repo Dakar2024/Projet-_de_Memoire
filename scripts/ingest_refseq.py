@@ -30,11 +30,7 @@ def ingest_refseq(
     client: NcbiClient,
     lake_uri: str | None = None,
 ) -> str:
-    """Dépose le catalogue des transcrits RefSeq du panel dans la couche raw.
-
-    Un gène sans transcrit garde une entrée à liste vide : l'absence est une
-    information, et le verdict qualité appartient à `check_raw`.
-    """
+    """Dépose les transcrits RefSeq de chaque gène du panel (liste vide si aucun) dans la couche raw."""
     records = [
         {"gene_symbol": gene, "transcripts": fetch_transcripts(client, gene)}
         for gene in genes

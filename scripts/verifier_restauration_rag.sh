@@ -1,21 +1,6 @@
 #!/usr/bin/env bash
-# Vérifie qu'une sauvegarde de la base vectorielle du RAG se restaure réellement.
-#
-# Pourquoi : un dump relu par `pg_restore --list` est un fichier valide, pas une base qui
-# repart. Ce script rejoue la procédure de restauration de production dans un conteneur
-# JETABLE, puis compare le résultat à la base en service :
-#   1. même image pgvector que `rag-postgres` (lue sur le conteneur en service), sans réseau ;
-#   2. schéma et comptes créés par RAG/sql/001_schema.sql, comme le fait rag-postgres-init ;
-#   3. `pg_restore --clean --if-exists` du dump ;
-#   4. comparaison : documents, modèle d'embedding, empreinte des identifiants et des vecteurs,
-#      index, droits des comptes, et une recherche par similarité exacte.
-# La base en service n'est que lue. Le conteneur jetable est supprimé à la fin, même en erreur.
-#
-# Usage, depuis la racine du dépôt, stack démarrée :
-#   ./scripts/verifier_restauration_rag.sh                       # dernière sauvegarde
-#   ./scripts/verifier_restauration_rag.sh /chemin/vers/rag.dump
-# À lancer sur une sauvegarde récente : une réindexation (le 10 de chaque mois) entre la
-# sauvegarde et la vérification ferait diverger les comparaisons, à juste titre.
+# Restaure un dump de la base vectorielle dans un conteneur jetable sans réseau et le compare à la base en service.
+# Usage (racine du dépôt, stack démarrée) : ./scripts/verifier_restauration_rag.sh [/chemin/vers/rag.dump]
 set -euo pipefail
 
 DESTINATION="${DESTINATION_SAUVEGARDE:-$HOME/sauvegardes-genomique}"
@@ -37,7 +22,6 @@ if [ ! -f RAG/sql/001_schema.sql ]; then
 fi
 
 IMAGE="$(docker inspect "${EN_SERVICE}" --format '{{.Config.Image}}')"
-# Mots de passe jetables : ils ne protègent qu'un conteneur sans réseau, supprimé à la fin.
 aleatoire() { head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
 
 nettoyer() { docker rm -f "${JETABLE}" > /dev/null 2>&1 || true; }
@@ -50,8 +34,7 @@ docker run -d --name "${JETABLE}" --network none --memory 1g \
   --security-opt no-new-privileges:true \
   -e POSTGRES_USER=rag_owner -e POSTGRES_DB=rag -e POSTGRES_PASSWORD="$(aleatoire)" \
   -v "${PWD}/RAG/sql:/sql:ro" "${IMAGE}" > /dev/null
-# TCP et non socket : pendant l'initialisation, l'image lance un serveur temporaire qui
-# n'écoute que sur le socket (même raison que le healthcheck de rag-postgres).
+# TCP et non socket : le serveur temporaire d'initialisation n'écoute que sur le socket.
 for _ in $(seq 1 60); do
   docker exec "${JETABLE}" pg_isready -h 127.0.0.1 -U rag_owner -d rag > /dev/null 2>&1 && break
   sleep 1

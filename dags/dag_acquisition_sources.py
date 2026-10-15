@@ -1,3 +1,4 @@
+"""DAG mensuel d'acquisition des sources partagées (ClinVar, HPO) : raw puis bronze."""
 from __future__ import annotations
 
 import datetime as dt
@@ -29,9 +30,7 @@ DEFAULT_ARGS = {
 with DAG(
     dag_id="dag_acquisition_sources",
     description="Sources communes à tous les panels : dépôt raw puis conversion bronze",
-    # Le 10 à 06:00 UTC, pas le 1er : l'archive mensuelle ClinVar paraît entre le 2 et
-    # le 6 du mois (Last-Modified observés : 06-04, 07-02, 08-06, 09-03). Un run le 1er
-    # la trouverait absente. La date de travail est ramenée au 1er du mois.
+    # Le 10 à 6 h UTC : l'archive ClinVar du mois paraît entre le 2 et le 6.
     schedule="0 6 10 * *",
     start_date=dt.datetime(2026, 1, 1),
     catchup=False,
@@ -41,16 +40,13 @@ with DAG(
 
     @task(task_id="resolve_logical_date")
     def resolve_logical_date(**context) -> str:
+        """Renvoie la date de travail, ou échoue sans relance si elle manque."""
         try:
             return require_logical_date(context.get("ds"))
         except ConfigurationError as exc:
             raise AirflowFailException(str(exc)) from exc
 
-    # Le paramètre ne s'appelle pas `logical_date` : c'est une clé de contexte réservée
-    # par Airflow (auto-injectée), et un paramètre TaskFlow de ce nom entre en collision
-    # avec elle (`ValueError: The key 'logical_date' in args is ... reserved`, vérifié en
-    # exécution réelle). `dag_genomic_pipeline.py` n'a pas ce problème : il utilise déjà
-    # `sources_date` pour la même donnée.
+    # `acquisition_date` et non `logical_date`, clé de contexte réservée par Airflow.
     @task(task_id="download_clinvar_bulk")
     def download_clinvar_bulk(acquisition_date: str) -> str:
         return ingest_clinvar(acquisition_date)
@@ -70,8 +66,7 @@ with DAG(
     @task(task_id="check_bronze_shared", outlets=[SOURCES_READY])
     def check_bronze_shared(bronze_partitions: list[str], acquisition_date: str, **context) -> None:
         assert_partitions_complete(bronze_partitions)
-        # Les DAGs de panel sont déclenchés sans date logique : ils relisent celle-ci
-        # dans l'événement d'Asset pour travailler sur les mêmes partitions.
+        # Les DAGs de panel relisent cette date dans l'événement d'Asset.
         record_sources_date(context["outlet_events"], SOURCES_READY, acquisition_date)
 
     acquisition_date = resolve_logical_date()

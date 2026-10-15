@@ -1,3 +1,4 @@
+"""DAG médaillon d'un panel : raw → bronze → silver → gold, puis indexation RAG."""
 from __future__ import annotations
 
 import datetime as dt
@@ -48,11 +49,7 @@ DEFAULT_ARGS = {
 
 
 def client_or_fail() -> NcbiClient:
-    """Construit le client NCBI, ou échoue définitivement.
-
-    Une configuration manquante ne se résout pas en réessayant : `AirflowFailException`
-    marque la tâche en échec sans consommer les retries.
-    """
+    """Construit le client NCBI, ou fait échouer la tâche sans relance si la configuration manque."""
     try:
         return build_client()
     except ConfigurationError as exc:
@@ -60,8 +57,7 @@ def client_or_fail() -> NcbiClient:
 
 
 def build_panel_dag(panel: str, genes: list[str]) -> DAG:
-    """Construit le DAG médaillon d'un panel de gènes, déclenché par l'Asset
-    publié quand le bronze des sources partagées est complet."""
+    """Construit le DAG médaillon d'un panel, déclenché par l'Asset des sources partagées."""
     with DAG(
         dag_id=f"dag_genomic_pipeline_{panel}",
         description=f"Pipeline médaillon — {PANEL_LABELS.get(panel, panel)}",
@@ -74,9 +70,7 @@ def build_panel_dag(panel: str, genes: list[str]) -> DAG:
 
         @task(task_id="resolve_sources_date")
         def task_resolve_sources_date(**context) -> str:
-            """Date des sources partagées : relue dans l'événement d'Asset, ou fournie
-            par `--conf` lors d'un déclenchement manuel. Un run de panel n'a pas de date
-            logique propre dans Airflow 3."""
+            """Renvoie la date des sources (événement d'Asset ou `--conf`)."""
             dag_run = context.get("dag_run")
             try:
                 return resolve_sources_date(
@@ -87,9 +81,7 @@ def build_panel_dag(panel: str, genes: list[str]) -> DAG:
             except ConfigurationError as exc:
                 raise AirflowFailException(str(exc)) from exc
 
-        # Les trois ingestions NCBI passent par un pool à un slot : le limiteur de débit
-        # est par processus, il ne protège pas contre des tâches parallèles. Les termes
-        # HPO interrogent ontology.jax.org et restent hors du pool.
+        # Les ingestions NCBI passent par le pool à un slot ; HPO (ontology.jax.org) reste hors pool.
         @task(task_id="ingest_ncbi_gene", pool=NCBI_POOL)
         def task_ncbi_gene(sources_date: str) -> str:
             return ingest_ncbi_gene(sources_date, panel, genes, client_or_fail())
@@ -148,9 +140,7 @@ def build_panel_dag(panel: str, genes: list[str]) -> DAG:
         def task_quality_check_gold(sources_date: str) -> None:
             quality_check_gold(sources_date, panel)
 
-        # Une réindexation complète sur CPU dure ~4 h (mesure du 30/09/2026) : délai
-        # porté à 6 h pour cette seule tâche. Les erreurs permanentes (mauvais modèle,
-        # document trop long, Gold vide) échouent sans consommer les relances.
+        # Réindexation complète ~4 h sur CPU : délai de 6 h ; erreurs permanentes sans relance.
         @task(
             task_id="index_rag_documents",
             pool=RAG_INDEX_POOL,
