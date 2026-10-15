@@ -48,6 +48,7 @@ SAME_MODEL_COSINE = 0.99
 # --- Métriques (fonctions pures, testées) -----------------------------------------
 
 def reciprocal_rank(scores: np.ndarray, target: int, candidates: np.ndarray | None = None) -> float:
+    """Calcule le rang réciproque du document cible parmi les candidats."""
     mask = np.ones_like(scores, dtype=bool) if candidates is None else candidates
     rank = 1 + int(np.sum(mask & (scores > scores[target])))
     return 1.0 / rank
@@ -56,6 +57,7 @@ def reciprocal_rank(scores: np.ndarray, target: int, candidates: np.ndarray | No
 def precision_at_k(
     scores: np.ndarray, relevant: np.ndarray, k: int = K, candidates: np.ndarray | None = None
 ) -> float:
+    """Calcule la précision des k premiers documents parmi les candidats."""
     pool = np.flatnonzero(np.ones_like(scores, dtype=bool) if candidates is None else candidates)
     top = pool[np.argsort(-scores[pool], kind="stable")[:k]]
     return float(relevant[top].sum()) / k
@@ -64,6 +66,7 @@ def precision_at_k(
 def bootstrap_mean_ci(
     diffs, n_resamples: int = 10_000, seed: int = 20261001, alpha: float = 0.05
 ) -> tuple[float, float, float]:
+    """Calcule moyenne et IC bootstrap percentile des écarts appariés."""
     values = np.asarray(diffs, dtype=float)
     rng = np.random.default_rng(seed)
     means = values[rng.integers(0, len(values), size=(n_resamples, len(values)))].mean(axis=1)
@@ -71,26 +74,24 @@ def bootstrap_mean_ci(
 
 
 def decide(mean: float, low: float) -> str:
-    """Règle fixée avant la mesure : NeuML seulement si l'écart est positif et que
-    l'intervalle de confiance exclut zéro. Sinon BioBERT, annoncé par le mémoire."""
+    """Applique la règle fixée avant la mesure : NeuML seulement si l'écart est positif et son IC exclut zéro."""
     return "neuml" if mean > 0 and low > 0 else "biobert"
 
 
 # --- Garde-fous : lier les vecteurs aux documents, questions et modèle ------------------
 
 def _sha256(data: bytes) -> str:
+    """Calcule le SHA-256 d'octets."""
     return hashlib.sha256(data).hexdigest()
 
 
 def chunk_hash(chunk_ids) -> str:
-    """Empreinte des `chunk_id` dans l'ordre des documents : détecte un texte Gold
-    modifié alors que les `doc_id` sont restés les mêmes."""
+    """Calcule l'empreinte des `chunk_id` dans l'ordre, pour détecter un texte Gold modifié."""
     return _sha256("\n".join(chunk_ids).encode("utf-8"))
 
 
 def check_manifests(a, b, current_doc_ids, current_chunk_hash, current_questions_hash) -> None:
-    """Refuse (SystemExit) toute paire de vectorisations qui ne mesure pas la même
-    chose : sans cela, un résultat bien formé mais faux serait publié."""
+    """Refuse (SystemExit) deux vectorisations qui ne mesurent pas la même chose."""
     if a is None or b is None:
         raise SystemExit("manifeste manquant : vectoriser les deux modèles avant d'évaluer")
     if {a["label"], b["label"]} != set(LABELS):
@@ -108,8 +109,7 @@ def check_manifests(a, b, current_doc_ids, current_chunk_hash, current_questions
 
 
 def same_model_suspected(docs_a: np.ndarray, docs_b: np.ndarray, threshold: float = SAME_MODEL_COSINE) -> bool:
-    """Deux modèles différents donnent des vecteurs du même document nettement
-    distincts ; un cosinus moyen proche de 1 trahit un conteneur non remplacé."""
+    """Signale deux « modèles » aux vecteurs quasi identiques (conteneur non remplacé)."""
     unit = lambda v: v / np.linalg.norm(v, axis=1, keepdims=True)  # noqa: E731
     mean_cosine = float(np.mean(np.sum(unit(docs_a) * unit(docs_b), axis=1)))
     return not mean_cosine < threshold  # NaN => suspect
@@ -118,10 +118,12 @@ def same_model_suspected(docs_a: np.ndarray, docs_b: np.ndarray, threshold: floa
 # --- Données ------------------------------------------------------------------------
 
 def _all_documents() -> pl.DataFrame:
+    """Charge les documents Gold des deux panels, triés."""
     return pl.concat([load_gold_documents(panel) for panel in PANEL_GENES]).sort("doc_id")
 
 
 def _diseases_by_doc() -> pl.DataFrame:
+    """Associe chaque document de variant à ses noms de maladie (Silver)."""
     return (
         read_silver("clinvar_variant_disease")
         .filter(pl.col("disease_name").is_not_null())
@@ -132,6 +134,7 @@ def _diseases_by_doc() -> pl.DataFrame:
 
 
 def _relevance(question: dict, documents: pl.DataFrame, diseases: pl.DataFrame) -> np.ndarray:
+    """Calcule le masque des documents pertinents d'une question selon sa règle."""
     rule = question["relevant"]
     if "doc_id" in rule:
         return (documents["doc_id"] == rule["doc_id"]).to_numpy()
@@ -146,6 +149,7 @@ def _relevance(question: dict, documents: pl.DataFrame, diseases: pl.DataFrame) 
 
 
 def _candidates(question: dict, documents: pl.DataFrame) -> np.ndarray | None:
+    """Restreint les candidats au gène filtré, s'il y en a un."""
     gene = question.get("filter_gene")
     return None if gene is None else (documents["gene_symbol"] == gene).to_numpy()
 
@@ -153,6 +157,7 @@ def _candidates(question: dict, documents: pl.DataFrame) -> np.ndarray | None:
 # --- Sous-commandes -------------------------------------------------------------------
 
 def cmd_lister_maladies(args) -> None:
+    """Liste les maladies les plus fréquentes par gène, pour rédiger les questions."""
     documents = _all_documents()
     counts = (
         _diseases_by_doc().join(documents.select("doc_id", "gene_symbol"), on="doc_id")
@@ -165,11 +170,13 @@ def cmd_lister_maladies(args) -> None:
 
 
 def _read_manifest(out: Path, label: str):
+    """Lit le manifeste d'une vectorisation, ou None."""
     path = out / f"{label}_manifest.json"
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
 
 
 def cmd_vectoriser(args) -> None:
+    """Vectorise le corpus et les questions avec le modèle servi."""
     export = json.loads((Path(args.model_dir) / "export.json").read_text(encoding="utf-8"))
     label = MODEL_LABELS.get(export["model_id"])
     if label is None:
@@ -200,6 +207,7 @@ def cmd_vectoriser(args) -> None:
 
 
 def cmd_verifier_questions(args) -> None:
+    """Vérifie que chaque question a au moins un document pertinent."""
     documents, diseases = _all_documents(), _diseases_by_doc()
     questions = yaml.safe_load(QUESTIONS_PATH.read_text(encoding="utf-8"))
     problems = 0
@@ -216,6 +224,7 @@ def cmd_verifier_questions(args) -> None:
 
 
 def cmd_evaluer(args) -> None:
+    """Compare les deux modèles et applique la règle de décision."""
     out = Path(args.out)
     documents, diseases = _all_documents(), _diseases_by_doc()
     questions_bytes = QUESTIONS_PATH.read_bytes()
@@ -268,6 +277,7 @@ def cmd_evaluer(args) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
+    """Point d'entrée en ligne de commande."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(required=True)
     p = sub.add_parser("lister-maladies"); p.add_argument("--top", type=int, default=8); p.set_defaults(func=cmd_lister_maladies)

@@ -61,11 +61,7 @@ _NO_ANSWER = {"not_in_sources", "out_of_scope"}
 
 
 def _write_json_atomic(path: Path, data) -> None:
-    """Écriture atomique : un arrêt du processus en cours d'écriture ne corrompt jamais le
-    fichier (os.replace), et le contenu est vidé sur disque (fsync) avant le remplacement, pour
-    qu'une coupure de courant ne laisse pas un fichier remplacé mais vide. Le répertoire n'est
-    pas synchronisé : après une coupure, on peut retrouver l'ancienne version, jamais un fichier
-    tronqué."""
+    """Écrit un JSON de façon atomique (fichier temporaire, fsync, os.replace)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".part")
     with open(tmp, "w", encoding="utf-8") as f:
@@ -100,22 +96,19 @@ def score_recette(question: dict, record: dict, relevant: set[str]) -> dict:
 
 
 def _passed(scored: list[dict]) -> tuple[int, int]:
+    """Compte les questions réussies et le total."""
     return sum(1 for r in scored if r.get("ok") is True), len(scored)
 
 
 def real_total(r: dict, *, with_waits: bool = False) -> float:
-    """Latence de bout en bout : analyse d'origine (même rejouée du cache) + embedding + base +
-    génération en direct ; sans les attentes de limite de débit Groq (`throttle_wait_ms`) sauf
-    demande. Un enregistrement antérieur sans ce champ donne une borne supérieure."""
+    """Calcule la latence de bout en bout, hors attentes de limite de débit sauf demande."""
     t = r["timings_ms"]
     total = t["total"] - t.get("analysis", 0.0) + r.get("analysis_latency_ms", t.get("analysis", 0.0))
     return total if with_waits else total - r.get("throttle_wait_ms", 0.0)
 
 
 def summarize(records: list[dict]) -> dict:
-    """Comptes par partie (réussis, total), rejets par code, statuts, latences (médiane, p95)
-    des seules questions réellement exécutées (hors rejeu du cache). Partie 4 : `part4` sur la
-    série de contrôle seule (seuil), `part4_dev` sur la série de développement (indicatif)."""
+    """Résume la recette : réussites par partie, rejets, statuts et latences des questions exécutées."""
     summary: dict = {}
     for part in (2, 3):
         summary[f"part{part}"] = _passed([r for r in records if r.get("part") == part])
@@ -131,6 +124,7 @@ def summarize(records: list[dict]) -> dict:
             rejections[r["rejected"]] = rejections.get(r["rejected"], 0) + 1
         statuses[r["status"]] = statuses.get(r["status"], 0) + 1
     def stats(values: list[float]) -> dict:
+        """Calcule médiane et p95."""
         return ({"median": float(np.percentile(values, 50)), "p95": float(np.percentile(values, 95)),
                  "n": len(values)} if values else {"median": None, "p95": None, "n": 0})
 
@@ -147,15 +141,16 @@ def summarize(records: list[dict]) -> dict:
 
 
 class ThrottleMeter:
-    """Mesure les attentes des clients LLM (limite de débit Groq, relances 502/503) en
-    enveloppant leur fonction `sleep` : ces attentes ne relèvent pas de la latence du pipeline."""
+    """Mesure les attentes des clients LLM (limite de débit, relances), hors latence du pipeline."""
 
     def __init__(self, clock: Callable[[], float] = time.perf_counter) -> None:
         self._clock = clock
         self.total_s = 0.0
 
     def wrap(self, sleep: Callable[[float], None]) -> Callable[[float], None]:
+        """Enveloppe une fonction `sleep` pour en compter la durée."""
         def measured(seconds: float) -> None:
+            """Attend en comptant la durée."""
             start = self._clock()
             try:
                 sleep(seconds)
@@ -171,10 +166,12 @@ class ThrottleMeter:
         return True
 
     def reset(self) -> None:
+        """Remet le compteur à zéro."""
         self.total_s = 0.0
 
     @property
     def total_ms(self) -> float:
+        """Renvoie le total des attentes en millisecondes."""
         return self.total_s * 1000
 
 
@@ -185,14 +182,7 @@ def cache_key(prompt_sha: str, profile, user: str, max_tokens: int) -> str:
 
 
 class CachedGenerator:
-    """Enveloppe le client de génération d'un emplacement ; expose `complete_json` et `close`.
-
-    Clé : sha256 de (GENERATION_PROMPT_SHA, modèle, provider_tag, max_tokens, message utilisateur exact).
-    Le message utilisateur contient la question et le contexte échappé : il identifie
-    exactement les documents transmis, sans avoir à en extraire les `doc_id`. Les appels
-    échoués ne sont jamais mis en cache. `last_hit` dit si le dernier appel vient du cache.
-    La latence de génération est mesurée hors du client : un rejeu est quasi instantané,
-    d'où l'exclusion des rejeux dans `summarize`."""
+    """Cache disque des générations réussies, par prompt, modèle, point d'accès, plafond et message exact."""
 
     def __init__(self, inner, cache_path: Path, prompt_sha: str) -> None:
         self._inner, self._path, self._sha = inner, cache_path, prompt_sha
@@ -201,9 +191,11 @@ class CachedGenerator:
         self.last_hit = False
 
     def _key(self, profile, user: str, max_tokens: int) -> str:
+        """Calcule la clé de cache d'une génération."""
         return cache_key(self._sha, profile, user, max_tokens)
 
     def complete_json(self, profile, *, system, user, schema_name, schema, max_tokens):
+        """Renvoie la génération en cache, sinon appelle le client et la met en cache."""
         from RAG.src.llm.common import LlmCall
         key = self._key(profile, user, max_tokens)
         if key in self._cache:
@@ -219,12 +211,12 @@ class CachedGenerator:
         return call
 
     def close(self) -> None:
+        """Ferme le client enveloppé."""
         self._inner.close()
 
 
 def build_unavailable_record(question: dict, error: Exception) -> dict:
-    """Question dont la génération a échoué de façon transitoire : seul le nom de la classe
-    d'erreur est conservé (jamais son texte), sans citation."""
+    """Enregistre une génération indisponible (classe d'erreur seulement, jamais son texte)."""
     from RAG.src.prompts.generation import GENERATION_PROMPT_VERSION
     return {"id": question["id"], "part": question["part"], "status": UNAVAILABLE_STATUS,
             "error": type(error).__name__, "scope_reason": None, "citations": [], "rejected": None,
@@ -232,9 +224,7 @@ def build_unavailable_record(question: dict, error: Exception) -> dict:
 
 
 def build_record(question: dict, result, replayed: bool) -> dict:
-    """Enregistrement d'une question. `replayed` : la génération a réellement été rejouée du cache.
-    Une réponse `unverifiable` ne cite rien : les documents transmis vont dans `sources_transmises`.
-    Le texte retenu d'un `not_in_sources` (jamais livré) est consigné pour l'examen des rejets."""
+    """Construit l'enregistrement d'une question, texte retenu d'un `not_in_sources` compris."""
     from RAG.src.prompts.generation import GENERATION_PROMPT_VERSION
     a, analysis = result.answer, result.search.trace.analysis
     doc_ids = [s.doc_id for s in a.sources]
@@ -256,8 +246,7 @@ def build_record(question: dict, result, replayed: bool) -> dict:
 # --- Commandes ----------------------------------------------------------------------------
 
 def _load_questions() -> list[dict]:
-    """Questions de E2a (parties 1 à 3), série de développement et série de contrôle (partie 4).
-    Chaque question de E2b porte sa série dans `set`."""
+    """Charge les questions des parties 1 à 4, chacune avec sa série."""
     for path, label in ((QUESTIONS_E2B, "hors périmètre"), (QUESTIONS_CONTROL, "de la série de contrôle")):
         if not path.exists():
             raise SystemExit(f"fichier de questions {label} absent : {path.name} "
@@ -279,10 +268,12 @@ def _load_questions() -> list[dict]:
 
 
 def _load_records(path: Path) -> list[dict]:
+    """Charge les enregistrements existants."""
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
 
 
 def cmd_lancer(args) -> None:
+    """Pose chaque question au pipeline complet, avec reprise après chaque question."""
     from RAG.src.generation.pipeline import QuestionPipeline
     from RAG.src.prompts.generation import GENERATION_PROMPT_SHA
     from RAG.src.utils.errors import LlmQuotaExhaustedError, LlmUnavailableError
@@ -334,11 +325,13 @@ def cmd_lancer(args) -> None:
 
 
 def _records_path(name: str | None) -> Path:
+    """Renvoie le chemin d'un fichier d'enregistrements."""
     path = Path(name or "records.json")
     return path if path.is_absolute() else OUT / path
 
 
 def cmd_evaluer(args) -> None:
+    """Calcule et affiche le bilan de la recette."""
     questions = _load_questions()
     records = _load_records(_records_path(getattr(args, "fichier", None)))
     by_id = {r["id"]: r for r in records}
@@ -396,18 +389,18 @@ def cmd_evaluer(args) -> None:
 
 
 class GenerationNotCached(Exception):
-    """Rejeu : la génération demandée n'est pas dans le cache (jamais obtenue, ou documents
-    transmis différents de ceux de l'enregistrement d'origine)."""
+    """Rejeu : génération absente du cache (jamais obtenue, ou documents différents)."""
 
 
 class ReplayClient:
-    """Client de génération du rejeu : relit cache_generation.json, jamais d'appel réseau."""
+    """Client de rejeu : sert les générations du cache, sans réseau."""
 
     def __init__(self, cache: dict, prompt_sha: str) -> None:
         self._cache, self._sha = cache, prompt_sha
         self.calls = 0
 
     def complete_json(self, profile, *, system, user, schema_name, schema, max_tokens):
+        """Renvoie la génération en cache, ou lève `GenerationNotCached`."""
         from RAG.src.llm.common import LlmCall
         key = cache_key(self._sha, profile, user, max_tokens)
         if key not in self._cache:
@@ -416,25 +409,23 @@ class ReplayClient:
         return LlmCall(**self._cache[key])
 
     def close(self) -> None:
-        pass
+        """Ne fait rien (aucune session)."""
 
 
 class OfflineAnalysisClient:
-    """Client d'analyse du rejeu : toute analyse absente du cache est indisponible, sans appel."""
+    """Client d'analyse hors ligne : toute analyse absente du cache est indisponible, sans appel."""
 
     def complete_json(self, *args, **kwargs):
+        """Lève toujours : l'analyse doit venir du cache."""
         from RAG.src.utils.errors import LlmUnavailableError
         raise LlmUnavailableError("rejeu hors ligne : analyse absente du cache")
 
     def close(self) -> None:
-        pass
+        """Ne fait rien (aucune session)."""
 
 
 def replay_records(questions: list[dict], v1_records: list[dict], *, search, generate) -> list[dict]:
-    """Repasse chaque question déjà enregistrée dans la chaîne actuelle : recherche locale
-    (analyse en cache), puis génération rejouée du cache et contrôles actuels. Un enregistrement
-    qu'on ne peut pas rejouer est recopié tel quel, avec la raison dans `replay`. Les rejeux sont
-    exclus des latences (`from_cache`) ; les durées d'origine sont conservées pour mémoire."""
+    """Repasse chaque question enregistrée dans la chaîne actuelle, générations rejouées du cache."""
     from RAG.src.generation.pipeline import PipelineResult
     from RAG.src.utils.errors import LlmUnavailableError
     by_id = {r["id"]: r for r in v1_records}
@@ -466,21 +457,19 @@ def replay_records(questions: list[dict], v1_records: list[dict], *, search, gen
 
 
 class RecordingReplayClient(ReplayClient):
-    """ReplayClient qui garde le contenu de la dernière génération relue, pour le diagnostic."""
+    """Client de rejeu qui garde le contenu de la dernière génération."""
 
     last_content = None
 
     def complete_json(self, *args, **kwargs):
+        """Renvoie la génération en cache et la garde."""
         call = super().complete_json(*args, **kwargs)
         self.last_content = call.content
         return call
 
 
 def diagnose_records(questions: list[dict], v1_records: list[dict], *, search, generate, client) -> list[dict]:
-    """Pour chaque question dont la réponse rejouée est rejetée (`unverifiable`, ou
-    `not_in_sources` dont le texte retenu est rejeté), rejoue la chaîne de contrôles sur le
-    texte du LLM relu du cache et consigne les éléments déclencheurs (explain_rejection : même
-    chaîne que la génération). `client.last_content` est le contenu de la dernière génération."""
+    """Explique chaque réponse rejetée en rejouant les contrôles sur le texte du LLM."""
     from RAG.src.generation.answer import validate_generation
     from RAG.src.generation.checks import explain_rejection, strip_cited_labels
     from RAG.src.generation.context import resolve_citations
@@ -514,6 +503,7 @@ def diagnose_records(questions: list[dict], v1_records: list[dict], *, search, g
 
 
 def _status_counts(records: list[dict]) -> dict[str, int]:
+    """Compte les enregistrements par statut."""
     counts: dict[str, int] = {}
     for r in records:
         counts[r["status"]] = counts.get(r["status"], 0) + 1
@@ -521,6 +511,7 @@ def _status_counts(records: list[dict]) -> dict[str, int]:
 
 
 def cmd_rejouer(args) -> None:
+    """Rejoue la recette hors ligne et écrit records_v2.json."""
     from RAG.src.generation.answer import generate_answer
     from RAG.src.prompts.generation import GENERATION_PROMPT_SHA
     from RAG.src.retrieval.retriever import Searcher
@@ -556,6 +547,7 @@ def cmd_rejouer(args) -> None:
 
 
 def cmd_diagnostiquer(args) -> None:
+    """Rejoue hors ligne et explique chaque rejet."""
     from RAG.src.generation.answer import generate_answer
     from RAG.src.prompts.generation import GENERATION_PROMPT_SHA
     from RAG.src.retrieval.retriever import Searcher
@@ -587,6 +579,7 @@ def cmd_diagnostiquer(args) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
+    """Point d'entrée en ligne de commande."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("lancer").set_defaults(func=cmd_lancer)
