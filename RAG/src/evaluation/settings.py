@@ -1,8 +1,4 @@
-"""Réglages de l'évaluation de la génération (E3a), lus dans
-`RAG/experiments/evaluation_e3a.yaml` : juge, candidats, graines, effectifs, seuils, budget.
-
-Le juge vit ici et non dans `RAG/config.yaml` : l'ajouter à `llm.profiles` changerait
-l'empreinte de configuration des séries officielles de E2a et en ferait un candidat."""
+"""Réglages de l'évaluation E3a (evaluation_e3a.yaml), hors config.yaml pour ne pas changer l'empreinte des séries E2a."""
 
 from __future__ import annotations
 
@@ -21,6 +17,7 @@ STRATA = ("I", "S", "G", "M")
 
 @dataclass(frozen=True)
 class Thresholds:
+    """Seuils d'élimination et de fiabilité du juge."""
     faithfulness_min: float
     rejection_max: float
     wrong_abstention_max: float
@@ -29,6 +26,7 @@ class Thresholds:
 
 @dataclass(frozen=True)
 class EvaluationSettings:
+    """Réglages de l'évaluation : juge, candidats, graines, effectifs, seuils, budget."""
     judge: LlmProfile
     judge_max_tokens: int
     candidates: tuple[str, ...]
@@ -44,14 +42,17 @@ class EvaluationSettings:
 
     @property
     def total_questions(self) -> int:
+        """Nombre total de questions tirées."""
         return sum(self.strata.values())
 
 
 def settings_sha256(path: Path = DEFAULT_SETTINGS_PATH) -> str:
+    """Calcule l'empreinte du fichier de réglages."""
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def load_settings(path: Path = DEFAULT_SETTINGS_PATH, config_path: Path = DEFAULT_CONFIG_PATH) -> EvaluationSettings:
+    """Lit et valide les réglages de l'évaluation."""
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
         judge_raw = raw["judge"]

@@ -1,15 +1,4 @@
-"""Juge LLM de l'évaluation E3a : fidélité (définition RAGAS, Es et al. 2023) et pertinence
-(grille). Versionné comme du code : toute modification change JUDGE_PROMPT_SHA, donc les clés
-du cache des verdicts et les manifestes.
-
-Fidélité en deux appels distincts, comme RAGAS : découpage de la réponse en affirmations, puis
-verdict de chaque affirmation contre les documents transmis. Pertinence : une note 0/1/2.
-
-Les prompts sont en français parce qu'ils reprennent mot pour mot les définitions données à
-l'annotatrice ou l'annotateur humain (spec §7) : juge et humain appliquent le même critère, ce
-que le kappa mesure. Toute donnée (question, réponse, documents, affirmations) est échappée et
-balisée ; une sortie du juge est revalidée ici et ne devient jamais un score si elle est
-incohérente (`JudgeOutputError`)."""
+"""Juge LLM de E3a : fidélité (RAGAS, deux appels) et pertinence (note 0/1/2), prompts versionnés par JUDGE_PROMPT_SHA."""
 
 from __future__ import annotations
 
@@ -98,6 +87,7 @@ class JudgeOutputError(ValueError):
 
 @dataclass(frozen=True)
 class Judgement:
+    """Verdicts du juge sur une réponse, avec leur coût."""
     claims: tuple[str, ...]
     verdicts: tuple[bool, ...]
     justifications: tuple[str, ...]
@@ -108,9 +98,11 @@ class Judgement:
 
     @property
     def faithfulness(self) -> float | None:
+        """Fidélité de la réponse, ou None sans affirmation."""
         return faithfulness(self.verdicts)
 
     def as_dict(self) -> dict:
+        """Sérialise le jugement."""
         return {"claims": list(self.claims), "verdicts": list(self.verdicts),
                 "justifications": list(self.justifications), "relevance": self.relevance,
                 "relevance_justification": self.relevance_justification,
@@ -118,35 +110,39 @@ class Judgement:
 
 
 def claims_message(question: str, answer: str) -> str:
+    """Rend le message de découpage en affirmations, données échappées."""
     return (f"<question>\n{escape_data(question)}\n</question>\n"
             f"<reponse>\n{escape_data(answer)}\n</reponse>")
 
 
 def verdicts_message(context: str, claims: Sequence[str]) -> str:
-    """`context` est le bloc de documents déjà échappé par `build_context` (E2b), tel que le
-    générateur l'a reçu."""
+    """Rend le message de verdicts ; `context` est déjà échappé par build_context."""
     numbered = "\n".join(f"{i}. {escape_data(c)}" for i, c in enumerate(claims, start=1))
     return f"<documents>\n{context}\n</documents>\n<affirmations>\n{numbered}\n</affirmations>"
 
 
 def relevance_message(question: str, context: str, answer: str) -> str:
+    """Rend le message de pertinence, données échappées."""
     return (f"<question>\n{escape_data(question)}\n</question>\n<documents>\n{context}\n</documents>\n"
             f"<reponse>\n{escape_data(answer)}\n</reponse>")
 
 
 def _exact_keys(content: object, keys: set[str]) -> Mapping:
+    """Exige exactement les clés attendues."""
     if not isinstance(content, Mapping) or set(content) != keys:
         raise JudgeOutputError("clés inattendues")
     return content
 
 
 def _justification(value: object) -> str:
+    """Valide une justification textuelle et bornée."""
     if not isinstance(value, str) or len(value) > _MAX_JUSTIFICATION_CHARS:
         raise JudgeOutputError("justification non textuelle ou trop longue")
     return value.strip()
 
 
 def parse_claims(content: object) -> list[str]:
+    """Valide la liste d'affirmations du juge."""
     claims = _exact_keys(content, {"affirmations"})["affirmations"]
     if not isinstance(claims, list) or len(claims) > MAX_CLAIMS:
         raise JudgeOutputError(f"affirmations : liste attendue, {MAX_CLAIMS} au plus")
@@ -156,6 +152,7 @@ def parse_claims(content: object) -> list[str]:
 
 
 def parse_verdicts(content: object, n: int) -> tuple[list[bool], list[str]]:
+    """Valide les verdicts du juge et les remet dans l'ordre des affirmations."""
     items = _exact_keys(content, {"verdicts"})["verdicts"]
     if not isinstance(items, list) or len(items) != n:
         raise JudgeOutputError(f"{n} verdict(s) attendu(s)")
@@ -173,6 +170,7 @@ def parse_verdicts(content: object, n: int) -> tuple[list[bool], list[str]]:
 
 
 def parse_relevance(content: object) -> tuple[int, str]:
+    """Valide la note de pertinence du juge."""
     item = _exact_keys(content, {"justification", "note"})
     note = item["note"]
     if isinstance(note, bool) or not isinstance(note, int) or note not in RELEVANCE_NOTES:
@@ -181,13 +179,12 @@ def parse_relevance(content: object) -> tuple[int, str]:
 
 
 def faithfulness(verdicts: Sequence[bool]) -> float | None:
-    """Affirmations soutenues / affirmations ; None sans affirmation (non définie, comme RAGAS)."""
+    """Calcule la part d'affirmations soutenues, ou None sans affirmation (comme RAGAS)."""
     return sum(verdicts) / len(verdicts) if verdicts else None
 
 
 def judge_answer(client, profile, *, question: str, context: str, answer: str, max_tokens: int) -> Judgement:
-    """Trois appels (deux sans affirmation). Une sortie incohérente lève `JudgeOutputError` :
-    l'appelant n'enregistre rien et retentera au prochain passage."""
+    """Juge une réponse en trois appels ; une sortie incohérente lève `JudgeOutputError` (rien n'est enregistré)."""
     claims_call = client.complete_json(profile, system=CLAIMS_SYSTEM, user=claims_message(question, answer),
                                        schema_name=CLAIMS_SCHEMA_NAME, schema=CLAIMS_SCHEMA, max_tokens=max_tokens)
     cost, calls = claims_call.cost_usd, 1
@@ -211,6 +208,7 @@ def judge_answer(client, profile, *, question: str, context: str, answer: str, m
 
 
 def _prompt_sha() -> str:
+    """Calcule l'empreinte des prompts et schémas du juge."""
     parts = [CLAIMS_SYSTEM, VERDICTS_SYSTEM, RELEVANCE_SYSTEM,
              json.dumps([CLAIMS_SCHEMA, VERDICTS_SCHEMA, RELEVANCE_SCHEMA], sort_keys=True),
              claims_message("{q}<&>", "{a}"), verdicts_message("{c}", ["{x}"]), relevance_message("{q}", "{c}", "{a}")]
