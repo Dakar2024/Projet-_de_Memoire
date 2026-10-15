@@ -129,7 +129,8 @@ MinIO contient un bucket par couche : `raw`, `bronze`, `silver`, `gold`.
 ```bash
 python3 -m venv venv
 source venv/bin/activate
-pip install -r requirements-dev.txt
+pip install -r requirements.txt -r RAG/requirements.txt
+pip install pytest==9.1.1 responses==0.26.2 apache-airflow==3.3.1   # tests uniquement
 ```
 
 ### 2. Configurer

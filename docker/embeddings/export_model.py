@@ -1,18 +1,4 @@
-"""Exporte un modèle d'embedding pour le service rag-embeddings.
-
-Produit, dans <racine>/<nom>/ :
-- les poids en safetensors, la configuration et le tokenizer, lus par l'image GPU ;
-- onnx/model.onnx, lu par l'image CPU (le service prend l'ONNX en priorité) ;
-- export.json, avec l'empreinte SHA-256 de chaque fichier et l'empreinte de l'export,
-  à recopier dans RAG/config.yaml.
-
-Seules deux révisions épinglées sont acceptées. BioBERT n'est publié qu'en
-pytorch_model.bin (format pickle) : transformers 4.57.6 le charge avec
-`torch.load(weights_only=True)`, ce qui interdit l'exécution de code arbitraire.
-L'export est écrit dans un dossier temporaire puis renommé : un export interrompu
-n'est jamais servi.
-"""
-
+"""Exporte un modèle épinglé (safetensors, ONNX, export.json avec empreintes) pour rag-embeddings."""
 from __future__ import annotations
 
 import argparse
@@ -32,6 +18,7 @@ PINNED_REVISIONS = {
 
 
 def sha256(path: Path) -> str:
+    """Calcule le SHA-256 d'un fichier, par blocs."""
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1 << 20), b""):
@@ -40,6 +27,7 @@ def sha256(path: Path) -> str:
 
 
 def main() -> int:
+    """Exporte dans un dossier temporaire puis le renomme : un export interrompu n'est jamais servi."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", required=True, choices=sorted(PINNED_REVISIONS))
     parser.add_argument("--output-root", type=Path, default=Path("/models"))
