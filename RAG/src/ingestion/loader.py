@@ -1,10 +1,4 @@
-"""Chargement des documents du RAG depuis `gold/rag/documents`.
-
-`ingestion/` désigne ici, comme sur le schéma de référence du RAG, le chargement des
-documents à indexer. La collecte des API publiques vit dans `src/ingestion/`, que ce
-module réutilise pour l'accès au lac (`storage_options`) sans jamais y écrire.
-"""
-
+"""Chargement des documents du RAG depuis `gold/rag/documents`, en lecture seule."""
 from __future__ import annotations
 
 import polars as pl
@@ -24,6 +18,7 @@ _EMPTY_SCHEMA = {column: pl.Utf8 for column in DOCUMENT_COLUMNS} | {"rs_dbsnp": 
 
 
 def load_gold_documents(panel: str, lake_uri: str | None = None) -> pl.DataFrame:
+    """Charge les documents Gold du panel, triés ; lève si un `doc_id` est en double."""
     uri = documents_uri(lake_uri)
     options = storage_options(uri)
     if not DeltaTable.is_deltatable(uri, storage_options=options):
@@ -36,7 +31,6 @@ def load_gold_documents(panel: str, lake_uri: str | None = None) -> pl.DataFrame
     )
     duplicated = documents.filter(pl.col("doc_id").is_duplicated())["doc_id"].unique().to_list()
     if duplicated:
-        # quality_check_gold l'interdit déjà : le revoir ici signale un Gold modifié
-        # hors pipeline, que l'index ne doit pas recopier.
+        # Déjà interdit par quality_check_gold : signale un Gold modifié hors pipeline.
         raise RagPermanentError(f"doc_id en double dans le Gold ({panel}) : {duplicated[:10]}")
     return documents

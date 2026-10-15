@@ -1,9 +1,4 @@
-"""Traduction de la signification demandée vers les libellés exacts de ClinVar.
-
-Le LLM ne choisit qu'une valeur parmi cinq ; c'est ce code, testé, qui la traduit
-en libellés ClinVar. Un libellé inconnu n'est jamais deviné.
-"""
-
+"""Traduction déterministe de la signification choisie par le LLM (cinq valeurs) en libellés ClinVar."""
 from __future__ import annotations
 
 from collections.abc import Iterable
@@ -19,7 +14,7 @@ _EXACT = {
 
 
 def clinvar_labels(value: str, known_labels: Iterable[str]) -> tuple[str, ...]:
-    """Libellés ClinVar présents dans l'index pour `value` ; vide pour `none`."""
+    """Renvoie les libellés ClinVar présents dans l'index pour `value` ; vide pour `none`."""
     if value not in SIGNIFICANCE_VALUES:
         raise ValueError(f"signification inconnue : {value!r}")
     if value == "none":

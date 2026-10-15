@@ -1,7 +1,4 @@
-"""Essai manuel d'une question, dans le conteneur rag-search :
-    python -m RAG.src.retrieval.cli "Le variant rs80357906 sur BRCA1 est-il pathogène ?"
-Affiche les documents retrouvés et la trace, sans le texte complet des documents."""
-
+"""Essai manuel d'une recherche : python -m RAG.src.retrieval.cli "Le variant rs80357906 est-il pathogène ?""""
 from __future__ import annotations
 
 import argparse
@@ -13,6 +10,7 @@ from RAG.src.utils.errors import RagPermanentError
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Affiche les documents retrouvés (texte tronqué) et la trace."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("question")
     parser.add_argument("--mode", choices=MODES, default="full")

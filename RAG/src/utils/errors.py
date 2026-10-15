@@ -1,11 +1,4 @@
-"""Erreurs du RAG, classées selon qu'une relance peut ou non les corriger.
-
-La tâche Airflow traduit `RagPermanentError` en `AirflowFailException` : relancer
-ne changerait rien (mauvais modèle, document trop long, configuration absente), et
-consommer trois relances retarderait seulement le diagnostic. Les autres erreurs
-sont transitoires : Airflow relance, et la reprise ne refait que le travail manquant.
-"""
-
+"""Erreurs du RAG : `RagPermanentError` n'est pas relancée par Airflow, les autres sont transitoires."""
 from __future__ import annotations
 
 
@@ -58,8 +51,7 @@ class LlmUnavailableError(Exception):
 
 
 class LlmQuotaExhaustedError(LlmUnavailableError):
-    """Quota du fournisseur épuisé : inutile de réessayer avant sa réinitialisation. Une
-    mesure s'arrête à la première occurrence au lieu d'attendre pour chaque question."""
+    """Quota du fournisseur épuisé : inutile de réessayer avant sa réinitialisation."""
 
     def __init__(self, message: str, retry_after_s: float | None = None) -> None:
         super().__init__(message)
@@ -71,9 +63,7 @@ class LlmProviderMismatchError(Exception):
 
 
 class LlmTruncatedError(LlmPermanentError):
-    """Réponse coupée par le plafond de jetons, ou vide : relancer donnerait la même
-    coupure, et la réponse a pourtant été facturée. `cost_usd` porte ce coût quand
-    OpenRouter a pu le donner, `None` sinon."""
+    """Réponse vide ou coupée par le plafond de jetons, mais facturée (`cost_usd` si connu)."""
 
     def __init__(self, message: str, *, cost_usd: float | None = None) -> None:
         super().__init__(message)
@@ -81,12 +71,7 @@ class LlmTruncatedError(LlmPermanentError):
 
 
 class GenerationRejectedError(Exception):
-    """Réponse du LLM de génération refusée par un contrôle déterministe (citation ou
-    identifiant hors des documents transmis, signification non sourcée). Interne : la
-    réponse est remplacée par un message fixe, jamais livrée.
-
-    Le message reste le code court. `detail` (diagnostic hors ligne uniquement) liste ce qui a
-    déclenché le contrôle : identifiants, termes, phrase portant la négation."""
+    """Réponse refusée par un contrôle déterministe, jamais livrée ; `detail` sert au diagnostic hors ligne."""
 
     def __init__(self, code: str, detail: list[str] | None = None) -> None:
         super().__init__(code)

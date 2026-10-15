@@ -1,24 +1,4 @@
-"""Client OpenRouter (E2a). Seul fichier du projet qui connaît OpenRouter.
-
-Chaque requête est figée sur un point d'accès précis (fournisseur, quantification),
-sans basculement, en zéro rétention, avec sortie JSON imposée. Le fournisseur
-réellement servi et le coût réel sont lus dans la réponse de chat elle-même : le champ
-`provider` de premier niveau et `usage.cost` (en dollars). `usage.cost` est documenté ;
-`provider` ne l'est pas, il a été observé le 05/10/2026 avec et sans zéro rétention
-(« DeepInfra » pour `deepinfra/bf16`). `GET /generation`, prévu à l'origine pour cette
-preuve, répondait 404 pour toutes les générations de ce compte, même plusieurs minutes
-après : il n'est plus appelé. Une réponse sans `provider` exploitable est rejetée (on
-ne peut pas prouver le point d'accès) ; un autre fournisseur est rejeté aussi.
-
-Limite connue : `provider` prouve le fournisseur, pas la région ni le point d'accès
-exact (« Google » ne distingue pas Vertex Europe d'une autre région). La région est
-imposée par `only` dans la requête ; elle n'est pas revérifiée après coup.
-
-Les messages d'erreur ne citent jamais le corps d'une réponse : il peut reprendre la
-question (donnée de santé) ou des en-têtes. Seuls le statut, le profil et un code
-d'erreur court y figurent.
-"""
-
+"""Client OpenRouter : point d'accès figé, zéro rétention, fournisseur servi et coût réel vérifiés dans la réponse."""
 from __future__ import annotations
 
 import time
@@ -53,9 +33,7 @@ _SERVICE = "OpenRouter"
 
 def build_payload(profile: LlmProfile, *, system: str, user: str, schema_name: str,
                   schema: dict, max_tokens: int) -> dict:
-    """Corps de requête. `max_tokens` plutôt que `max_completion_tokens`, et pas de
-    `temperature` : avec `require_parameters`, un paramètre refusé par le point
-    d'accès figé l'exclurait (vérifié sur l'API publique le 05/10/2026)."""
+    """Construit la requête ; ni `temperature` ni `max_completion_tokens`, qui excluraient le point d'accès figé."""
     provider = {
         "order": [profile.provider_tag], "only": [profile.provider_tag],
         "allow_fallbacks": False, "require_parameters": True,
@@ -74,6 +52,8 @@ def build_payload(profile: LlmProfile, *, system: str, user: str, schema_name: s
 
 
 class OpenRouterClient:
+    """Client OpenRouter à sortie JSON imposée."""
+
     def __init__(self, api_key: str, *, timeout_s: float = 60.0, session: requests.Session | None = None,
                  base_url: str = OPENROUTER_BASE_URL,
                  sleep: Callable[[float], None] = time.sleep) -> None:
@@ -81,13 +61,13 @@ class OpenRouterClient:
             raise LlmPermanentError("clé OpenRouter vide (OPENROUTER_API_KEY)")
         self._headers = {"Authorization": f"Bearer {api_key.strip()}"}
         self._timeout = timeout_s
-        # Session sans relance automatique : relancer un POST payant pourrait facturer
-        # deux fois la même analyse.
+        # Sans relance automatique : relancer un POST payant pourrait le facturer deux fois.
         self._session = session or requests.Session()
         self._base = base_url.rstrip("/")
         self._sleep = sleep
 
     def close(self) -> None:
+        """Ferme la session HTTP."""
         self._session.close()
 
     def _send(self, method: str, path: str, **kwargs) -> requests.Response:
@@ -95,11 +75,11 @@ class OpenRouterClient:
             return self._session.request(method, f"{self._base}{path}", headers=self._headers,
                                          timeout=self._timeout, **kwargs)
         except requests.RequestException as exc:
-            # Ni les en-têtes ni la clé dans le message.
             raise LlmUnavailableError(f"OpenRouter injoignable ({path}) : {type(exc).__name__}") from exc
 
     def complete_json(self, profile: LlmProfile, *, system: str, user: str, schema_name: str,
                       schema: dict, max_tokens: int) -> LlmCall:
+        """Appelle le modèle et rejette une réponse coupée, d'un autre fournisseur ou sans coût."""
         payload = build_payload(profile, system=system, user=user, schema_name=schema_name,
                                 schema=schema, max_tokens=max_tokens)
         response = post_with_bounded_retry(
@@ -123,8 +103,7 @@ class OpenRouterClient:
                 cost_usd=float(cost) if is_cost(cost) else None,
             )
         content = json_object(reply.raw_content, _SERVICE)
-        # Jamais d'acceptation silencieuse : sans `provider`, le point d'accès est improuvable.
-        # La valeur invalide n'est pas recopiée dans le message (elle vient du corps).
+        # Sans `provider`, le point d'accès est improuvable ; la valeur reçue n'est pas recopiée.
         if not (isinstance(served, str) and served.strip()):
             raise LlmUnavailableError(
                 f"fournisseur servi improuvable pour {profile.name} : champ provider absent ou invalide dans la réponse"

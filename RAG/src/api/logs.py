@@ -1,6 +1,4 @@
-"""Journal de l'API : une ligne JSON par événement, sur la sortie standard. Seuls des
-champs choisis y entrent ; jamais le texte de la question, de la réponse, ni la clé."""
-
+"""Journal JSON de l'API : champs autorisés seulement, jamais la question, la réponse ni la clé."""
 from __future__ import annotations
 
 import json
@@ -13,9 +11,7 @@ _ALLOWED = {"event", "request_id", "status", "http_status", "error", "timings_ms
 
 
 def configure_logging() -> None:
-    """Un gestionnaire sur la sortie standard pour `rag.api`, posé une seule fois. Litestar ne
-    configure pas la journalisation (`logging_config=None`) : il ne touche pas au journal racine
-    et ne journalise aucune trace d'exception (qui pourrait citer la requête)."""
+    """Pose une seule fois le gestionnaire de `rag.api` sur la sortie standard."""
     LOGGER.setLevel(logging.INFO)
     if not any(getattr(h, "_rag_api", False) for h in LOGGER.handlers):
         handler = logging.StreamHandler(sys.stdout)
@@ -25,4 +21,5 @@ def configure_logging() -> None:
 
 
 def log_event(**fields) -> None:
+    """Écrit un événement en JSON, limité aux champs autorisés."""
     LOGGER.info(json.dumps({k: v for k, v in fields.items() if k in _ALLOWED}, ensure_ascii=False, default=str))

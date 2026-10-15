@@ -1,18 +1,4 @@
-"""Canari : vérifie, avant chaque indexation, que le service sert bien le modèle
-attendu.
-
-Le service ne renvoie pas l'empreinte du modèle qu'il sert (`/info` indique
-seulement `"model_id": "/model"`). La seule vérification de bout en bout consiste à
-vectoriser des phrases fixes et à comparer le résultat à des vecteurs de référence,
-produits une fois par le modèle validé. Trois phrases plutôt qu'une : un seul texte
-pourrait, par hasard, rester proche d'un modèle à l'autre.
-
-Le canari prouve que le service sert **le même modèle que la référence**. L'identité de
-la référence, elle, tient à l'égalité vérifiée entre l'empreinte de `export.json` du
-dossier servi et celle de `config.yaml` (`check_served_model`), contrôlée à la
-production du canari comme avant chaque indexation.
-"""
-
+"""Canari : compare les vecteurs de trois phrases fixes à une référence pour prouver que le modèle servi est le bon."""
 from __future__ import annotations
 
 import argparse
@@ -41,16 +27,20 @@ CANARY_PHRASES: tuple[str, ...] = (
 
 @dataclass(frozen=True)
 class Canary:
+    """Vecteurs de référence des phrases du canari, étiquetés de l'empreinte du modèle."""
+
     fingerprint: str
     phrases: tuple[str, ...]
     vectors: np.ndarray
 
 
 def build_canary(client, fingerprint: str) -> Canary:
+    """Vectorise les phrases du canari avec le service courant."""
     return Canary(fingerprint, CANARY_PHRASES, client.embed(list(CANARY_PHRASES)))
 
 
 def canary_to_json(canary: Canary) -> str:
+    """Sérialise le canari en JSON."""
     return json.dumps(
         {
             "fingerprint": canary.fingerprint,
@@ -62,6 +52,7 @@ def canary_to_json(canary: Canary) -> str:
 
 
 def load_canary(path: Path) -> Canary:
+    """Charge et valide un canari ; lève `RagConfigurationError` s'il est illisible."""
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
         phrases = tuple(str(p) for p in raw["phrases"])
@@ -77,12 +68,13 @@ def load_canary(path: Path) -> Canary:
 
 
 def _row_cosines(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """Cosinus ligne à ligne entre deux matrices."""
     with np.errstate(divide="ignore", invalid="ignore"):
         return (a * b).sum(axis=1) / (np.linalg.norm(a, axis=1) * np.linalg.norm(b, axis=1))
 
 
 def verify_canary(client, canary: Canary, expected_fingerprint: str, min_cosine: float) -> float:
-    """Renvoie le cosinus le plus faible, ou lève `CanaryMismatchError`."""
+    """Vérifie le modèle servi contre le canari et renvoie le cosinus le plus faible, ou lève `CanaryMismatchError`."""
     if canary.fingerprint != expected_fingerprint:
         raise CanaryMismatchError(
             f"empreinte du canari « {canary.fingerprint} » différente de celle de "
@@ -101,6 +93,7 @@ def verify_canary(client, canary: Canary, expected_fingerprint: str, min_cosine:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Produit sur la sortie standard le canari du modèle servi."""
     parser = argparse.ArgumentParser(
         description="Produit le canari du modèle servi, étiqueté de l'empreinte de son export.json."
     )
@@ -116,6 +109,7 @@ def main(argv: list[str] | None = None) -> int:
     client = EmbeddingClient(services.embeddings_url, services.embeddings_api_key)
     sys.stdout.write(canary_to_json(build_canary(client, fingerprint)) + "\n")
     return 0
+
 
 if __name__ == "__main__":
     raise SystemExit(main())
