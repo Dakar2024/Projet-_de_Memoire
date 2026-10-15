@@ -1,10 +1,4 @@
-"""Pipeline complet d'une question (E2b) : recherche E2a puis génération.
-
-`answer_question` est pure (dépendances injectées). `QuestionPipeline` fait le câblage
-réel : N emplacements, chacun avec son propre `Searcher` (donc sa propre connexion
-PostgreSQL) et son propre client de génération. Une connexion psycopg ne doit pas porter
-deux transactions de fils différents : un emplacement n'est jamais partagé."""
-
+"""Pipeline d'une question (recherche puis génération) ; un emplacement par fil, jamais partagé (connexion psycopg)."""
 from __future__ import annotations
 
 import queue
@@ -23,7 +17,7 @@ from RAG.src.utils.config import DEFAULT_CONFIG_PATH, load_generation_config, lo
 
 
 def _quietly(close: Callable[[], object]) -> None:
-    """Nettoyage sur un chemin d'erreur : son propre échec est ignoré, l'erreur d'origine prime."""
+    """Nettoie sur un chemin d'erreur en ignorant son propre échec (l'erreur d'origine prime)."""
     try:
         close()
     except Exception:  # noqa: BLE001 - l'erreur d'origine est relevée par l'appelant
@@ -32,12 +26,14 @@ def _quietly(close: Callable[[], object]) -> None:
 
 @dataclass(frozen=True)
 class PipelineResult:
+    """Réponse, recherche et durées d'une question."""
+
     answer: Answer
     search: SearchResult
     timings_ms: dict[str, float]
 
     def as_dict(self, include_trace: bool) -> dict:
-        """Corps de réponse de l'API ; la trace (recherche et génération) seulement sur demande."""
+        """Construit le corps de réponse de l'API ; la trace seulement sur demande."""
         a = self.answer
         data = {"status": a.status, "answer": a.answer, "history": list(a.history),
                 "sources": [s.as_dict() for s in a.sources], "disclaimer": a.disclaimer,
@@ -52,7 +48,7 @@ class PipelineResult:
 def answer_question(question: str, *, search: Callable[[str], SearchResult],
                     generate: Callable[[str, SearchResult], Answer],
                     clock: Callable[[], float] = time.perf_counter) -> PipelineResult:
-    """Recherche puis génération, chronométrées ; la question est transmise telle quelle."""
+    """Enchaîne recherche et génération en les chronométrant."""
     start = clock()
     result = search(question)
     searched = clock()
@@ -66,20 +62,18 @@ def answer_question(question: str, *, search: Callable[[str], SearchResult],
 
 @dataclass
 class Slot:
-    """Un emplacement : un `Searcher` (une connexion PostgreSQL) et un client de génération."""
+    """Emplacement : un `Searcher` (une connexion PostgreSQL) et un client de génération."""
 
     searcher: Searcher
     generator: object
 
 
 class QuestionPipeline:
-    """Gestionnaire de contexte : ouvre `slots` emplacements à l'entrée, les ferme à la sortie.
-    `acquire` est non bloquant : sans emplacement libre, l'API répond 429."""
+    """Ouvre `slots` emplacements à l'entrée et les ferme à la sortie ; `acquire` ne bloque jamais."""
 
     def __init__(self, slots: int, *, config_path: Path = DEFAULT_CONFIG_PATH, env=None,
                  analysis_cache_path: Path | None = None) -> None:
         if analysis_cache_path is not None and slots > 1:
-            # Le cache d'analyse n'admet qu'un écrivain à la fois.
             raise ValueError("le cache d'analyse exige un seul emplacement")
         self._n = slots
         self._config_path, self._env, self._cache_path = config_path, env, analysis_cache_path
@@ -90,13 +84,14 @@ class QuestionPipeline:
         self._lock = threading.Lock()
 
     def __enter__(self) -> QuestionPipeline:
+        """Ouvre tous les emplacements, ou referme ceux déjà ouverts en cas d'échec."""
         try:
             for _ in range(self._n):
                 searcher = Searcher(config_path=self._config_path, env=self._env, cache_path=self._cache_path)
                 try:
                     searcher.__enter__()
                 except BaseException:
-                    # Base non ouverte : fermer quand même les sessions HTTP de __init__.
+                    # Base non ouverte : fermer quand même les sessions HTTP.
                     _quietly(searcher.close)
                     raise
                 try:
@@ -108,7 +103,6 @@ class QuestionPipeline:
                 self._all.append(slot)
                 self._free.put(slot)
         except BaseException:
-            # Une erreur de fermeture ne doit pas masquer l'erreur d'ouverture.
             _quietly(lambda: self.__exit__(None, None, None))
             raise
         return self
@@ -129,6 +123,7 @@ class QuestionPipeline:
             raise first
 
     def acquire(self) -> Slot | None:
+        """Prend un emplacement libre, ou None s'il n'y en a pas."""
         try:
             slot = self._free.get_nowait()
         except queue.Empty:
@@ -138,8 +133,7 @@ class QuestionPipeline:
         return slot
 
     def release(self, slot: Slot) -> None:
-        """Rend un emplacement acquis ; le rendre deux fois le mettrait deux fois en file,
-        et deux questions partageraient alors une connexion."""
+        """Rend un emplacement acquis ; un double rendu lève (il ferait partager une connexion)."""
         with self._lock:
             if id(slot) not in self._busy:
                 raise RuntimeError("emplacement non acquis ou déjà rendu")
@@ -147,6 +141,7 @@ class QuestionPipeline:
         self._free.put(slot)
 
     def ask(self, slot: Slot, question: str) -> PipelineResult:
+        """Répond à une question avec l'emplacement fourni."""
         g = self._generation
         return answer_question(
             question, search=slot.searcher.search,
@@ -154,7 +149,7 @@ class QuestionPipeline:
                                                   max_tokens=g.max_tokens))
 
     def ready(self) -> dict[str, bool]:
-        """Base et service d'embedding joignables, sans emplacement (connexion courte)."""
+        """Indique si la base et le service d'embedding répondent (connexion courte, hors emplacement)."""
         services = load_service_settings(self._env)
         status = {"database": False, "embeddings": False}
         try:

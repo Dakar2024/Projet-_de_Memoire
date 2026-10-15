@@ -1,8 +1,4 @@
-"""Génération de la réponse (E2b) : appel au LLM, revalidation du schéma, contrôles
-déterministes, messages fixes. Les métadonnées des sources viennent des documents lus
-en base, jamais du LLM ; l'historique de classification aussi, restitué par le code à
-partir de la ligne Gold « Classification history »."""
-
+"""Génération de la réponse : LLM, revalidation, contrôles déterministes ; sources et historique viennent de la base."""
 from __future__ import annotations
 
 import re
@@ -23,13 +19,14 @@ from RAG.src.utils.config import LlmProfile
 from RAG.src.utils.errors import GenerationRejectedError, LlmTruncatedError, LlmUnavailableError
 
 _KEYS = {"status", "scope_reason", "answer", "citations"}
-# Ligne écrite par src/transformations/silver_to_gold_rag.py :
-# « Classification history: previously {previous} until {closed_on}. »
+# Ligne écrite par silver_to_gold_rag : « Classification history: previously X until D. »
 _HISTORY_LINE = re.compile(r"Classification history: previously (?P<label>.+?) until (?P<until>[^.\n]+)\.")
 
 
 @dataclass(frozen=True)
 class Source:
+    """Métadonnées d'une source citée, lues en base."""
+
     doc_id: str
     gene: str | None
     variant: str | None
@@ -45,11 +42,14 @@ class Source:
     previous_until: str | None = None
 
     def as_dict(self) -> dict:
+        """Sérialise la source."""
         return asdict(self)
 
 
 @dataclass(frozen=True)
 class Answer:
+    """Réponse livrée, avec ses sources, son avertissement et le coût de génération."""
+
     status: str
     answer: str
     sources: tuple[Source, ...]
@@ -62,11 +62,11 @@ class Answer:
     latency_ms: float
     from_llm: bool
     history: tuple[str, ...] = ()
-    # Texte d'un `not_in_sources` du LLM, retenu : jamais livré ni exposé par l'API (ni ici,
-    # ni dans PipelineResult.as_dict) ; seule la recette le consigne pour examen.
+    # Texte libre d'un `not_in_sources` : jamais livré, seule la recette le consigne.
     llm_text_withheld: str | None = None
 
     def as_dict(self) -> dict:
+        """Sérialise la réponse, sans le texte retenu."""
         data = asdict(self)
         data.pop("llm_text_withheld")
         data["sources"] = [s.as_dict() for s in self.sources]
@@ -75,6 +75,7 @@ class Answer:
 
 
 def _source(d: RetrievedDocument) -> Source:
+    """Construit une source à partir d'un document, historique compris."""
     match = _HISTORY_LINE.search(d.text)
     previous = match.group("label").strip() if match else None
     return Source(doc_id=d.doc_id, gene=d.gene_symbol, variant=d.hgvs_c, protein=d.hgvs_p,
@@ -88,14 +89,14 @@ def _source(d: RetrievedDocument) -> Source:
 
 
 def _history(sources) -> tuple[str, ...]:
-    """Une phrase par source citée ayant un historique, dans l'ordre des citations."""
-    # Nom HGVS : transcrit (hgvs_c) sinon protéine (hgvs_p) ; jamais le doc_id interne.
+    """Rend une phrase d'historique par source citée qui en a un, dans l'ordre des citations."""
     return tuple(messages.history_sentence(s.variant or s.protein, s.clinvar_variation_id,
                                            s.previous_significance_fr, s.previous_until)
                  for s in sources if s.previous_significance_fr and s.previous_until)
 
 
 def _archive(documents) -> str | None:
+    """Renvoie l'archive ClinVar la plus récente des documents."""
     versions = sorted({d.source_version for d in documents if d.source_version})
     return versions[-1] if versions else None
 
@@ -116,13 +117,12 @@ def validate_generation(content: Mapping) -> tuple[str, str | None, str, list[st
         raise ValueError("answer non textuelle ou trop longue")
     if not isinstance(citations, list) or not all(isinstance(c, str) for c in citations):
         raise ValueError("citations doit être une liste de textes")
-    # Le modèle émet parfois « \\n » littéral (deux caractères) : ramené à un vrai retour à la
-    # ligne avant tout contrôle et avant l'affichage.
+    # « \\n » littéral parfois émis par le modèle, ramené à un vrai retour à la ligne.
     return status, reason, text.replace("\\n", "\n").strip(), list(dict.fromkeys(citations))
 
 
 def _fixed(status: str, text: str, documents, *, reason: str | None = None, sources=()) -> Answer:
-    """Réponse à message fixe, sans appel au LLM."""
+    """Construit une réponse à message fixe, sans appel au LLM."""
     return Answer(status=status, answer=text, sources=tuple(sources), disclaimer=messages.disclaimer(_archive(documents)),
                   scope_reason=reason, rejected=None, provider_name=None, model=None, cost_usd=0.0,
                   latency_ms=0.0, from_llm=False)
@@ -130,18 +130,15 @@ def _fixed(status: str, text: str, documents, *, reason: str | None = None, sour
 
 def generate_answer(question: str, result: SearchResult, *, client, profile: LlmProfile, max_tokens: int,
                     clock: Callable[[], float] = time.perf_counter) -> Answer:
+    """Répond à la question : messages fixes si possible, sinon LLM puis contrôles déterministes."""
     documents, trace = list(result.documents), result.trace
     ids = trace.identifiers
-    # Cas tranchés sans LLM : gène hors panel seul, identifiants tous absents, hors périmètre
-    # par règles, aucun document.
-    # Gène hors panel seul : sans identifiant de variant cité, rien à chercher dans les fiches.
+    # Cas tranchés sans LLM : gène hors panel seul, identifiants tous absents, hors périmètre, aucun document.
     if "gene_out_of_panel" in trace.flags and not ids.genes and not ids.has_variant_identifier:
         return _fixed("out_of_scope", messages.OUT_OF_SCOPE["gene_out_of_panel"], documents, reason="gene_out_of_panel")
     cited_ids = [f"rs{r}" for r in ids.rs] + list(ids.hgvs_c) + list(ids.hgvs_p)
     if cited_ids and set(cited_ids) <= set(trace.not_found_identifiers):
         return _fixed("not_in_sources", messages.identifiers_not_found(cited_ids), documents)
-    # Hors périmètre par règles (comptage, ACMG, fréquences, conseil clinique) : message fixe
-    # sans appel au LLM. La règle du prompt reste un second filet.
     scope = detect_out_of_scope(question)
     if scope is not None:
         return _fixed("out_of_scope", messages.OUT_OF_SCOPE[scope], documents, reason=scope)
@@ -155,8 +152,7 @@ def generate_answer(question: str, result: SearchResult, *, client, profile: Llm
                                     schema_name=GENERATION_SCHEMA_NAME, schema=GENERATION_SCHEMA,
                                     max_tokens=max_tokens)
     except LlmTruncatedError as exc:
-        # Génération coupée par le plafond de jetons : aucune réponse exploitable, comme une
-        # sortie hors schéma (API 503, recette `generation_unavailable`), et non une erreur 500.
+        # Réponse coupée : traitée comme indisponible (503), pas comme une erreur interne.
         raise LlmUnavailableError("génération coupée ou vide") from exc
     latency = (clock() - start) * 1000
     try:
@@ -170,8 +166,7 @@ def generate_answer(question: str, result: SearchResult, *, client, profile: Llm
         return Answer(status=status, answer=messages.OUT_OF_SCOPE[reason], sources=(), scope_reason=reason,
                       rejected=None, **meta)
     if status == "not_in_sources":
-        # Toujours le message fixe : le texte libre du LLM n'est jamais livré. Il reste contrôlé
-        # (contre aucun document) pour consigner un éventuel code de rejet dans la recette.
+        # Message fixe livré ; le texte du LLM n'est contrôlé que pour consigner un éventuel rejet.
         rejected = None
         try:
             verify_answer(text, [], [], status, question)
@@ -179,11 +174,8 @@ def generate_answer(question: str, result: SearchResult, *, client, profile: Llm
             rejected = str(exc)
         return Answer(status=status, answer=messages.NO_DOCUMENT, sources=(), scope_reason=None,
                       rejected=rejected, llm_text_withheld=text, **meta)
-    # Références « (D3) » / « [D1, D2] » déjà citées : retirées du texte (correctif post-recette
-    # n° 1, voir checks.strip_cited_labels) ; toute autre étiquette reste rejetée.
+    # Étiquettes déjà citées retirées du texte ; toute autre étiquette reste rejetée.
     text = strip_cited_labels(text, citations)
-    # Citations D_k -> doc_id réels (table construite par le code) ; une étiquette inconnue est
-    # rejetée par les contrôles (citation_not_transmitted), jamais une erreur d'index.
     resolved = resolve_citations(citations, documents)
     try:
         verify_answer(text, documents, resolved, status, question)
