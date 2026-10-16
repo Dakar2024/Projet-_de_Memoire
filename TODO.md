@@ -73,13 +73,10 @@ de développement.
 
 ## 7. RAG — durcissements différés
 
-- [ ] **Supprimer la fenêtre sans modèle de `export_model.py --force`** (`rmtree` puis `rename`) ;
-      d'ici là, arrêter `rag-embeddings` avant un `--force`.
 - [ ] **Verrou de l'image d'export hors x86_64**, si l'export doit tourner ailleurs.
 - [ ] **Sortir les tests d'intégration de la base de production** (panel `test_integration` dans
       `rag-postgres`). La recherche filtre déjà sur les panels réels.
 - [ ] **Automatiser l'aller-retour indexation + rejeu** (spec E1 §7.3), prouvé à la main le 04/10.
-- [ ] **Avertissement Polars `is_in`** dans `RAG/experiments/comparaison_embeddings.py`, avant de le relancer.
 - [ ] **Journaliser la déconnexion du client** avant la réponse (seuls `late_error` et `late_result`
       le sont).
 
