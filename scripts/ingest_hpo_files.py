@@ -18,6 +18,7 @@ from ingestion.storage import (
     partition_uri,
     put_file,
     read_manifest,
+    sha256_file,
 )
 
 OBJECT_NAME = "genes_to_phenotype.txt"
@@ -51,6 +52,8 @@ def ingest_hpo_files(
             source_version=release_tag,
             files={OBJECT_NAME: local.stat().st_size},
             record_count=1,
+            # Aucune somme publiée pour ce fichier : la nôtre, figée au dépôt, est revérifiée en bronze.
+            sha256={OBJECT_NAME: sha256_file(local)},
         ),
     )
     # Purge après finalisation : avant, le fichier local est la seule copie.

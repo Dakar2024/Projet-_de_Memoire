@@ -1,3 +1,4 @@
+import hashlib
 import json
 from unittest.mock import patch
 
@@ -43,6 +44,7 @@ def test_ingest_hpo_files_manifest_pins_the_release_tag(tmp_path):
     assert manifest["source_version"] == "v2026-09-01"
     assert manifest["source_url"] == RELEASE
     assert manifest["files"] == {"genes_to_phenotype.txt": len(b"contenu")}
+    assert manifest["sha256"] == {"genes_to_phenotype.txt": hashlib.sha256(b"contenu").hexdigest()}
 
 
 @responses.activate

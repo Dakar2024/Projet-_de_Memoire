@@ -60,7 +60,7 @@ indique comment elle évoluerait sur un serveur exposé.
 | Réf. | Constat | Gravité | En production | État |
 |---|---|---|---|---|
 | C1 | La clé API NCBI voyage en paramètre d'URL, comme l'exige NCBI. Le message d'une erreur HTTP reproduit l'URL complète, et Airflow journalise les exceptions de tâche : la clé finissait en clair dans des logs conservés et consultables depuis l'interface web. | Moyen | Moyen | **Corrigé** |
-| C2 | Aucune vérification d'intégrité des fichiers téléchargés. Seule la taille annoncée est comparée. ClinVar publie pourtant une somme de contrôle MD5 à côté de son archive. | Moyen | Moyen | Ouvert |
+| C2 | Aucune vérification d'intégrité des fichiers téléchargés. Seule la taille annoncée est comparée. ClinVar publie pourtant une somme de contrôle MD5 à côté de son archive. | Moyen | Moyen | ✅ Corrigé autrement le 16/10/2026 : vérifié sur le FTP du NCBI, le `.md5` n'existe que pour le fichier courant hebdomadaire, **pas pour les archives mensuelles** que le pipeline lit. Le SHA-256 de ClinVar et de HPO est donc calculé au dépôt, écrit dans le manifest raw (`sha256`) et revérifié par `raw_to_bronze` ; la taille reste comparée au téléchargement. Limite : une corruption antérieure au dépôt (cache local abîmé) n'est pas détectable sans somme publiée. |
 | C3 | Le XML MedGen est analysé avec `xml.etree`, qui ne résout pas les entités externes (pas de risque d'exfiltration) mais reste vulnérable aux bombes d'entités. La source est de confiance ; le risque n'existe qu'en cas de compromission amont. | Faible | Faible | Ouvert |
 | C4 | ✅ Toutes les sources sont en HTTPS, la vérification TLS n'est désactivée nulle part, et chaque appel porte un délai d'attente explicite. | — | — | — |
 | C5 | ✅ Les tentatives sont bornées (trois au maximum, avec temporisation croissante et respect de l'en-tête `Retry-After`) et un limiteur de débit respecte la politique d'usage de NCBI. | — | — | — |
@@ -69,7 +69,7 @@ indique comment elle évoluerait sur un serveur exposé.
 
 | Réf. | Constat | Gravité | En production | État |
 |---|---|---|---|---|
-| I1 | Les chemins d'objets sont construits par concaténation, sans normalisation. Les valeurs proviennent aujourd'hui de constantes internes, donc rien n'est exploitable ; mais une date fournie par un déclenchement manuel Airflow atteindrait cette construction sans validation. | Moyen | Moyen | Ouvert |
+| I1 | Les chemins d'objets sont construits par concaténation, sans normalisation. Les valeurs proviennent aujourd'hui de constantes internes, donc rien n'est exploitable ; mais une date fournie par un déclenchement manuel Airflow atteindrait cette construction sans validation. | Moyen | Moyen | ✅ Corrigé le 16/10/2026 : `partition_uri` refuse une source ou un panel hors `[a-z][a-z0-9_]*` et une date hors `AAAA-MM-JJ` (`fullmatch`). |
 | I2 | Les objets sont déposés sans chiffrement côté serveur ni somme de contrôle transmise. | Faible | Moyen | Ouvert |
 | I3 | ✅ Le protocole d'écriture d'une partition — fichier temporaire, renommage atomique, manifeste, puis marqueur de complétude vérifié en aval — empêche qu'une partition partielle soit lue comme complète. C'est la réponse adaptée à un stockage objet dépourvu de renommage atomique. | — | — | — |
 | I4 | ✅ Aucune exécution dynamique dans tout le code : ni `eval`, ni `exec`, ni désérialisation `pickle`, ni appel de sous-processus. La surface d'attaque applicative est minimale. | — | — | — |

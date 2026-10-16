@@ -1,3 +1,4 @@
+import hashlib
 import io
 import json
 
@@ -20,6 +21,7 @@ from ingestion.storage import (
     put_bytes,
     put_file,
     read_manifest,
+    sha256_file,
     storage_options,
 )
 
@@ -418,3 +420,9 @@ def test_begin_partition_on_s3():
     begin_partition(partition, client=client)
 
     assert partition_is_complete(partition, client=client) is False
+
+
+def test_sha256_file_hashes_a_file_by_blocks(tmp_path):
+    path = tmp_path / "gros.bin"
+    path.write_bytes(b"x" * 3_000_000)
+    assert sha256_file(path) == hashlib.sha256(b"x" * 3_000_000).hexdigest()
