@@ -1,6 +1,7 @@
 """Entrées-sorties du lac médaillon (`file://` ou `s3://`) et protocole de partition."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -18,6 +19,8 @@ FILE_SCHEME = "file://"
 
 SUCCESS_MARKER = "_SUCCESS"
 MANIFEST_NAME = "manifest.json"
+# Lecture par blocs de 1 Mio : le bulk ClinVar (~450 Mo) n'est jamais chargé en mémoire.
+_HASH_BLOCK_SIZE = 1 << 20
 
 # Noms de source et de panel : minuscules, chiffres, `_` ; ni `/`, ni `..`, ni vide (I1).
 _PATH_COMPONENT = re.compile(r"[a-z][a-z0-9_]*")
@@ -160,6 +163,15 @@ def delete(uri: str, client=None) -> None:
     _local_path(uri).unlink(missing_ok=True)
 
 
+def sha256_file(path: Path) -> str:
+    """Calcule le SHA-256 d'un fichier local, par blocs."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while block := handle.read(_HASH_BLOCK_SIZE):
+            digest.update(block)
+    return digest.hexdigest()
+
+
 def build_manifest(
     source: str,
     logical_date: str,
@@ -168,9 +180,10 @@ def build_manifest(
     files: dict[str, int],
     record_count: int,
     panel: str | None = None,
+    sha256: dict[str, str] | None = None,
 ) -> dict:
-    """Construit le manifest d'une partition, avec la version épinglée de la source."""
-    return {
+    """Construit le manifest d'une partition, avec la version épinglée de la source et, si fourni, le SHA-256."""
+    manifest = {
         "source": source,
         "logical_date": logical_date,
         "panel": panel,
@@ -180,6 +193,9 @@ def build_manifest(
         "record_count": record_count,
         "written_at": datetime.now(timezone.utc).isoformat(),
     }
+    if sha256 is not None:
+        manifest["sha256"] = sha256
+    return manifest
 
 
 def begin_partition(partition: str, client=None) -> None:

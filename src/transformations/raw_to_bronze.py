@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import gzip
+import hashlib
 import json
 import re
 import tempfile
@@ -28,12 +29,22 @@ def _normalize_column_name(name: str) -> str:
     return re.sub(r"[^0-9a-zA-Z]+", "_", name).strip("_").lower()
 
 
-def _download_to_local(raw_partition: str, object_name: str, work_dir: Path) -> Path:
-    """Copie un objet raw en local, en flux ; le nom garde l'extension dont Polars déduit le gzip."""
+def _download_to_local(
+    raw_partition: str, object_name: str, work_dir: Path, expected_sha256: str | None = None
+) -> Path:
+    """Copie un objet raw en local, en flux, et vérifie son SHA-256 s'il est au manifest ; garde l'extension."""
     local_path = work_dir / object_name
+    digest = hashlib.sha256()
     with open_stream(f"{raw_partition}/{object_name}") as src, open(local_path, "wb") as dst:
         while chunk := src.read(1024 * 1024):
+            digest.update(chunk)
             dst.write(chunk)
+    # Partitions déposées avant le 16/10/2026 : pas de somme au manifest, rien à comparer.
+    if expected_sha256 is not None and digest.hexdigest() != expected_sha256:
+        raise ValueError(
+            f"SHA-256 de {raw_partition}/{object_name} différent de celui du manifest : "
+            "objet raw altéré depuis son dépôt, relancer l'acquisition"
+        )
     return local_path
 
 
@@ -42,9 +53,10 @@ def _convert_flat_source(
     object_name: str,
     technical_columns: dict[str, str],
     work_dir: Path,
+    expected_sha256: str | None = None,
 ) -> Path:
-    """Convertit une source TSV en Parquet, en flux : noms normalisés, lignes vides retirées."""
-    local_input = _download_to_local(raw_partition, object_name, work_dir)
+    """Convertit une source TSV en Parquet, en flux : intégrité vérifiée, noms normalisés, lignes vides retirées."""
+    local_input = _download_to_local(raw_partition, object_name, work_dir, expected_sha256)
     lf = pl.scan_csv(local_input, separator="\t", infer_schema_length=0)
     original_names = lf.collect_schema().names()
     lf = lf.rename({name: _normalize_column_name(name) for name in original_names})
@@ -154,7 +166,8 @@ def raw_to_bronze(
             work_dir = Path(tmp)
             if isinstance(spec, _FlatSource):
                 output_path = _convert_flat_source(
-                    raw_partition, spec.object_name, technical_columns, work_dir
+                    raw_partition, spec.object_name, technical_columns, work_dir,
+                    raw_manifest.get("sha256", {}).get(spec.object_name),
                 )
             else:
                 output_path = _convert_jsonl_source(

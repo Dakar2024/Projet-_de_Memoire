@@ -17,6 +17,7 @@ from ingestion.storage import (
     finalize_partition,
     partition_uri,
     put_file,
+    sha256_file,
 )
 
 OBJECT_NAME = "variant_summary.txt.gz"
@@ -44,6 +45,8 @@ def ingest_clinvar(
             source_version=archive_version_for(logical_date),
             files={OBJECT_NAME: local.stat().st_size},
             record_count=1,
+            # Aucune somme publiée pour ce fichier : la nôtre, figée au dépôt, est revérifiée en bronze.
+            sha256={OBJECT_NAME: sha256_file(local)},
         ),
     )
     # Purge après finalisation : avant, le fichier local est la seule copie.

@@ -1,4 +1,5 @@
 import gzip
+import hashlib
 import io
 import json
 import re
@@ -235,14 +236,15 @@ def test_convert_jsonl_source_produces_zero_rows_for_an_empty_source(tmp_path):
     assert df.schema["esummary_json"] == pl.Utf8
 
 
-def _seed_raw_flat(lake, source, logical_date, object_name, content: bytes, source_version, panel=None):
+def _seed_raw_flat(lake, source, logical_date, object_name, content: bytes, source_version, panel=None,
+                   sha256=None):
     partition = partition_uri(RAW, source, logical_date, panel=panel, lake_uri=lake)
     begin_partition(partition)
     put_bytes(f"{partition}/{object_name}", content)
     finalize_partition(partition, build_manifest(
         source=source, logical_date=logical_date, source_url="https://example.org/src",
         source_version=source_version, files={object_name: len(content)}, record_count=2,
-        panel=panel,
+        panel=panel, sha256=sha256,
     ))
     return partition
 
@@ -380,3 +382,26 @@ def test_raw_to_bronze_finalizes_earlier_sources_when_a_later_one_fails(tmp_path
     assert partition_is_complete(hpo_bronze)
     inconnue_bronze = partition_uri(BRONZE, "inconnue", "2026-09-01", lake_uri=lake)
     assert not partition_is_complete(inconnue_bronze)
+
+
+def test_raw_to_bronze_accepts_a_raw_object_matching_its_recorded_sha256(tmp_path):
+    lake = f"file://{tmp_path}/lake"
+    content = gzip.compress(FLAT_TSV.encode())
+    _seed_raw_flat(lake, "clinvar", "2026-09-01", FLAT_OBJECT, content, "2026-09",
+                   sha256={FLAT_OBJECT: hashlib.sha256(content).hexdigest()})
+
+    [partition] = raw_to_bronze("2026-09-01", ["clinvar"], lake_uri=lake)
+
+    assert partition_is_complete(partition)
+
+
+def test_raw_to_bronze_refuses_a_raw_object_altered_since_its_deposit(tmp_path):
+    """Un objet raw abîmé après le dépôt (C2) arrête la conversion au lieu de produire un bronze faux."""
+    lake = f"file://{tmp_path}/lake"
+    content = gzip.compress(FLAT_TSV.encode())
+    _seed_raw_flat(lake, "clinvar", "2026-09-01", FLAT_OBJECT, content, "2026-09",
+                   sha256={FLAT_OBJECT: hashlib.sha256(b"autre contenu").hexdigest()})
+
+    with pytest.raises(ValueError, match="SHA-256"):
+        raw_to_bronze("2026-09-01", ["clinvar"], lake_uri=lake)
+    assert not partition_is_complete(partition_uri(BRONZE, "clinvar", "2026-09-01", lake_uri=lake))

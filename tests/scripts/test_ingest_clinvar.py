@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 from unittest.mock import patch
@@ -38,6 +39,8 @@ def test_ingest_clinvar_manifest_pins_the_source_version(tmp_path):
     assert manifest["source_version"] == "2026-09"
     assert manifest["source_url"] == ARCHIVE
     assert manifest["files"] == {"variant_summary.txt.gz": len(b"bulk gzippe")}
+    # Le NCBI ne publie pas de somme pour les archives mensuelles : on fige la nôtre au dépôt (C2).
+    assert manifest["sha256"] == {"variant_summary.txt.gz": hashlib.sha256(b"bulk gzippe").hexdigest()}
 
 
 @responses.activate
