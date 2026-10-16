@@ -65,3 +65,17 @@ def test_a_manual_run_without_logical_date_fails_with_instructions():
     échoue définitivement, sans consommer les retries, en disant comment relancer."""
     with pytest.raises(AirflowFailException, match="--logical-date"):
         dag.get_task("resolve_logical_date").python_callable()
+
+
+def test_a_changed_source_schema_fails_without_consuming_retries(monkeypatch):
+    """Une relance relirait le même fichier : l'erreur de schéma est définitive (P13)."""
+    from dags import dag_acquisition_sources
+    from ingestion.errors import SourceSchemaError
+
+    def schema_change(logical_date, sources):
+        raise SourceSchemaError("clinvar : colonnes manquantes ['GeneSymbol']")
+
+    monkeypatch.setattr(dag_acquisition_sources, "raw_to_bronze", schema_change)
+
+    with pytest.raises(AirflowFailException, match="GeneSymbol"):
+        dag.get_task("raw_to_bronze_shared").python_callable("2026-09-10")

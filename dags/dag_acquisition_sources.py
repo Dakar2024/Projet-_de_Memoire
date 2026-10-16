@@ -14,7 +14,7 @@ from airflow.sdk.exceptions import AirflowFailException
 from dags.common.alerting import alert_args
 from dags.common.dates import record_sources_date, require_logical_date
 from dags.common.panels import HEAVY_CONVERSION_POOL, SHARED_SOURCES, SOURCES_READY
-from ingestion.errors import ConfigurationError
+from ingestion.errors import ConfigurationError, SourceSchemaError
 from ingestion.storage import assert_partitions_complete
 from scripts.ingest_clinvar import ingest_clinvar
 from scripts.ingest_hpo_files import ingest_hpo_files
@@ -63,7 +63,11 @@ with DAG(
 
     @task(task_id="raw_to_bronze_shared", pool=HEAVY_CONVERSION_POOL)
     def raw_to_bronze_shared(acquisition_date: str) -> list[str]:
-        return raw_to_bronze(acquisition_date, SHARED_SOURCES)
+        try:
+            return raw_to_bronze(acquisition_date, SHARED_SOURCES)
+        except SourceSchemaError as exc:
+            # Une relance relirait le même fichier : échec définitif, message de la source conservé.
+            raise AirflowFailException(str(exc)) from exc
 
     @task(task_id="check_bronze_shared", outlets=[SOURCES_READY])
     def check_bronze_shared(bronze_partitions: list[str], acquisition_date: str, **context) -> None:

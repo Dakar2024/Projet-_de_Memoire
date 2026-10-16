@@ -55,8 +55,6 @@ Références : `reference/audit_production.md`.
 - [ ] **Rétention Delta (`VACUUM`) et cycle de vie MinIO** (P11, P9) : aucun des deux n'existe.
 - [ ] **Procédure de reprise** (P17) : écrire le rattrapage d'un mois manquant et la restauration
       après perte du lac.
-- [ ] **Vérifier le schéma des sources à l'entrée** (P13) : une colonne ClinVar renommée doit donner
-      un message explicite, pas une erreur Polars.
 
 ## 6. Sécurité
 
