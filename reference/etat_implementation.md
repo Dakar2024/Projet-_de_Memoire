@@ -65,7 +65,7 @@ exécution de bout en bout réussie des DAGs de panel** :
 | Polars | 1.44.1 | Moteur de transformation, en lecture paresseuse pour ClinVar | `raw_to_bronze.py`, `bronze_to_silver.py` | ✅ |
 | delta-rs (`deltalake`) | 1.6.3 | Tables Delta Silver et Gold : MERGE, overwrite par partition `panel` | historiques Delta lus dans MinIO | ✅ |
 | MinIO | image épinglée par empreinte | Lac objet, un bucket par couche | `docker/minio/create-buckets.sh` et contenu du volume | ✅ |
-| Apache Airflow | 3.3.1, LocalExecutor | 3 DAGs, 3 pools (`ncbi`, `silver_write`, `gold_write`) | table `dag_run` | 🟠 voir §5 |
+| Apache Airflow | 3.3.1, LocalExecutor | 3 DAGs, 3 pools (`ncbi`, `conversion_lourde`, `rag_index`), un run actif par DAG | table `dag_run` | 🟠 voir §5 |
 | PostgreSQL | 16-alpine | **Uniquement la base de métadonnées d'Airflow** | `docker-compose.yml`, service `postgres` | ✅ |
 | boto3, requests | 1.41.5 / 2.34.2 | Accès S3 et HTTP | `storage.py`, `http_client.py` | ✅ |
 | pytest, responses | 9.1.1 / 0.26.2 | Tests sans réseau | `requirements-dev.txt` | ✅ |

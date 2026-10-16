@@ -14,13 +14,12 @@ from airflow.sdk.exceptions import AirflowFailException
 from dags.common.alerting import alert_args
 from dags.common.dates import resolve_sources_date
 from dags.common.panels import (
-    GOLD_WRITE_POOL,
+    HEAVY_CONVERSION_POOL,
     NCBI_POOL,
     PANEL_LABELS,
     PANEL_SOURCES,
     PANELS,
     RAG_INDEX_POOL,
-    SILVER_WRITE_POOL,
     SOURCES_READY,
 )
 from ingestion.errors import ConfigurationError
@@ -63,6 +62,8 @@ def build_panel_dag(panel: str, genes: list[str]) -> DAG:
         schedule=[SOURCES_READY],
         start_date=dt.datetime(2026, 1, 1),
         catchup=False,
+        # Deux runs du même panel écriraient la même partition `raw`.
+        max_active_runs=1,
         default_args=DEFAULT_ARGS,
         tags=["medaillon", panel],
     ) as dag:
@@ -111,7 +112,7 @@ def build_panel_dag(panel: str, genes: list[str]) -> DAG:
                 medgen_partition,
             ])
 
-        @task(task_id="raw_to_bronze")
+        @task(task_id="raw_to_bronze", pool=HEAVY_CONVERSION_POOL)
         def task_raw_to_bronze(sources_date: str) -> list[str]:
             return raw_to_bronze(sources_date, PANEL_SOURCES, panel=panel)
 
@@ -119,7 +120,7 @@ def build_panel_dag(panel: str, genes: list[str]) -> DAG:
         def task_check_bronze(bronze_partitions: list[str]) -> None:
             assert_partitions_complete(bronze_partitions)
 
-        @task(task_id="bronze_to_silver", pool=SILVER_WRITE_POOL)
+        @task(task_id="bronze_to_silver", pool=HEAVY_CONVERSION_POOL)
         def task_bronze_to_silver(sources_date: str) -> None:
             bronze_to_silver(sources_date, panel)
 
@@ -127,11 +128,11 @@ def build_panel_dag(panel: str, genes: list[str]) -> DAG:
         def task_quality_check_silver(sources_date: str) -> None:
             quality_check_silver(sources_date, panel)
 
-        @task(task_id="silver_to_gold_rag", pool=GOLD_WRITE_POOL)
+        @task(task_id="silver_to_gold_rag", pool=HEAVY_CONVERSION_POOL)
         def task_silver_to_gold_rag(sources_date: str) -> None:
             silver_to_gold_rag(sources_date, panel)
 
-        @task(task_id="silver_to_gold_analytique", pool=GOLD_WRITE_POOL)
+        @task(task_id="silver_to_gold_analytique", pool=HEAVY_CONVERSION_POOL)
         def task_silver_to_gold_analytique(sources_date: str) -> None:
             silver_to_gold_analytique(sources_date, panel)
 

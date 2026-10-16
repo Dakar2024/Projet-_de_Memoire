@@ -235,8 +235,7 @@ services:
         airflow db migrate &&
         python3 -c "import json, os; p = os.environ['AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_PASSWORDS_FILE']; os.makedirs(os.path.dirname(p), exist_ok=True); d = json.load(open(p)) if os.path.exists(p) else {}; d['admin'] = os.environ['AIRFLOW_ADMIN_PASSWORD']; json.dump(d, open(p, 'w'))" &&
         airflow pools set ncbi 1 "E-utilities NCBI : une tâche à la fois, limite de débit globale" &&
-        airflow pools set silver_write 1 "Écriture Silver : tables partagées entre panels, un seul run bronze_to_silver à la fois" &&
-        airflow pools set gold_write 1 "Écriture Gold : tables partagées entre panels, un seul run silver_to_gold à la fois" &&
+        airflow pools set conversion_lourde 1 "Conversions lourdes et écritures Delta partagées : une à la fois (plafond mémoire 3 Go)" &&
         airflow pools set rag_index 1 "Indexation RAG : une indexation à la fois, le service d'embedding sature le processeur"
 
 #========================== Airflow ============================#

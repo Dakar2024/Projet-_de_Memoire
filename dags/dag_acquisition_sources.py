@@ -13,7 +13,7 @@ from airflow.sdk.exceptions import AirflowFailException
 
 from dags.common.alerting import alert_args
 from dags.common.dates import record_sources_date, require_logical_date
-from dags.common.panels import SHARED_SOURCES, SOURCES_READY
+from dags.common.panels import HEAVY_CONVERSION_POOL, SHARED_SOURCES, SOURCES_READY
 from ingestion.errors import ConfigurationError
 from ingestion.storage import assert_partitions_complete
 from scripts.ingest_clinvar import ingest_clinvar
@@ -34,6 +34,8 @@ with DAG(
     schedule="0 6 10 * *",
     start_date=dt.datetime(2026, 1, 1),
     catchup=False,
+    # Deux runs écriraient la même partition `raw` partagée.
+    max_active_runs=1,
     default_args=DEFAULT_ARGS,
     tags=["raw", "bronze", "acquisition"],
 ) as dag:
@@ -59,7 +61,7 @@ with DAG(
     def check_raw_shared(clinvar_partition: str, hpo_partition: str) -> None:
         assert_partitions_complete([clinvar_partition, hpo_partition])
 
-    @task(task_id="raw_to_bronze_shared")
+    @task(task_id="raw_to_bronze_shared", pool=HEAVY_CONVERSION_POOL)
     def raw_to_bronze_shared(acquisition_date: str) -> list[str]:
         return raw_to_bronze(acquisition_date, SHARED_SOURCES)
 

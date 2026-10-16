@@ -3,10 +3,9 @@ import datetime as dt
 import pytest
 
 from dags.common.panels import (
-    GOLD_WRITE_POOL,
+    HEAVY_CONVERSION_POOL,
     NCBI_POOL,
     RAG_INDEX_POOL,
-    SILVER_WRITE_POOL,
     SOURCES_READY,
 )
 from dags.dag_genomic_pipeline import build_panel_dag
@@ -22,6 +21,11 @@ def dag():
 def test_panel_dag_is_triggered_by_the_shared_sources_asset(dag):
     assert dag.schedule == [SOURCES_READY]
     assert dag.catchup is False
+
+
+def test_panel_dag_allows_a_single_active_run(dag):
+    """Deux runs du même panel écriraient la même partition `raw` (P5)."""
+    assert dag.max_active_runs == 1
 
 
 def test_panel_dag_has_the_expected_tasks(dag):
@@ -78,20 +82,13 @@ def test_ncbi_ingestions_share_a_single_slot_pool(dag):
     assert dag.get_task("ingest_hpo_terms").pool != NCBI_POOL
 
 
-def test_bronze_to_silver_uses_a_single_slot_pool(dag):
-    """Les neuf tables Silver sont partagées entre les deux panels ; ce pool sérialise
-    bronze_to_silver pour empêcher une création de table Delta concurrente entre les
-    deux DAGs de panel, déclenchés sur le même Asset SOURCES_READY."""
-    assert SILVER_WRITE_POOL == "silver_write"
-    assert dag.get_task("bronze_to_silver").pool == SILVER_WRITE_POOL
-
-
-def test_gold_tasks_share_a_single_slot_pool(dag):
-    """Les tables Gold sont partagées entre les deux panels, dont les runs se
-    chevauchent : sans ce pool, deux écritures concurrentes sur la même table Delta
-    peuvent se perdre."""
-    for task_id in ("silver_to_gold_rag", "silver_to_gold_analytique"):
-        assert dag.get_task(task_id).pool == GOLD_WRITE_POOL
+def test_heavy_conversions_share_a_single_slot_pool(dag):
+    """Conversion ClinVar ≈ 2 Go, bronze_to_silver 1,37 Go, sous un plafond de 3 Go (P7) :
+    un pool unique les sérialise entre panels, et garde la sérialisation des écritures
+    Delta partagées (Silver et Gold) qu'assuraient silver_write et gold_write."""
+    assert HEAVY_CONVERSION_POOL == "conversion_lourde"
+    for task_id in ("raw_to_bronze", "bronze_to_silver", "silver_to_gold_rag", "silver_to_gold_analytique"):
+        assert dag.get_task(task_id).pool == HEAVY_CONVERSION_POOL
 
 
 def test_quality_check_gold_runs_after_both_gold_tasks(dag):
