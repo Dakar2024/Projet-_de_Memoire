@@ -1,0 +1,79 @@
+# Intégration continue : tests sans infrastructure et audit des dépendances à chaque push (audit G1).
+# Actions épinglées par SHA de commit : une étiquette déplacée ne peut pas changer le code exécuté.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# Lecture seule : aucune étape n'écrit dans le dépôt.
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.12"
+  TEST_DEPS: pytest==9.1.1 responses==0.26.2 apache-airflow==3.3.1
+
+jobs:
+  tests:
+    name: Tests (logique et structure des DAGs)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            RAG/requirements.txt
+      - run: pip install -r requirements.txt -r RAG/requirements.txt $TEST_DEPS
+      - run: python -m pytest -q
+      # Passe séparée : `import airflow.sdk` coûte à lui seul ~3 s.
+      - run: python -m pytest tests_airflow -q
+
+  audit:
+    name: Audit des dépendances (pip-audit)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install pip-audit==2.10.1
+      - run: pip-audit -r requirements.txt -r RAG/requirements.txt
+      # Verrous à empreintes des images : déjà résolus, `--no-deps` évite une seconde résolution.
+      - run: pip-audit --no-deps --disable-pip -r docker/rag-api/requirements.lock -r docker/rag-api/requirements-test.lock
+      # Image d'export : 6 avis transformers 4.57.6 acceptés (TODO.md §6) — modèle ou fichier malveillant
+      # (l'export n'accepte que deux révisions épinglées par SHA), `Trainer` avec torch < 2.6 (image : 2.14.1),
+      # conversion X-CLIP : aucun chemin utilisé. Tout nouvel avis fait échouer l'étape.
+      - run: >-
+          pip-audit --no-deps --disable-pip -r docker/embeddings/requirements-export.txt
+          --ignore-vuln PYSEC-2025-217 --ignore-vuln PYSEC-2026-2288
+          --ignore-vuln PYSEC-2026-2289 --ignore-vuln PYSEC-2026-2290
+          --ignore-vuln PYSEC-2026-3929 --ignore-vuln PYSEC-2026-4174
+
+  lint:
+    name: Lint (informatif)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install -r requirements.txt -r RAG/requirements.txt $TEST_DEPS ruff==0.16.10 pyright==1.1.414
+      # Informatif tant que l'existant n'est pas nettoyé (117 erreurs ruff, 193 pyright au 16/10/2026) :
+      # chaque étape est tentée, aucune n'échoue le build.
+      - run: ruff check . --statistics
+        continue-on-error: true
+      - run: pyright
+        continue-on-error: true
