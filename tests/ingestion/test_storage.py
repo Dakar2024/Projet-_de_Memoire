@@ -115,6 +115,25 @@ def test_partition_uri_with_panel():
     assert uri == "s3://raw/medgen/dt=2026-09-01/panel=brca"
 
 
+@pytest.mark.parametrize(
+    ("source", "logical_date", "panel"),
+    [
+        ("../silver", "2026-09-01", None),
+        ("clinvar/x", "2026-09-01", None),
+        ("", "2026-09-01", None),
+        ("clinvar", "2026-09-01/../..", None),
+        ("clinvar", "2026-09-01\n", None),
+        ("clinvar", "01-09-2026", None),
+        ("medgen", "2026-09-01", "../brca"),
+        ("medgen", "2026-09-01", "BRCA"),
+    ],
+)
+def test_partition_uri_refuses_path_components_that_could_escape_the_partition(source, logical_date, panel):
+    """Une date de déclenchement manuel atteint cette construction : rien ne doit sortir de la partition (I1)."""
+    with pytest.raises(ValueError, match="partition"):
+        partition_uri("raw", source, logical_date, panel=panel, lake_uri="s3://")
+
+
 def test_put_and_get_bytes_on_local_filesystem(tmp_path):
     uri = f"file://{tmp_path}/raw/clinvar/dt=2026-09-01/data.txt"
     put_bytes(uri, b"contenu")

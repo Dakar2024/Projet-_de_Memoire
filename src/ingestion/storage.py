@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -10,13 +11,16 @@ from pathlib import Path
 import polars as pl
 from botocore.exceptions import ClientError
 
-from ingestion.config import current_lake_uri
+from ingestion.config import LOGICAL_DATE_PATTERN, current_lake_uri
 
 S3_SCHEME = "s3://"
 FILE_SCHEME = "file://"
 
 SUCCESS_MARKER = "_SUCCESS"
 MANIFEST_NAME = "manifest.json"
+
+# Noms de source et de panel : minuscules, chiffres, `_` ; ni `/`, ni `..`, ni vide (I1).
+_PATH_COMPONENT = re.compile(r"[a-z][a-z0-9_]*")
 
 
 def layer_uri(layer: str, lake_uri: str | None = None) -> str:
@@ -35,11 +39,23 @@ def partition_uri(
     panel: str | None = None,
     lake_uri: str | None = None,
 ) -> str:
-    """Renvoie le chemin d'une partition : `<couche>/<source>/dt=<date>[/panel=<panel>]`."""
+    """Renvoie le chemin d'une partition : `<couche>/<source>/dt=<date>[/panel=<panel>]`, composants validés."""
+    _check_partition_components(source, logical_date, panel)
     parts = [layer_uri(layer, lake_uri), source, f"dt={logical_date}"]
     if panel:
         parts.append(f"panel={panel}")
     return "/".join(parts)
+
+
+def _check_partition_components(source: str, logical_date: str, panel: str | None) -> None:
+    """Refuse un composant qui sortirait de la partition (`..`, `/`, saut de ligne) ou mal formé."""
+    # `fullmatch` et non `match` : `$` accepte un saut de ligne final.
+    if not _PATH_COMPONENT.fullmatch(source):
+        raise ValueError(f"source de partition invalide : {source!r}")
+    if not LOGICAL_DATE_PATTERN.fullmatch(logical_date):
+        raise ValueError(f"date de partition invalide : {logical_date!r} — format attendu YYYY-MM-DD")
+    if panel is not None and not _PATH_COMPONENT.fullmatch(panel):
+        raise ValueError(f"panel de partition invalide : {panel!r}")
 
 
 def _split_s3(uri: str) -> tuple[str, str]:
