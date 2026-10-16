@@ -25,3 +25,6 @@ data/models/*
 # Résultats intermédiaires des expériences (vecteurs, rapports bruts)
 data/experiments/*
 !data/experiments/.gitkeep
+
+# Réglages d’éditeur personnels (les racines des sources sont dans pyproject.toml)
+.vscode/
