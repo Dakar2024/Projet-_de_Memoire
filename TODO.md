@@ -67,7 +67,6 @@ de développement.
 - [ ] **Reverse proxy TLS avec authentification devant Airflow** (D2) — *production*.
 - [ ] **Versioning des buckets** (M3) : la protection la moins chère contre une suppression accidentelle.
 - [ ] **Vérifier la somme MD5 publiée par ClinVar** après téléchargement (C2).
-- [ ] **Valider `source`, `panel` et date** avant de construire les clés d'objet (I1).
 - [ ] **Secrets par fichiers montés** plutôt que par variables d'environnement (D5).
 - [ ] **Intégration continue** : tests, scan des dépendances et des images (G1). Pas de `.github`.
 
