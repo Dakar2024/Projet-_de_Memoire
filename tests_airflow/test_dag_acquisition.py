@@ -1,7 +1,7 @@
 import pytest
 from airflow.sdk.exceptions import AirflowFailException
 
-from dags.common.panels import SOURCES_READY
+from dags.common.panels import HEAVY_CONVERSION_POOL, SOURCES_READY
 from dags.dag_acquisition_sources import dag
 
 
@@ -10,6 +10,16 @@ def test_acquisition_dag_runs_monthly_after_the_clinvar_archive_is_published():
     trouverait absente."""
     assert dag.schedule == "0 6 10 * *"
     assert dag.catchup is False
+
+
+def test_acquisition_dag_allows_a_single_active_run():
+    """Deux runs écriraient la même partition `raw` partagée (P5)."""
+    assert dag.max_active_runs == 1
+
+
+def test_clinvar_conversion_shares_the_heavy_conversion_pool():
+    """La conversion du bulk ClinVar (≈ 2 Go) ne doit pas croiser une conversion de panel (P7)."""
+    assert dag.get_task("raw_to_bronze_shared").pool == HEAVY_CONVERSION_POOL
 
 
 def test_acquisition_dag_has_the_expected_tasks():

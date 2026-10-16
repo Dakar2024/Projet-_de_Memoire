@@ -159,7 +159,7 @@ La règle du projet : **aucune logique métier dans un DAG**. Une tâche appelle
 
 ```python
 # dans dags/dag_genomic_pipeline.py
-@task(task_id="ma_nouvelle_etape", pool=GOLD_WRITE_POOL)   # pool si la tâche écrit une table partagée
+@task(task_id="ma_nouvelle_etape", pool=HEAVY_CONVERSION_POOL)   # pool si la tâche est lourde ou écrit une table partagée
 def task_ma_nouvelle_etape(sources_date: str) -> None:
     ma_fonction(sources_date, panel)      # la logique vit dans src/transformations/
 ```
@@ -180,8 +180,13 @@ Enfin, écrire le test de structure correspondant dans `tests_airflow/`.
 | Pool | Un seul créneau, parce que… |
 |---|---|
 | `ncbi` | NCBI limite le débit global : deux tâches en parallèle dépasseraient le quota |
-| `silver_write` | Les tables Silver sont partagées entre les deux panels |
-| `gold_write` | Idem pour les tables Gold |
+| `conversion_lourde` | Conversions lourdes (ClinVar ≈ 2 Go, Silver 1,37 Go, plafond 3 Go) et écritures Delta partagées entre les deux panels (`raw_to_bronze`, `bronze_to_silver`, `silver_to_gold_*`) |
+| `rag_index` | Une indexation à la fois : le service d'embedding sature déjà le processeur |
+
+Les deux DAGs n'acceptent qu'**un run actif à la fois** (`max_active_runs=1`) : deux runs
+écriraient la même partition `raw`. Les anciens pools `silver_write` et `gold_write`, remplacés
+par `conversion_lourde`, peuvent rester dans une base existante sans effet (plus aucune tâche ne
+les utilise) ; `airflow pools delete silver_write gold_write` les retire.
 
 Après toute modification : `pytest -q` puis `pytest tests_airflow -q`. Les DAGs sont relus
 automatiquement, inutile de redémarrer la stack — sauf si tu changes `docker-compose.yml` ou le

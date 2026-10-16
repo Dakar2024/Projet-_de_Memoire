@@ -22,8 +22,8 @@ SOURCES_READY = Asset("s3://bronze/_sources_pretes")
 # Pools à un slot, créés par `airflow-init`. NCBI : la limite de débit est globale, le limiteur par processus.
 NCBI_POOL = "ncbi"
 
-# Silver et Gold : tables Delta partagées entre panels, une création concurrente effacerait l'autre panel.
-SILVER_WRITE_POOL = "silver_write"
-GOLD_WRITE_POOL = "gold_write"
+# Conversions lourdes (ClinVar ≈ 2 Go, Silver 1,37 Go, plafond 3 Go) et écritures Delta partagées entre
+# panels (une création concurrente effacerait l'autre panel) : une seule à la fois, par construction.
+HEAVY_CONVERSION_POOL = "conversion_lourde"
 # Une indexation RAG à la fois : le service d'embedding sature déjà le processeur.
 RAG_INDEX_POOL = "rag_index"

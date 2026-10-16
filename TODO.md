@@ -37,8 +37,6 @@ Ce qui n'est pas encore fait. Les audits complets sont dans `reference/audit_sec
 
 ## 4. Exploitation
 
-- [ ] **Repointer le cron de sauvegarde** sur `Projet-_de_Memoire-clean` : il exécute le script de la
-      branche extraite dans le dossier principal.
 - [ ] **Tester une restauration complète** sur une stack vide : la base Airflow et les buckets MinIO,
       puis relancer un run dessus. (La base vectorielle est déjà vérifiée.)
 - [ ] **Brancher les alertes e-mail** (le câblage existe, les clés sont vides) : Resend au moment du
@@ -52,11 +50,8 @@ Ce qui n'est pas encore fait. Les audits complets sont dans `reference/audit_sec
 
 Références : `reference/audit_production.md`.
 
-- [ ] **`max_active_runs=1`** sur les DAGs (P5) : deux runs pourraient écrire la même partition `raw`.
 - [ ] **Rattraper ou signaler un mois manqué** (P4) : `catchup=False`, une machine éteinte le 10 saute
       le mois sans bruit.
-- [ ] **Pool dédié pour `raw_to_bronze`** (P7) : pic mesuré à 2 Go pour un conteneur plafonné à 3 Go
-      qui autorise 4 tâches.
 - [ ] **Rétention Delta (`VACUUM`) et cycle de vie MinIO** (P11, P9) : aucun des deux n'existe.
 - [ ] **Procédure de reprise** (P17) : écrire le rattrapage d'un mois manquant et la restauration
       après perte du lac.
@@ -95,8 +90,3 @@ de développement.
 - [ ] **Journaliser la déconnexion du client** avant la réponse (seuls `late_error` et `late_result`
       le sont).
 
-## 8. Documentation
-
-- [ ] **Section « Commands » de `CLAUDE.md`** : elle cite `requirements-dev.txt`, supprimé par l'audit
-      clean code.
-- [ ] **Versionner `rules.md`** et le référencer depuis `CLAUDE.md` (décision en attente).
