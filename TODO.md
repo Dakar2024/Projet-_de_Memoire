@@ -63,7 +63,12 @@ de développement.
 - [ ] **TLS sur MinIO**, endpoint en `https://` (T1) — *production*.
 - [ ] **Reverse proxy TLS avec authentification devant Airflow** (D2) — *production*.
 - [ ] **Secrets par fichiers montés** plutôt que par variables d'environnement (D5).
-- [ ] **Intégration continue** : tests, scan des dépendances et des images (G1). Pas de `.github`.
+- [ ] **`transformers` 4.57.6 de l'image d'export** (`docker/embeddings/requirements-export.txt`) : 6 avis
+      (PYSEC-2025-217, PYSEC-2026-2288 à 2290, 3929, 4174), acceptés dans la CI car aucun chemin n'est utilisé
+      (modèles épinglés par SHA, pas de `Trainer`, torch 2.14.1). Passer en ≥ 5.10 change sans doute l'export
+      ONNX, donc l'empreinte du modèle et tout l'index : à décider par mesure (canari), pas en passant.
+- [ ] **Scan des images Docker** dans la CI (G1, reste) ; et rendre `ruff` et `pyright` bloquants une fois
+      l'existant nettoyé (117 et 193 erreurs au 16/10/2026, job `lint` informatif).
 
 ## 7. RAG — durcissements différés
 
