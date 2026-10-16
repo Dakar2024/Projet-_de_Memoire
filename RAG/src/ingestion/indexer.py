@@ -48,45 +48,74 @@ def index_documents(
     canary: Canary,
     force_deletions: bool = False,
 ) -> IndexReport:
-    """Synchronise l'index du panel sur le Gold, lot par lot validé, puis vérifie l'égalité finale."""
-    fingerprint = config.embedding.fingerprint
+    """Synchronise l'index du panel sur le Gold sous verrou, rendu même après un échec."""
     if not store.try_lock(panel):
         raise IndexLockedError(f"une indexation du panel {panel} est déjà en cours")
     try:
-        cosine = verify_canary(client, canary, fingerprint, config.embedding.canary_min_cosine)
-        gold = dict(zip(documents["doc_id"].to_list(), documents["chunk_id"].to_list(), strict=True))
-        indexed = store.indexed_state(panel)
-        plan = plan_sync(gold, indexed, fingerprint)
-        check_deletion_guard(plan, len(gold), len(indexed), config.index.max_delete_ratio, force_deletions)
+        report = _synchronise(
+            panel, documents=documents, store=store, client=client,
+            config=config, canary=canary, force_deletions=force_deletions,
+        )
+    except BaseException:
+        _unlock_after_failure(store, panel)
+        raise
+    store.unlock(panel)
+    return report
 
-        todo = documents.filter(pl.col("doc_id").is_in(plan.to_embed))
-        if todo.height:
-            check_token_lengths(
-                todo["doc_id"].to_list(), todo["text"].to_list(), client.token_counts, client.max_input_length()
-            )
-        log.info("panel %s : %d à vectoriser, %d à supprimer, %d inchangés (canari %.6f)",
-                 panel, len(plan.to_embed), len(plan.to_delete), plan.unchanged, cosine)
 
-        store.delete(panel, plan.to_delete)
-        batches = todo.iter_slices(config.embedding.batch_size)
-        for number, batch in enumerate(batches, start=1):
-            store.upsert(panel, batch.to_dicts(), client.embed(batch["text"].to_list()), fingerprint)
-            if number % _PROGRESS_EVERY == 0:
-                log.info("panel %s : %d documents vectorisés", panel, min(number * config.embedding.batch_size, todo.height))
-
-        expected = {doc_id: (chunk, fingerprint) for doc_id, chunk in gold.items()}
-        actual = store.indexed_state(panel)
-        if actual != expected:
-            missing = sorted(set(expected) - set(actual))
-            extra = sorted(set(actual) - set(expected))
-            stale = sorted(d for d in set(expected) & set(actual) if expected[d] != actual[d])
-            raise IndexConsistencyError(
-                f"index ≠ Gold pour {panel} : {len(missing)} manquants {missing[:5]}, "
-                f"{len(extra)} en trop {extra[:5]}, {len(stale)} périmés {stale[:5]}"
-            )
-        return IndexReport(panel, len(plan.to_delete), len(plan.to_embed), plan.unchanged, cosine)
-    finally:
+def _unlock_after_failure(store: VectorStore, panel: str) -> None:
+    """Libère le verrou après un échec sans masquer l'erreur d'origine si le déverrouillage échoue aussi."""
+    try:
         store.unlock(panel)
+    except Exception:
+        # Connexion tombée : le serveur a déjà rendu le verrou de session ; l'erreur utile est celle d'origine.
+        log.exception("panel %s : unlock impossible après l'échec de l'indexation", panel)
+
+
+def _synchronise(
+    panel: str,
+    *,
+    documents: pl.DataFrame,
+    store: VectorStore,
+    client,
+    config: RagConfig,
+    canary: Canary,
+    force_deletions: bool,
+) -> IndexReport:
+    """Aligne l'index du panel sur le Gold, verrou déjà pris, et vérifie l'égalité finale."""
+    fingerprint = config.embedding.fingerprint
+    cosine = verify_canary(client, canary, fingerprint, config.embedding.canary_min_cosine)
+    gold = dict(zip(documents["doc_id"].to_list(), documents["chunk_id"].to_list(), strict=True))
+    indexed = store.indexed_state(panel)
+    plan = plan_sync(gold, indexed, fingerprint)
+    check_deletion_guard(plan, len(gold), len(indexed), config.index.max_delete_ratio, force_deletions)
+
+    todo = documents.filter(pl.col("doc_id").is_in(plan.to_embed))
+    if todo.height:
+        check_token_lengths(
+            todo["doc_id"].to_list(), todo["text"].to_list(), client.token_counts, client.max_input_length()
+        )
+    log.info("panel %s : %d à vectoriser, %d à supprimer, %d inchangés (canari %.6f)",
+             panel, len(plan.to_embed), len(plan.to_delete), plan.unchanged, cosine)
+
+    store.delete(panel, plan.to_delete)
+    batches = todo.iter_slices(config.embedding.batch_size)
+    for number, batch in enumerate(batches, start=1):
+        store.upsert(panel, batch.to_dicts(), client.embed(batch["text"].to_list()), fingerprint)
+        if number % _PROGRESS_EVERY == 0:
+            log.info("panel %s : %d documents vectorisés", panel, min(number * config.embedding.batch_size, todo.height))
+
+    expected = {doc_id: (chunk, fingerprint) for doc_id, chunk in gold.items()}
+    actual = store.indexed_state(panel)
+    if actual != expected:
+        missing = sorted(set(expected) - set(actual))
+        extra = sorted(set(actual) - set(expected))
+        stale = sorted(d for d in set(expected) & set(actual) if expected[d] != actual[d])
+        raise IndexConsistencyError(
+            f"index ≠ Gold pour {panel} : {len(missing)} manquants {missing[:5]}, "
+            f"{len(extra)} en trop {extra[:5]}, {len(stale)} périmés {stale[:5]}"
+        )
+    return IndexReport(panel, len(plan.to_delete), len(plan.to_embed), plan.unchanged, cosine)
 
 
 def run_index(panel: str, lake_uri: str | None = None, force_deletions: bool = False) -> IndexReport:

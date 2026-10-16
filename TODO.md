@@ -73,13 +73,6 @@ de développement.
 
 ## 7. RAG — durcissements différés
 
-- [ ] **Indexeur : `connect_timeout` et `statement_timeout`** dans `PgVectorStore`
-      (`RAG/src/vectordb/vector_store.py`). L'API les a déjà ; l'indexeur n'est borné que par le
-      délai de 6 h de la tâche.
-- [ ] **Fermer la connexion si `register_vector` échoue** dans `PgVectorStore.__enter__`.
-- [ ] **Ne pas masquer l'erreur d'origine dans `finally: unlock`** (`RAG/src/ingestion/indexer.py`).
-- [ ] **Importer le RAG dans le corps de la tâche** plutôt qu'en tête de `dags/dag_genomic_pipeline.py` :
-      une dépendance RAG manquante casse l'analyse de tous les DAGs.
 - [ ] **Supprimer la fenêtre sans modèle de `export_model.py --force`** (`rmtree` puis `rename`) ;
       d'ici là, arrêter `rag-embeddings` avant un `--force`.
 - [ ] **Verrou de l'image d'export hors x86_64**, si l'export doit tourner ailleurs.

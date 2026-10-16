@@ -25,8 +25,6 @@ from dags.common.panels import (
 from ingestion.errors import ConfigurationError
 from ingestion.http_client import NcbiClient
 from ingestion.storage import assert_partitions_complete
-from RAG.src.ingestion.indexer import run_index
-from RAG.src.utils.errors import RagPermanentError
 from scripts.ingest_hpo_terms import ingest_hpo_terms
 from scripts.ingest_medgen import ingest_medgen
 from scripts.ingest_ncbi_gene import build_client, ingest_ncbi_gene
@@ -147,6 +145,10 @@ def build_panel_dag(panel: str, genes: list[str]) -> DAG:
             execution_timeout=dt.timedelta(hours=6),
         )
         def task_index_rag_documents() -> None:
+            # Import ici : une dépendance RAG manquante ne casse que cette tâche, pas l'analyse de tous les DAGs.
+            from RAG.src.ingestion.indexer import run_index
+            from RAG.src.utils.errors import RagPermanentError
+
             try:
                 run_index(panel)
             except RagPermanentError as exc:

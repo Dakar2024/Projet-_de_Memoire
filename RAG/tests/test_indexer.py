@@ -199,3 +199,25 @@ def test_run_index_refuses_a_served_model_other_than_the_configured_one(monkeypa
 
     with pytest.raises(RagConfigurationError, match="biobert@def\\+onnx:456"):
         indexer.run_index("brca")
+
+
+class _UnlockFailsStore(InMemoryStore):
+    """Base dont la connexion tombe : le déverrouillage échoue à son tour."""
+
+    def unlock(self, panel):
+        raise ConnectionError("connexion perdue pendant unlock")
+
+
+def test_a_failing_unlock_does_not_hide_the_original_error(caplog):
+    """La connexion tombée emporte le verrou côté serveur : l'erreur utile est celle d'origine."""
+    store, client = _UnlockFailsStore(fail_after_upserts=1), FakeEmbeddingClient()
+    with pytest.raises(ConnectionError, match="interruption simulée"):
+        _run(store, client, _documents(10))
+    assert "unlock" in caplog.text
+
+
+def test_a_failing_unlock_after_a_successful_run_is_reported():
+    """Sans erreur d'origine, l'échec du déverrouillage reste visible (relance sans recalcul)."""
+    store, client = _UnlockFailsStore(), FakeEmbeddingClient()
+    with pytest.raises(ConnectionError, match="pendant unlock"):
+        _run(store, client, _documents(3))
