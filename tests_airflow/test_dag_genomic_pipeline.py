@@ -168,26 +168,40 @@ def test_rag_indexing_is_serialised_and_has_room_for_a_full_cpu_run(dag):
 def test_permanent_rag_errors_fail_without_consuming_retries(dag, monkeypatch):
     from airflow.sdk.exceptions import AirflowFailException
 
-    from dags import dag_genomic_pipeline
+    from RAG.src.ingestion import indexer
     from RAG.src.utils.errors import CanaryMismatchError
 
     def refuser(panel):
         raise CanaryMismatchError("le service ne sert pas le modèle attendu")
 
-    monkeypatch.setattr(dag_genomic_pipeline, "run_index", refuser)
+    monkeypatch.setattr(indexer, "run_index", refuser)
 
     with pytest.raises(AirflowFailException, match="modèle attendu"):
         dag.get_task("index_rag_documents").python_callable()
 
 
 def test_transient_rag_errors_are_left_to_the_retries(dag, monkeypatch):
-    from dags import dag_genomic_pipeline
+    from RAG.src.ingestion import indexer
     from RAG.src.utils.errors import EmbeddingServiceError
 
     def indisponible(panel):
         raise EmbeddingServiceError("503")
 
-    monkeypatch.setattr(dag_genomic_pipeline, "run_index", indisponible)
+    monkeypatch.setattr(indexer, "run_index", indisponible)
 
     with pytest.raises(EmbeddingServiceError):
         dag.get_task("index_rag_documents").python_callable()
+
+
+def test_panel_dag_parses_without_the_rag_dependencies():
+    """Une dépendance RAG manquante ne doit casser que la tâche d'indexation, pas l'analyse des DAGs."""
+    import subprocess
+    import sys
+
+    code = (
+        "import sys; sys.modules['RAG.src.ingestion.indexer'] = None; "
+        "sys.modules['RAG.src.utils.errors'] = None; "
+        "from dags.dag_genomic_pipeline import build_panel_dag; build_panel_dag('brca', ['BRCA1'])"
+    )
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr[-500:]

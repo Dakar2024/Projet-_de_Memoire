@@ -32,6 +32,11 @@ ON CONFLICT (panel, doc_id) DO UPDATE SET
     indexed_at = now()
 """
 
+# Délais de la connexion d'indexation : sans eux, seule l'échéance de 6 h de la tâche borne une base muette.
+CONNECT_TIMEOUT_S = 10
+# Le plus long ordre (DELETE d'un panel entier) prend quelques secondes : 5 min laisse une marge large.
+STATEMENT_TIMEOUT_MS = 300_000
+
 _ROW_FIELDS = (
     "doc_id", "chunk_id", "doc_type", "text", "gene_symbol", "clinical_significance",
     "review_status", "rs_dbsnp", "hgvs_c", "hgvs_p", "clinvar_variation_id", "clinvar_url",
@@ -68,8 +73,15 @@ class PgVectorStore:
         self._conn: psycopg.Connection | None = None
 
     def __enter__(self) -> PgVectorStore:
-        self._conn = psycopg.connect(self._conninfo, autocommit=True)
-        register_vector(self._conn)
+        conn = psycopg.connect(self._conninfo, autocommit=True, connect_timeout=CONNECT_TIMEOUT_S)
+        try:
+            conn.execute("SELECT set_config('statement_timeout', %s, false)", (str(STATEMENT_TIMEOUT_MS),))
+            register_vector(conn)
+        except BaseException:
+            # `__exit__` n'est pas appelé si `__enter__` échoue : sans ceci la connexion fuit.
+            conn.close()
+            raise
+        self._conn = conn
         return self
 
     def __exit__(self, *exc_info) -> None:
