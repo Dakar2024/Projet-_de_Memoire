@@ -139,7 +139,8 @@ def _relevance(question: dict, documents: pl.DataFrame, diseases: pl.DataFrame) 
     if "doc_id" in rule:
         return (documents["doc_id"] == rule["doc_id"]).to_numpy()
     matching = diseases.filter(pl.col("disease_name").str.to_lowercase().str.contains(rule["disease_pattern"].lower(), literal=True))
-    relevant = documents["doc_id"].is_in(matching["doc_id"].unique())
+    # `implode` : appartenance à la liste, le comportement d'avant la dépréciation de Polars 1.x.
+    relevant = documents["doc_id"].is_in(matching["doc_id"].unique().implode())
     if "gene" in rule:
         relevant &= documents["gene_symbol"] == rule["gene"]
     if "significance" in rule:
