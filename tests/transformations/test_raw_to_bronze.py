@@ -8,6 +8,7 @@ import polars as pl
 import pytest
 
 from ingestion.config import BRONZE, RAW
+from ingestion.errors import SourceSchemaError
 from ingestion.storage import (
     begin_partition,
     build_manifest,
@@ -18,7 +19,14 @@ from ingestion.storage import (
     put_bytes,
     read_manifest,
 )
-from transformations.raw_to_bronze import _normalize_column_name, _convert_flat_source, _convert_jsonl_source, raw_to_bronze
+from transformations.raw_to_bronze import (
+    CLINVAR_COLUMNS,
+    HPO_GENES_TO_PHENOTYPE_COLUMNS,
+    _convert_flat_source,
+    _convert_jsonl_source,
+    _normalize_column_name,
+    raw_to_bronze,
+)
 
 
 def test_normalize_column_name_lowercases_a_plain_word():
@@ -236,6 +244,17 @@ def test_convert_jsonl_source_produces_zero_rows_for_an_empty_source(tmp_path):
     assert df.schema["esummary_json"] == pl.Utf8
 
 
+def _tsv(columns, *rows: dict) -> bytes:
+    """Construit un TSV à l'en-tête complet ; les colonnes absentes d'une ligne restent vides."""
+    lines = ["\t".join(columns)] + ["\t".join(row.get(c, "") for c in columns) for row in rows]
+    return ("\n".join(lines) + "\n").encode()
+
+
+CLINVAR_TSV = _tsv(CLINVAR_COLUMNS, {"#AlleleID": "1", "GeneSymbol": "BRCA1", "Assembly": "GRCh38"})
+HPO_TSV = _tsv(HPO_GENES_TO_PHENOTYPE_COLUMNS,
+               {"ncbi_gene_id": "3043", "gene_symbol": "HBB", "hpo_id": "HP:0001903", "hpo_name": "Anemia"})
+
+
 def _seed_raw_flat(lake, source, logical_date, object_name, content: bytes, source_version, panel=None,
                    sha256=None):
     partition = partition_uri(RAW, source, logical_date, panel=panel, lake_uri=lake)
@@ -265,7 +284,7 @@ def test_raw_to_bronze_converts_a_flat_shared_source(tmp_path):
     lake = f"file://{tmp_path}/lake"
     _seed_raw_flat(
         lake, "hpo", "2026-09-01", "genes_to_phenotype.txt",
-        b"ncbi_gene_id\tgene_symbol\thpo_id\thpo_name\n3043\tHBB\tHP:0001903\tAnemia\n",
+        HPO_TSV,
         source_version="v2026.08.01",
     )
 
@@ -337,11 +356,11 @@ def test_raw_to_bronze_converts_every_source_it_is_given(tmp_path):
     lake = f"file://{tmp_path}/lake"
     _seed_raw_flat(
         lake, "clinvar", "2026-09-01", "variant_summary.txt.gz",
-        gzip.compress(b"#AlleleID\tGeneSymbol\n1\tBRCA1\n"), source_version="2026-09",
+        gzip.compress(CLINVAR_TSV), source_version="2026-09",
     )
     _seed_raw_flat(
         lake, "hpo", "2026-09-01", "genes_to_phenotype.txt",
-        b"ncbi_gene_id\tgene_symbol\thpo_id\thpo_name\n3043\tHBB\tHP:0001903\tAnemia\n",
+        HPO_TSV,
         source_version="v2026.08.01",
     )
 
@@ -369,7 +388,7 @@ def test_raw_to_bronze_finalizes_earlier_sources_when_a_later_one_fails(tmp_path
     lake = f"file://{tmp_path}/lake"
     _seed_raw_flat(
         lake, "hpo", "2026-09-01", "genes_to_phenotype.txt",
-        b"ncbi_gene_id\tgene_symbol\thpo_id\thpo_name\n3043\tHBB\tHP:0001903\tAnemia\n",
+        HPO_TSV,
         source_version="v2026.08.01",
     )
     # "inconnue" n'a pas de partition raw : sa conversion échoue avec ValueError,
@@ -386,7 +405,7 @@ def test_raw_to_bronze_finalizes_earlier_sources_when_a_later_one_fails(tmp_path
 
 def test_raw_to_bronze_accepts_a_raw_object_matching_its_recorded_sha256(tmp_path):
     lake = f"file://{tmp_path}/lake"
-    content = gzip.compress(FLAT_TSV.encode())
+    content = gzip.compress(CLINVAR_TSV)
     _seed_raw_flat(lake, "clinvar", "2026-09-01", FLAT_OBJECT, content, "2026-09",
                    sha256={FLAT_OBJECT: hashlib.sha256(content).hexdigest()})
 
@@ -398,10 +417,49 @@ def test_raw_to_bronze_accepts_a_raw_object_matching_its_recorded_sha256(tmp_pat
 def test_raw_to_bronze_refuses_a_raw_object_altered_since_its_deposit(tmp_path):
     """Un objet raw abîmé après le dépôt (C2) arrête la conversion au lieu de produire un bronze faux."""
     lake = f"file://{tmp_path}/lake"
-    content = gzip.compress(FLAT_TSV.encode())
+    content = gzip.compress(CLINVAR_TSV)
     _seed_raw_flat(lake, "clinvar", "2026-09-01", FLAT_OBJECT, content, "2026-09",
                    sha256={FLAT_OBJECT: hashlib.sha256(b"autre contenu").hexdigest()})
 
     with pytest.raises(ValueError, match="SHA-256"):
         raw_to_bronze("2026-09-01", ["clinvar"], lake_uri=lake)
     assert not partition_is_complete(partition_uri(BRONZE, "clinvar", "2026-09-01", lake_uri=lake))
+
+
+def test_raw_to_bronze_names_the_columns_when_clinvar_changes_its_header(tmp_path):
+    """Colonne renommée par ClinVar (P13) : message explicite, avant toute conversion, au lieu d'une
+    erreur Polars en Silver (qui garde les 43 colonnes dans `clinvar_variant`)."""
+    lake = f"file://{tmp_path}/lake"
+    renamed = [("Gene_Symbol" if c == "GeneSymbol" else c) for c in CLINVAR_COLUMNS]
+    _seed_raw_flat(lake, "clinvar", "2026-09-01", FLAT_OBJECT,
+                   gzip.compress(_tsv(renamed, {"#AlleleID": "1"})), "2026-09")
+
+    with pytest.raises(SourceSchemaError, match=r"clinvar.*manquantes \['GeneSymbol'\].*nouvelles \['Gene_Symbol'\]"):
+        raw_to_bronze("2026-09-01", ["clinvar"], lake_uri=lake)
+    assert not partition_is_complete(partition_uri(BRONZE, "clinvar", "2026-09-01", lake_uri=lake))
+
+
+def test_raw_to_bronze_refuses_a_column_added_to_the_hpo_file(tmp_path):
+    lake = f"file://{tmp_path}/lake"
+    _seed_raw_flat(lake, "hpo", "2026-09-01", "genes_to_phenotype.txt",
+                   _tsv([*HPO_GENES_TO_PHENOTYPE_COLUMNS, "onset"]), "v2026.08.01")
+
+    with pytest.raises(SourceSchemaError, match=r"hpo.*nouvelles \['onset'\]"):
+        raw_to_bronze("2026-09-01", ["hpo"], lake_uri=lake)
+
+
+def test_raw_to_bronze_accepts_the_clinvar_columns_in_another_order(tmp_path):
+    """Les colonnes sont lues par leur nom : seul l'ensemble compte."""
+    lake = f"file://{tmp_path}/lake"
+    _seed_raw_flat(lake, "clinvar", "2026-09-01", FLAT_OBJECT,
+                   gzip.compress(_tsv(list(reversed(CLINVAR_COLUMNS)), {"#AlleleID": "1"})), "2026-09")
+
+    [partition] = raw_to_bronze("2026-09-01", ["clinvar"], lake_uri=lake)
+
+    assert partition_is_complete(partition)
+
+
+def test_clinvar_columns_match_the_monthly_archive_layout():
+    """Figé sur les archives 2026-09 et 2026-10 (identiques) : 43 colonnes."""
+    assert len(CLINVAR_COLUMNS) == 43 and len(set(CLINVAR_COLUMNS)) == 43
+    assert CLINVAR_COLUMNS[0] == "#AlleleID"

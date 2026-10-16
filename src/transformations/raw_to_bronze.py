@@ -1,4 +1,4 @@
-"""Passage raw → bronze : conversion en Parquet et ajout des colonnes techniques, rien d'autre."""
+"""Passage raw → bronze : intégrité et en-tête des sources vérifiés, conversion en Parquet, colonnes techniques."""
 from __future__ import annotations
 
 import gzip
@@ -12,6 +12,7 @@ from pathlib import Path
 import polars as pl
 
 from ingestion.config import BRONZE, RAW
+from ingestion.errors import SourceSchemaError
 from ingestion.storage import (
     begin_partition,
     build_manifest,
@@ -48,17 +49,31 @@ def _download_to_local(
     return local_path
 
 
+def _check_columns(location: str, actual: list[str], expected: tuple[str, ...]) -> None:
+    """Refuse un en-tête dont l'ensemble des colonnes diffère du schéma attendu, en nommant les écarts."""
+    missing = sorted(set(expected) - set(actual))
+    added = sorted(set(actual) - set(expected))
+    if missing or added:
+        raise SourceSchemaError(
+            f"{location} : schéma changé par la source, colonnes manquantes {missing}, nouvelles {added} ; "
+            "mettre à jour le schéma attendu (raw_to_bronze) et le Silver avant de relancer"
+        )
+
+
 def _convert_flat_source(
     raw_partition: str,
     object_name: str,
     technical_columns: dict[str, str],
     work_dir: Path,
     expected_sha256: str | None = None,
+    expected_columns: tuple[str, ...] | None = None,
 ) -> Path:
-    """Convertit une source TSV en Parquet, en flux : intégrité vérifiée, noms normalisés, lignes vides retirées."""
+    """Convertit une source TSV en Parquet, en flux : intégrité et en-tête vérifiés, noms normalisés."""
     local_input = _download_to_local(raw_partition, object_name, work_dir, expected_sha256)
     lf = pl.scan_csv(local_input, separator="\t", infer_schema_length=0)
     original_names = lf.collect_schema().names()
+    if expected_columns is not None:
+        _check_columns(f"{raw_partition}/{object_name}", original_names, expected_columns)
     lf = lf.rename({name: _normalize_column_name(name) for name in original_names})
     lf = lf.filter(~pl.all_horizontal(pl.all().is_null()))
     # Colonnes techniques ajoutées après le filtre : jamais vides, elles masqueraient les lignes vides.
@@ -105,6 +120,25 @@ def _convert_jsonl_source(
 @dataclass(frozen=True)
 class _FlatSource:
     object_name: str
+    columns: tuple[str, ...]
+
+
+# En-têtes attendus, figés sur les fichiers réels (ClinVar 2026-09 et 2026-10, HPO v2026-09-01) : le Silver
+# `clinvar_variant` garde toutes les colonnes, donc un ajout comme un retrait change son schéma Delta.
+CLINVAR_COLUMNS: tuple[str, ...] = (
+    "#AlleleID", "Type", "Name", "GeneID", "GeneSymbol", "HGNC_ID", "ClinicalSignificance", "ClinSigSimple",
+    "LastEvaluated", "RS# (dbSNP)", "nsv/esv (dbVar)", "RCVaccession", "PhenotypeIDS", "PhenotypeList",
+    "Origin", "OriginSimple", "Assembly", "ChromosomeAccession", "Chromosome", "Start", "Stop",
+    "ReferenceAllele", "AlternateAllele", "Cytogenetic", "ReviewStatus", "NumberSubmitters", "Guidelines",
+    "TestedInGTR", "OtherIDs", "SubmitterCategories", "VariationID", "PositionVCF", "ReferenceAlleleVCF",
+    "AlternateAlleleVCF", "SomaticClinicalImpact", "SomaticClinicalImpactLastEvaluated",
+    "ReviewStatusClinicalImpact", "Oncogenicity", "OncogenicityLastEvaluated", "ReviewStatusOncogenicity",
+    "SCVsForAggregateGermlineClassification", "SCVsForAggregateSomaticClinicalImpact",
+    "SCVsForAggregateOncogenicityClassification",
+)
+HPO_GENES_TO_PHENOTYPE_COLUMNS: tuple[str, ...] = (
+    "ncbi_gene_id", "gene_symbol", "hpo_id", "hpo_name", "frequency", "disease_id",
+)
 
 
 @dataclass(frozen=True)
@@ -116,8 +150,8 @@ class _JsonlSource:
 
 # Table déclarative des sources : fichier raw et, pour le JSONL, champs scalaires et imbriqués.
 _FLAT_SOURCES: dict[str, _FlatSource] = {
-    "clinvar": _FlatSource("variant_summary.txt.gz"),
-    "hpo": _FlatSource("genes_to_phenotype.txt"),
+    "clinvar": _FlatSource("variant_summary.txt.gz", CLINVAR_COLUMNS),
+    "hpo": _FlatSource("genes_to_phenotype.txt", HPO_GENES_TO_PHENOTYPE_COLUMNS),
 }
 
 _JSONL_SOURCES: dict[str, _JsonlSource] = {
@@ -167,7 +201,7 @@ def raw_to_bronze(
             if isinstance(spec, _FlatSource):
                 output_path = _convert_flat_source(
                     raw_partition, spec.object_name, technical_columns, work_dir,
-                    raw_manifest.get("sha256", {}).get(spec.object_name),
+                    raw_manifest.get("sha256", {}).get(spec.object_name), spec.columns,
                 )
             else:
                 output_path = _convert_jsonl_source(
