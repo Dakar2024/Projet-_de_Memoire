@@ -52,7 +52,6 @@ Références : `reference/audit_production.md`.
 
 - [ ] **Rattraper ou signaler un mois manqué** (P4) : `catchup=False`, une machine éteinte le 10 saute
       le mois sans bruit.
-- [ ] **Rétention Delta (`VACUUM`) et cycle de vie MinIO** (P11, P9) : aucun des deux n'existe.
 - [ ] **Procédure de reprise** (P17) : écrire le rattrapage d'un mois manquant et la restauration
       après perte du lac.
 
@@ -63,7 +62,6 @@ de développement.
 
 - [ ] **TLS sur MinIO**, endpoint en `https://` (T1) — *production*.
 - [ ] **Reverse proxy TLS avec authentification devant Airflow** (D2) — *production*.
-- [ ] **Versioning des buckets** (M3) : la protection la moins chère contre une suppression accidentelle.
 - [ ] **Secrets par fichiers montés** plutôt que par variables d'environnement (D5).
 - [ ] **Intégration continue** : tests, scan des dépendances et des images (G1). Pas de `.github`.
 
