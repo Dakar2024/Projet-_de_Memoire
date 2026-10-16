@@ -62,7 +62,7 @@ Dix-neuf constats, dont cinq retenus comme prioritaires.
 |---|---|---|---|
 | **P2** | **Aucune sauvegarde**, ni du stockage objet, ni de la base de métadonnées d'Airflow. Une suppression de volumes, une panne de disque ou une fausse manœuvre efface les quatre couches. Les mois récents seraient rejouables ; les anciens non (voir P16). L'historique SCD2 des reclassifications serait **définitivement perdu**. | Moyenne | **Bloquant** |
 | P10 | MinIO fonctionne en nœud unique sur un disque unique, sans réplication ni code d'effacement. Une défaillance matérielle perd l'ensemble du lac. | Faible | Critique |
-| P11 | Aucune politique de rétention Delta (`VACUUM`) : les versions obsolètes et le journal de transactions croissent sans borne. | Certaine | Faible |
+| P11 | Aucune politique de rétention Delta (`VACUUM`) : les versions obsolètes et le journal de transactions croissent sans borne. **✅ 16/10/2026** : tâche `vacuum_delta_tables` en fin de DAG de panel, rétention 30 jours (une erreur vue au run mensuel suivant reste rattrapable) ; le journal suit `logRetentionDuration`, 30 jours par défaut. | Certaine | Faible |
 | P12 | **Tout changement de schéma interrompt le pipeline.** Constaté pendant l'audit : renommer une colonne d'une table Gold provoque une `SchemaMismatchError` sur la table existante, et impose de supprimer la table puis de relancer. La procédure est documentée dans le README, mais reste une intervention manuelle à chaud. | Moyenne | Moyen |
 
 ### 3.3 Ordonnancement et reprise
@@ -79,7 +79,7 @@ Dix-neuf constats, dont cinq retenus comme prioritaires.
 |---|---|---|---|
 | P7 | **La limite mémoire tient par l'ordre du graphe, pas par construction.** Le conteneur qui exécute les tâches est plafonné à 3 Go et autorise quatre tâches simultanées. Mesures sur les données réelles : conversion du bulk ClinVar ≈ 2 Go, `bronze_to_silver` 1,37 Go, `silver_to_gold_rag` 716 Mo. Deux conversions lourdes concurrentes dépassent la limite. Le graphe les sépare aujourd'hui, mais un rejeu manuel lancé pendant un run planifié ne s'en soucie pas. Ce pipeline a déjà subi un arrêt pour dépassement mémoire pendant son développement. | Moyenne | Élevé |
 | **P8** | **Croissance disque non gérée.** `data/external` grossit de 442 Mo par mois sur l'hôte et n'est jamais purgé ; le lac ajoute environ 885 Mo par mois en `raw` et `bronze`. Soit à peu près 16 Go par an sur l'hôte et 11 Go dans MinIO, sans aucune surveillance ni seuil d'alerte. Le disque actuel est occupé à 39 %, ce qui laisse plusieurs années — mais un disque plein pendant un téléchargement de 440 Mo produit un échec tardif et opaque. | Certaine | Moyen |
-| P9 | Aucune règle de cycle de vie MinIO : les envois multipart interrompus restent stockés indéfiniment sans apparaître dans les listings ordinaires. | Faible | Faible |
+| P9 | Aucune règle de cycle de vie MinIO : les envois multipart interrompus restent stockés indéfiniment sans apparaître dans les listings ordinaires. **✅ 16/10/2026** : constat inexact pour les envois interrompus, MinIO les supprime déjà (`stale_uploads_expiry=24h`, vérifié par `mc admin config get … api`). Règle de cycle de vie ajoutée pour les versions anciennes (30 jours, sauf `raw`), nécessaire depuis le versioning (M3). | Faible | Faible |
 
 ### 3.5 Dérive des sources externes
 

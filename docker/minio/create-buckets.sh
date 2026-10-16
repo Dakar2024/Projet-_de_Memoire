@@ -5,7 +5,17 @@ set -e
 mc alias set local "http://minio:9000" "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"
 for bucket in raw bronze silver gold; do
   mc mb --ignore-existing "local/${bucket}"
-  echo "bucket ${bucket} pret"
+  # Versioning : une suppression ou un écrasement accidentel se rattrape (audit M3).
+  mc version enable "local/${bucket}"
+  echo "bucket ${bucket} pret (versionne)"
+done
+
+# Anciennes versions supprimées après 30 jours, sauf dans raw : les archives ClinVar d'avant 2023 sont
+# introuvables, rien n'y expire. `ilm import` remplace toute la configuration : idempotent au redémarrage.
+JOURS_VERSIONS_ANCIENNES=30
+for bucket in bronze silver gold; do
+  echo "{\"Rules\":[{\"ID\":\"versions-anciennes\",\"Status\":\"Enabled\",\"NoncurrentVersionExpiration\":{\"NoncurrentDays\":${JOURS_VERSIONS_ANCIENNES}},\"Expiration\":{\"ExpiredObjectDeleteMarker\":true}}]}" \
+    | mc ilm import "local/${bucket}"
 done
 
 # Politique limitée aux quatre buckets et aux actions dont Delta Lake a besoin.

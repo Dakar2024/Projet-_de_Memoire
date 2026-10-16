@@ -40,6 +40,7 @@ def test_panel_dag_has_the_expected_tasks(dag):
         "silver_to_gold_analytique",
         "quality_check_gold",
         "index_rag_documents",
+        "vacuum_delta_tables",
     })
 
 
@@ -205,3 +206,10 @@ def test_panel_dag_parses_without_the_rag_dependencies():
     )
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr[-500:]
+
+
+def test_delta_vacuum_runs_after_gold_is_checked_in_the_heavy_pool(dag):
+    """VACUUM touche les tables partagées entre panels : après le contrôle Gold, une écriture à la fois."""
+    task = dag.get_task("vacuum_delta_tables")
+    assert task.upstream_task_ids == {"quality_check_gold"}
+    assert task.pool == HEAVY_CONVERSION_POOL

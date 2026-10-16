@@ -19,6 +19,7 @@ FILE_SCHEME = "file://"
 
 SUCCESS_MARKER = "_SUCCESS"
 MANIFEST_NAME = "manifest.json"
+DELTA_LOG_DIR = "_delta_log"
 # Lecture par blocs de 1 Mio : le bulk ClinVar (~450 Mo) n'est jamais chargé en mémoire.
 _HASH_BLOCK_SIZE = 1 << 20
 
@@ -161,6 +162,24 @@ def delete(uri: str, client=None) -> None:
         (client or _s3_client()).delete_object(Bucket=bucket, Key=key)
         return
     _local_path(uri).unlink(missing_ok=True)
+
+
+def find_delta_tables(root_uri: str, client=None) -> list[str]:
+    """Liste les tables Delta sous une racine (dossiers qui portent un `_delta_log/`), triées."""
+    if root_uri.startswith(S3_SCHEME):
+        bucket, prefix = _split_s3(root_uri)
+        prefix = f"{prefix.rstrip('/')}/" if prefix else ""
+        tables: set[str] = set()
+        pages = (client or _s3_client()).get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=prefix)
+        for page in pages:
+            for item in page.get("Contents", []):
+                table_key, marker, _ = item["Key"].partition(f"/{DELTA_LOG_DIR}/")
+                if marker:
+                    tables.add(f"{S3_SCHEME}{bucket}/{table_key}")
+        return sorted(tables)
+    root = _local_path(root_uri)
+    scheme = FILE_SCHEME if root_uri.startswith(FILE_SCHEME) else ""
+    return sorted(f"{scheme}{log.parent}" for log in root.rglob(DELTA_LOG_DIR) if log.is_dir())
 
 
 def sha256_file(path: Path) -> str:

@@ -13,6 +13,7 @@ from ingestion.storage import (
     delete,
     exists,
     finalize_partition,
+    find_delta_tables,
     get_bytes,
     layer_uri,
     open_stream,
@@ -80,6 +81,17 @@ class FakeS3:
     def delete_object(self, Bucket, Key):
         # Comme S3 : supprimer une clé absente n'est pas une erreur.
         self.objects.pop((Bucket, Key), None)
+
+    def get_paginator(self, operation):
+        assert operation == "list_objects_v2"
+        return self
+
+    def paginate(self, Bucket, Prefix=""):
+        # Deux pages, comme S3 au-delà de 1 000 clés : le code doit les parcourir toutes.
+        keys = sorted(k for b, k in self.objects if b == Bucket and k.startswith(Prefix))
+        half = len(keys) // 2
+        for page in (keys[:half], keys[half:]):
+            yield {"Contents": [{"Key": k} for k in page]} if page else {}
 
 
 class _Body:
@@ -426,3 +438,22 @@ def test_sha256_file_hashes_a_file_by_blocks(tmp_path):
     path = tmp_path / "gros.bin"
     path.write_bytes(b"x" * 3_000_000)
     assert sha256_file(path) == hashlib.sha256(b"x" * 3_000_000).hexdigest()
+
+
+def test_find_delta_tables_locally_lists_nested_tables_and_ignores_other_folders(tmp_path):
+    for table in ("analytique/fact_variant", "rag/documents"):
+        (tmp_path / "gold" / table / "_delta_log").mkdir(parents=True)
+    (tmp_path / "gold" / "notes").mkdir()
+
+    tables = find_delta_tables(f"file://{tmp_path}/gold")
+
+    assert tables == [f"file://{tmp_path}/gold/analytique/fact_variant", f"file://{tmp_path}/gold/rag/documents"]
+
+
+def test_find_delta_tables_on_s3_reads_every_page():
+    client = FakeS3()
+    for key in ("clinvar_variant/_delta_log/00000.json", "clinvar_variant/part-1.parquet",
+                "hpo_term/_delta_log/00000.json", "hpo_term/_delta_log/00001.json", "brouillon/a.txt"):
+        client.put_object(Bucket="silver", Key=key, Body=b"")
+
+    assert find_delta_tables("s3://silver", client=client) == ["s3://silver/clinvar_variant", "s3://silver/hpo_term"]

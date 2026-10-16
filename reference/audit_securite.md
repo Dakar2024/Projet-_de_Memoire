@@ -89,7 +89,7 @@ indique comment elle évoluerait sur un serveur exposé.
 |---|---|---|---|---|
 | M1 | Les tâches Airflow utilisaient les identifiants **root** de MinIO. Une exécution de code arbitraire dans une tâche donnait le contrôle total du stockage, suppression des quatre buckets comprise. | **Élevé** | **Critique** | **Corrigé** |
 | M2 | La console d'administration et l'API S3 étaient publiées sur toutes les interfaces réseau, protégées par ces mêmes identifiants root. | **Élevé** | **Critique** | **Corrigé** |
-| M3 | Ni versioning, ni verrouillage d'objet, ni chiffrement au repos sur les buckets. Le versioning protégerait d'une suppression accidentelle, qui est le scénario le plus probable ici. | Moyen | Moyen | Ouvert |
+| M3 | Ni versioning, ni verrouillage d'objet, ni chiffrement au repos sur les buckets. Le versioning protégerait d'une suppression accidentelle, qui est le scénario le plus probable ici. | Moyen | Moyen | 🟠 Versioning activé le 16/10/2026 sur les quatre buckets (`create-buckets.sh`) ; anciennes versions supprimées après 30 jours sauf dans `raw`. Restent ouverts : verrouillage d'objet et chiffrement au repos. |
 | M4 | ✅ Une couche du médaillon correspond à un bucket : la séparation logique préexistait, ce qui a permis d'écrire une politique d'accès par bucket sans rien restructurer. | — | — | — |
 
 ### 3.5 Orchestration Docker et Airflow

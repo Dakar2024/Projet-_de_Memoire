@@ -30,6 +30,7 @@ from scripts.ingest_medgen import ingest_medgen
 from scripts.ingest_ncbi_gene import build_client, ingest_ncbi_gene
 from scripts.ingest_refseq import ingest_refseq
 from transformations.bronze_to_silver import bronze_to_silver
+from transformations.delta_maintenance import vacuum_delta_tables
 from transformations.quality_check_gold import quality_check_gold
 from transformations.quality_check_silver import quality_check_silver
 from transformations.raw_to_bronze import raw_to_bronze
@@ -138,6 +139,11 @@ def build_panel_dag(panel: str, genes: list[str]) -> DAG:
         def task_quality_check_gold(sources_date: str) -> None:
             quality_check_gold(sources_date, panel)
 
+        # Tables partagées entre panels : une écriture à la fois, comme les conversions.
+        @task(task_id="vacuum_delta_tables", pool=HEAVY_CONVERSION_POOL)
+        def task_vacuum_delta_tables() -> None:
+            vacuum_delta_tables()
+
         # Réindexation complète ~4 h sur CPU : délai de 6 h ; erreurs permanentes sans relance.
         @task(
             task_id="index_rag_documents",
@@ -171,7 +177,7 @@ def build_panel_dag(panel: str, genes: list[str]) -> DAG:
         checked_bronze >> silver >> quality >> [gold_rag, gold_analytique]
         checked_gold = task_quality_check_gold(sources_date)
         [gold_rag, gold_analytique] >> checked_gold
-        checked_gold >> task_index_rag_documents()
+        checked_gold >> [task_index_rag_documents(), task_vacuum_delta_tables()]
 
     return dag
 
