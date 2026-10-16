@@ -282,6 +282,22 @@ d'embedding, empreintes des identifiants et des vecteurs, index, droits, plus pr
 Vérifié le 14/10/2026 : 97 211 documents restaurés en 78 s, six comparaisons sur six identiques ;
 un dump tronqué est refusé.
 
+**Vérifier que la base Airflow et le lac se restaurent** (PostgreSQL jetable sans réseau ; MinIO
+jetable sur un réseau interne sans sortie) : la base restaurée doit redonner la version du schéma
+et l'historique des runs et des tâches terminés avant le dump (comparé à la base en service) ; les
+quatre buckets font l'aller-retour sauvegarde → MinIO → disque et doivent revenir identiques octet
+pour octet ; chaque table Delta Silver et Gold est relue depuis le MinIO restauré :
+
+```bash
+./scripts/verifier_restauration_lac_airflow.sh                 # dernière sauvegarde
+./scripts/verifier_restauration_lac_airflow.sh ~/sauvegardes-genomique/<date>
+```
+
+Vérifié le 16/10/2026 sur la sauvegarde du 14/10 : 9 runs et 106 tâches, 424 objets (1,9 Go),
+24 tables Delta, conforme en 77 s ; un fichier Parquet tronqué dans une copie est signalé
+(« illisible ») et fait échouer le script. Relancer un run complet sur une pile restaurée reste à
+faire (E3b).
+
 **Restaurer la base vectorielle en production** (après une perte du volume `rag-postgres-data`) :
 
 ```bash
@@ -403,7 +419,7 @@ src/transformations/  passages entre couches : raw_to_bronze, bronze_to_silver,
 scripts/              ingest_*.py : un script par source, écrit dans raw
                       run_collection.py : ancien script de collecte (voir plus bas)
                       sauvegarde.sh : sauvegarde des buckets MinIO, de PostgreSQL et de la base vectorielle ;
-                      verifier_restauration_rag.sh : test de restauration
+                      verifier_restauration_rag.sh, verifier_restauration_lac_airflow.sh : tests de restauration
 dags/                 DAGs Airflow : acquisition mensuelle + un DAG par panel
 docker/               image Airflow, création des buckets MinIO
 docker-compose.yml    stack Airflow 3 + PostgreSQL + MinIO

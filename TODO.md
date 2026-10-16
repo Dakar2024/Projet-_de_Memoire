@@ -37,8 +37,8 @@ Ce qui n'est pas encore fait. Les audits complets sont dans `reference/audit_sec
 
 ## 4. Exploitation
 
-- [ ] **Tester une restauration complète** sur une stack vide : la base Airflow et les buckets MinIO,
-      puis relancer un run dessus. (La base vectorielle est déjà vérifiée.)
+- [ ] **Relancer un run complet sur une pile restaurée** (E3b). La fidélité des copies est vérifiée :
+      base vectorielle (14/10) puis base Airflow et lac (16/10, `verifier_restauration_lac_airflow.sh`).
 - [ ] **Brancher les alertes e-mail** (le câblage existe, les clés sont vides) : Resend au moment du
       backend (`smtp.resend.com`, 587 STARTTLS, utilisateur `resend`, domaine vérifié obligatoire),
       renseigner `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `ALERT_FROM`, `ALERT_EMAIL`,
