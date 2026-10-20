@@ -1,0 +1,462 @@
+<title>Explorateur des variants</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@500;600;700&family=Hanken+Grotesk:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Mise en page : en-tête + filtres sur une ligne, bandeau de chiffres, grille de cartes (graphe principal large, deux secondaires), tableau en bas. */
+:root {
+  --bg: #f4f9f6;
+  --surface: #ffffff;
+  --ink: #10201a;
+  --muted: #56685e;
+  --line: #dce8e0;
+  --accent: #1e7550;
+  --accent-soft: #e2f3ea;
+  --bar: #2e9e6b;
+  --sig-p: #a3231f; --sig-lp: #e0675c; --sig-vus: #c4c3bd; --sig-lb: #6da7ec; --sig-b: #1c5cab; --sig-c: #eda100;
+  --font-display: "Familjen Grotesk", "Hanken Grotesk", system-ui, sans-serif;
+  --font-body: "Hanken Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0c1310; --surface: #141b18; --ink: #e3eee8; --muted: #9bb0a4; --line: #25332c;
+    --accent: #66d39f; --accent-soft: #17291f; --bar: #4cc38a;
+    --sig-p: #c8403a; --sig-lp: #ec8577; --sig-vus: #77766f; --sig-lb: #5a9ae6; --sig-b: #2f62c8; --sig-c: #c98500;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0c1310; --surface: #141b18; --ink: #e3eee8; --muted: #9bb0a4; --line: #25332c;
+  --accent: #66d39f; --accent-soft: #17291f; --bar: #4cc38a;
+  --sig-p: #c8403a; --sig-lp: #ec8577; --sig-vus: #77766f; --sig-lb: #5a9ae6; --sig-b: #2f62c8; --sig-c: #c98500;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.5;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 20px 40px;
+}
+.wrap { max-width: 1240px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; }
+.mono { font-family: var(--font-mono); }
+.num { font-variant-numeric: tabular-nums; }
+
+header.top { display: flex; flex-wrap: wrap; gap: 14px 24px; align-items: center; justify-content: space-between; }
+.brand { display: flex; align-items: center; gap: 12px; }
+.logo-slot { border: 1.5px dashed var(--accent); color: var(--accent); border-radius: 8px; padding: 4px 10px; font-size: 12px; font-weight: 600; letter-spacing: .04em; }
+.brand h1 { font-size: 26px; font-weight: 700; letter-spacing: -0.01em; }
+.brand p { margin: 0; color: var(--muted); font-size: 13px; }
+.archive { font-family: var(--font-mono); font-size: 12px; background: var(--accent-soft); color: var(--accent); padding: 3px 9px; border-radius: 999px; white-space: nowrap; }
+.filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field label { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 600; }
+select, input[type="search"] {
+  font: inherit; font-size: 14px; color: var(--ink); background: var(--surface); border: 1px solid var(--line);
+  border-radius: 8px; padding: 7px 10px; min-width: 0;
+}
+select:focus-visible, input:focus-visible, button:focus-visible, th:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.note { font-size: 13px; color: var(--muted); background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; }
+.note strong { color: var(--ink); font-weight: 600; }
+
+.kpis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.kpi { background: var(--surface); padding: 14px 16px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.kpi .label { font-size: 12px; color: var(--muted); font-weight: 500; }
+.kpi .value { font-family: var(--font-display); font-size: 28px; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.kpi .sub { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.kpi .chip { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 6px; vertical-align: 1px; }
+
+.grid { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr); gap: 18px; align-items: start; }
+.col { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; min-width: 0; }
+.card-head { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: baseline; justify-content: space-between; margin-bottom: 12px; }
+.card h2 { font-size: 17px; font-weight: 600; }
+.card .hint { font-size: 12.5px; color: var(--muted); margin: 2px 0 0; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button { font: inherit; font-size: 12.5px; border: 0; background: transparent; color: var(--muted); padding: 5px 10px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.linkbtn { font: inherit; font-size: 12.5px; background: none; border: 0; color: var(--accent); cursor: pointer; padding: 0; text-decoration: underline; text-underline-offset: 3px; }
+
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12.5px; color: var(--muted); margin-bottom: 10px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 11px; height: 11px; border-radius: 3px; display: inline-block; flex: none; }
+
+.rows { display: flex; flex-direction: column; gap: 7px; }
+.row { display: grid; grid-template-columns: 92px minmax(0, 1fr) 64px; gap: 10px; align-items: center; }
+.row .who { display: flex; flex-direction: column; line-height: 1.15; min-width: 0; }
+.row .who b { font-family: var(--font-mono); font-weight: 500; font-size: 13px; }
+.row .who small { font-family: var(--font-mono); font-size: 10.5px; color: var(--muted); }
+.row .tot { text-align: right; font-size: 13px; font-variant-numeric: tabular-nums; color: var(--muted); }
+.track { display: flex; gap: 2px; height: 18px; min-width: 0; }
+.track .s { height: 100%; min-width: 0; cursor: default; }
+.track .s:first-child { border-top-left-radius: 4px; border-bottom-left-radius: 4px; }
+.track .s:last-child { border-top-right-radius: 4px; border-bottom-right-radius: 4px; }
+.track .s:hover { filter: brightness(1.08) saturate(1.1); outline: 2px solid var(--ink); outline-offset: -1px; }
+.row.sel .who b { color: var(--accent); font-weight: 600; }
+
+.hbar { display: grid; grid-template-columns: minmax(0, 150px) minmax(0, 1fr) 70px; gap: 10px; align-items: center; font-size: 13px; }
+.hbar .lab { min-width: 0; overflow-wrap: anywhere; }
+.hbar .b { height: 14px; background: var(--bar); border-radius: 0 4px 4px 0; min-width: 2px; }
+.hbar .v { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+.stars { color: var(--sig-c); letter-spacing: 1px; font-size: 12px; }
+.stars .off { color: var(--line); }
+
+.trans { display: flex; flex-direction: column; gap: 9px; font-size: 13px; }
+.tr { display: grid; grid-template-columns: minmax(0, 1fr) 46px; gap: 6px 10px; align-items: center; }
+.tr .path { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; min-width: 0; }
+.pill { display: inline-flex; align-items: center; gap: 5px; padding: 1px 8px 1px 6px; border-radius: 999px; background: var(--accent-soft); color: var(--ink); font-size: 12px; white-space: nowrap; }
+.arrow { color: var(--muted); }
+.tr .v { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+.tr .mini { grid-column: 1 / -1; height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; }
+.tr .mini i { display: block; height: 100%; background: var(--bar); }
+
+.tablewrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); font-weight: 600; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; cursor: pointer; user-select: none; }
+th[aria-sort="ascending"]::after { content: " ▲"; } th[aria-sort="descending"]::after { content: " ▼"; }
+td { padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+td.n { text-align: right; font-variant-numeric: tabular-nums; }
+th.n { text-align: right; }
+tbody tr:hover td { background: var(--accent-soft); }
+.genes { font-family: var(--font-mono); font-size: 11.5px; color: var(--muted); }
+.ext { color: var(--accent); }
+.pager { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 10px; font-size: 12.5px; color: var(--muted); flex-wrap: wrap; }
+.pager button { font: inherit; font-size: 12.5px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 7px; padding: 4px 10px; cursor: pointer; }
+.pager button:disabled { opacity: .4; cursor: default; }
+.empty { color: var(--muted); font-size: 13px; padding: 14px 0; }
+
+#tip { position: fixed; z-index: 20; pointer-events: none; background: var(--ink); color: var(--bg); font-size: 12.5px; padding: 7px 10px; border-radius: 8px; max-width: 260px; line-height: 1.35; box-shadow: 0 6px 20px rgba(0,0,0,.18); }
+#tip b { font-family: var(--font-mono); font-weight: 500; }
+footer { font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
+
+@media (max-width: 980px) { .grid { grid-template-columns: minmax(0, 1fr); } .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 520px) {
+  .row { grid-template-columns: 70px minmax(0, 1fr) 52px; gap: 8px; }
+  .hbar { grid-template-columns: minmax(0, 110px) minmax(0, 1fr) 56px; }
+  .kpi .value { font-size: 23px; }
+  .filters { width: 100%; } .filters .field { flex: 1 1 140px; } select { width: 100%; }
+}
+@media (prefers-reduced-motion: no-preference) { .track .s, .hbar .b, .tr .mini i { transition: width .35s ease, flex-basis .35s ease; } }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <span class="logo-slot" title="Logo en cours de conception">[Nom]</span>
+      <div>
+        <h1>Explorateur des variants</h1>
+        <p>Variants ClinVar du panel, par gène, signification clinique et niveau de preuve · <span class="archive" id="archive"></span></p>
+      </div>
+    </div>
+    <div class="filters" role="group" aria-label="Filtres">
+      <div class="field"><label for="f-panel">Maladie</label>
+        <select id="f-panel"><option value="all">Toutes les maladies</option></select></div>
+      <div class="field"><label for="f-gene">Gène</label>
+        <select id="f-gene"><option value="all">Tous les gènes</option></select></div>
+    </div>
+  </header>
+
+  <p class="note"><strong>Maquette sur données réelles.</strong> Chiffres extraits de <span class="mono">gold/analytique</span> (archive ClinVar <span id="archive2"></span>). Dans l'application, ils viendront de <span class="mono">GET /api/analytics/…</span> ; la liste des maladies viendra de <span class="mono">GET /api/panels</span>.</p>
+
+  <section class="kpis" aria-label="Chiffres clés">
+    <div class="kpi"><span class="label">Variants suivis</span><span class="value" id="k-total"></span><span class="sub" id="k-total-sub"></span></div>
+    <div class="kpi"><span class="label"><span class="chip" style="background:var(--sig-p)"></span>Pathogènes ou probables</span><span class="value" id="k-path"></span><span class="sub" id="k-path-sub"></span></div>
+    <div class="kpi"><span class="label"><span class="chip" style="background:var(--sig-vus)"></span>Signification incertaine</span><span class="value" id="k-vus"></span><span class="sub" id="k-vus-sub"></span></div>
+    <div class="kpi"><span class="label">Preuves solides (≥ 2 étoiles)</span><span class="value" id="k-stars"></span><span class="sub" id="k-stars-sub"></span></div>
+    <div class="kpi"><span class="label">Changements de signification</span><span class="value" id="k-recl"></span><span class="sub" id="k-recl-sub"></span></div>
+  </section>
+
+  <div class="grid">
+    <div class="col">
+      <section class="card" aria-labelledby="h-genes">
+        <div class="card-head">
+          <div><h2 id="h-genes">Signification clinique par gène</h2>
+            <p class="hint">Survolez un segment pour le détail. Cliquez sur un gène pour filtrer.</p></div>
+          <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+            <div class="seg" role="group" aria-label="Échelle">
+              <button type="button" id="m-count" aria-pressed="true">Nombre</button>
+              <button type="button" id="m-share" aria-pressed="false">Proportion</button>
+            </div>
+            <button type="button" class="linkbtn" id="t-table" aria-expanded="false">Voir en tableau</button>
+          </div>
+        </div>
+        <div class="legend" id="legend"></div>
+        <div class="rows" id="gene-rows"></div>
+        <div class="tablewrap" id="gene-table" hidden></div>
+        <p class="hint" id="unclassified" style="margin-top:10px"></p>
+      </section>
+
+      <section class="card" aria-labelledby="h-dis">
+        <div class="card-head">
+          <div><h2 id="h-dis">Maladies associées</h2>
+            <p class="hint">Concepts MedGen liés aux variants, avec leurs références OMIM et Orphanet.</p></div>
+          <div class="field"><label for="f-search">Rechercher</label><input type="search" id="f-search" placeholder="ex. Fanconi, anémie…"></div>
+        </div>
+        <div class="tablewrap"><table id="dis-table">
+          <thead><tr>
+            <th data-k="disease_name" tabindex="0">Maladie</th>
+            <th data-k="genes" tabindex="0">Gènes</th>
+            <th data-k="variants" class="n" tabindex="0" aria-sort="descending">Variants</th>
+            <th data-k="omim_id" tabindex="0">OMIM</th>
+            <th data-k="orpha_id" tabindex="0">Orphanet</th>
+            <th data-k="modes_inheritance" tabindex="0">Transmission</th>
+          </tr></thead><tbody></tbody></table></div>
+        <div class="pager"><span id="pg-info"></span><span style="display:flex;gap:6px"><button type="button" id="pg-prev">Précédent</button><button type="button" id="pg-next">Suivant</button></span></div>
+      </section>
+    </div>
+
+    <div class="col">
+      <section class="card" aria-labelledby="h-stars">
+        <div class="card-head"><div><h2 id="h-stars">Niveau de preuve</h2>
+          <p class="hint">Étoiles ClinVar, du simple dépôt (0) aux recommandations de pratique (4).</p></div></div>
+        <div class="rows" id="star-rows"></div>
+      </section>
+
+      <section class="card" aria-labelledby="h-recl">
+        <div class="card-head"><div><h2 id="h-recl">Reclassifications</h2>
+          <p class="hint" id="recl-hint"></p></div></div>
+        <div class="trans" id="trans"></div>
+      </section>
+
+      <section class="card" aria-labelledby="h-type">
+        <div class="card-head"><div><h2 id="h-type">Types de variants</h2></div></div>
+        <div class="rows" id="type-rows"></div>
+      </section>
+    </div>
+  </div>
+
+  <footer>
+    <span>Regroupement des significations : les libellés ClinVar composés (ex. « Pathogenic/Likely pathogenic ») sont rattachés à leur premier terme ; « Benign/Likely benign » est compté avec Bénin.</span>
+    <span>Outil d'aide à l'interprétation. Ne remplace pas l'avis d'un généticien ni un compte rendu de laboratoire.</span>
+  </footer>
+</div>
+<div id="tip" hidden></div>
+
+<script>
+const DATA = __DATA__;
+
+const PANELS = { brca: "Cancer du sein héréditaire", sickle: "Drépanocytose et HbF" };
+const GROUPS = [
+  { id: "p", label: "Pathogène", color: "var(--sig-p)" },
+  { id: "lp", label: "Probablement pathogène", color: "var(--sig-lp)" },
+  { id: "vus", label: "Incertaine (VUS)", color: "var(--sig-vus)" },
+  { id: "lb", label: "Probablement bénin", color: "var(--sig-lb)" },
+  { id: "b", label: "Bénin", color: "var(--sig-b)" },
+  { id: "c", label: "Conflictuelle", color: "var(--sig-c)" },
+];
+const SIG_FR = {
+  "Pathogenic": "Pathogène", "Likely pathogenic": "Prob. pathogène",
+  "Pathogenic/Likely pathogenic": "Pathogène / prob.", "Uncertain significance": "VUS",
+  "Likely benign": "Prob. bénin", "Benign": "Bénin", "Benign/Likely benign": "Bénin / prob.",
+  "Conflicting classifications of pathogenicity": "Conflictuelle", "-": "Sans classification",
+};
+const TYPE_FR = {
+  "single nucleotide variant": "Substitution (SNV)", "Deletion": "Délétion", "Duplication": "Duplication",
+  "Indel": "Indel", "Insertion": "Insertion", "Microsatellite": "Microsatellite", "Inversion": "Inversion",
+};
+const STAR_LABEL = { "-1": "Sans statut", 0: "0", 1: "1", 2: "2", 3: "3", 4: "4" };
+
+const fmt = new Intl.NumberFormat("fr-FR");
+const pct = (a, b) => b ? (100 * a / b).toLocaleString("fr-FR", { maximumFractionDigits: 1, minimumFractionDigits: 1 }) + " %" : "–";
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+function group(sig) {
+  if (!sig) return null;
+  if (sig.startsWith("Conflicting")) return "c";
+  if (sig.startsWith("Pathogenic")) return "p";
+  if (sig.startsWith("Likely pathogenic")) return "lp";
+  if (sig.startsWith("Uncertain") || sig.startsWith("VUS")) return "vus";
+  if (sig.startsWith("Likely benign")) return "lb";
+  if (sig.startsWith("Benign")) return "b";
+  return null;
+}
+const sigFr = s => SIG_FR[s] || s;
+
+const state = { panel: "all", gene: "all", mode: "count", sortK: "variants", sortDir: -1, page: 0, q: "" };
+const geneInfo = Object.fromEntries(DATA.genes.map(g => [g.gene_symbol, g]));
+
+const fPanel = document.getElementById("f-panel"), fGene = document.getElementById("f-gene");
+[...new Set(DATA.genes.map(g => g.panel))].sort().forEach(p => fPanel.add(new Option(PANELS[p] || p, p)));
+function fillGenes() {
+  const keep = fGene.value;
+  fGene.length = 1;
+  DATA.genes.filter(g => state.panel === "all" || g.panel === state.panel)
+    .map(g => g.gene_symbol).sort().forEach(s => fGene.add(new Option(s, s)));
+  fGene.value = [...fGene.options].some(o => o.value === keep) ? keep : "all";
+  state.gene = fGene.value;
+}
+const inScope = r => (state.panel === "all" || r.panel === state.panel) && (state.gene === "all" || r.gene_symbol === state.gene);
+const inPanel = r => state.panel === "all" || r.panel === state.panel;
+
+document.getElementById("archive").textContent = "ClinVar " + DATA.latest_month;
+document.getElementById("archive2").textContent = DATA.latest_month;
+
+const tip = document.getElementById("tip");
+function showTip(e, html) {
+  tip.innerHTML = html; tip.hidden = false;
+  const r = tip.getBoundingClientRect();
+  let x = e.clientX + 14, y = e.clientY + 14;
+  if (x + r.width > innerWidth - 8) x = e.clientX - r.width - 14;
+  if (y + r.height > innerHeight - 8) y = e.clientY - r.height - 14;
+  tip.style.left = Math.max(8, x) + "px"; tip.style.top = Math.max(8, y) + "px";
+}
+const hideTip = () => { tip.hidden = true; };
+
+function renderKpis() {
+  const rows = DATA.by_gene_sig.filter(inScope);
+  const total = rows.reduce((a, r) => a + r.n, 0);
+  const by = {}; rows.forEach(r => { const g = group(r.clinical_significance) || "x"; by[g] = (by[g] || 0) + r.n; });
+  const genes = new Set(rows.map(r => r.gene_symbol).filter(Boolean)).size;
+  const rev = DATA.by_gene_review.filter(inScope);
+  const strong = rev.filter(r => r.stars >= 2).reduce((a, r) => a + r.n, 0);
+  const rec = DATA.reclass.filter(inScope);
+  const recAll = rec.reduce((a, r) => a + r.n, 0);
+  const recReal = rec.filter(r => r.significance_from !== r.significance_to).reduce((a, r) => a + r.n, 0);
+  const path = (by.p || 0) + (by.lp || 0);
+  document.getElementById("k-total").textContent = fmt.format(total);
+  document.getElementById("k-total-sub").textContent = genes + (genes > 1 ? " gènes" : " gène");
+  document.getElementById("k-path").textContent = pct(path, total);
+  document.getElementById("k-path-sub").textContent = fmt.format(path) + " variants";
+  document.getElementById("k-vus").textContent = pct(by.vus || 0, total);
+  document.getElementById("k-vus-sub").textContent = fmt.format(by.vus || 0) + " variants";
+  document.getElementById("k-stars").textContent = pct(strong, total);
+  document.getElementById("k-stars-sub").textContent = fmt.format(strong) + " variants";
+  document.getElementById("k-recl").textContent = fmt.format(recReal);
+  document.getElementById("k-recl-sub").textContent = "sur " + fmt.format(recAll) + " versions modifiées";
+}
+
+function geneTotals() {
+  const map = {};
+  DATA.by_gene_sig.filter(r => inPanel(r) && r.gene_symbol).forEach(r => {
+    const m = map[r.gene_symbol] ||= { gene: r.gene_symbol, total: 0, x: 0, ...Object.fromEntries(GROUPS.map(g => [g.id, 0])) };
+    const g = group(r.clinical_significance);
+    m.total += r.n; if (g) m[g] += r.n; else m.x += r.n;
+  });
+  return Object.values(map).sort((a, b) => b.total - a.total);
+}
+
+function renderGenes() {
+  document.getElementById("legend").innerHTML = GROUPS.map(g => `<span><i class="sw" style="background:${g.color}"></i>${g.label}</span>`).join("");
+  const list = geneTotals();
+  const max = Math.max(1, ...list.map(m => m.total - m.x));
+  const box = document.getElementById("gene-rows");
+  box.innerHTML = list.map(m => {
+    const classified = m.total - m.x;
+    const scale = state.mode === "count" ? classified / max : 1;
+    const segs = GROUPS.filter(g => m[g.id] > 0).map(g =>
+      `<span class="s" data-g="${m.gene}" data-k="${g.id}" style="flex:0 0 calc(${(100 * scale * m[g.id] / classified).toFixed(3)}% - 2px);background:${g.color}"></span>`).join("");
+    const info = geneInfo[m.gene] || {};
+    return `<div class="row${state.gene === m.gene ? " sel" : ""}"><button type="button" class="who linkbtn" style="text-decoration:none;text-align:left;color:inherit" data-pick="${m.gene}" aria-label="Filtrer sur ${m.gene}"><b>${m.gene}</b><small>${esc(info.maplocation || "")}</small></button>
+      <div class="track" role="img" aria-label="${m.gene} : ${GROUPS.map(g => g.label + " " + m[g.id]).join(", ")}">${segs}</div>
+      <span class="tot">${fmt.format(m.total)}</span></div>`;
+  }).join("") || `<p class="empty">Aucun gène pour ce filtre.</p>`;
+  const unc = list.reduce((a, m) => a + m.x, 0);
+  document.getElementById("unclassified").textContent = unc ? `${fmt.format(unc)} variants sans classification ou à libellé rare (ex. « drug response ») ne sont pas représentés dans les barres, mais sont comptés dans le total.` : "";
+  document.getElementById("gene-table").innerHTML = `<table><thead><tr><th>Gène</th><th>Locus</th>${GROUPS.map(g => `<th class="n">${g.label}</th>`).join("")}<th class="n">Autres</th><th class="n">Total</th></tr></thead><tbody>${
+    list.map(m => `<tr><td class="mono">${m.gene}</td><td class="mono">${esc((geneInfo[m.gene] || {}).maplocation || "")}</td>${GROUPS.map(g => `<td class="n">${fmt.format(m[g.id])}</td>`).join("")}<td class="n">${fmt.format(m.x)}</td><td class="n">${fmt.format(m.total)}</td></tr>`).join("")}</tbody></table>`;
+}
+
+document.getElementById("gene-rows").addEventListener("mousemove", e => {
+  const s = e.target.closest(".s"); if (!s) return hideTip();
+  const m = geneTotals().find(x => x.gene === s.dataset.g); const g = GROUPS.find(x => x.id === s.dataset.k);
+  showTip(e, `<b>${m.gene}</b> · ${g.label}<br>${fmt.format(m[g.id])} variants · ${pct(m[g.id], m.total)} du gène`);
+});
+document.getElementById("gene-rows").addEventListener("mouseleave", hideTip);
+document.getElementById("gene-rows").addEventListener("click", e => {
+  const b = e.target.closest("[data-pick]"); if (!b) return;
+  const g = b.dataset.pick; fGene.value = state.gene === g ? "all" : g; state.gene = fGene.value; state.page = 0; render();
+});
+
+function hbars(el, items, labelFn) {
+  const max = Math.max(1, ...items.map(i => i.n));
+  el.innerHTML = items.length ? items.map(i => `<div class="hbar"><span class="lab">${labelFn(i)}</span><span class="b" style="width:${(100 * i.n / max).toFixed(2)}%" title="${fmt.format(i.n)}"></span><span class="v">${fmt.format(i.n)}</span></div>`).join("") : `<p class="empty">Aucune donnée pour ce filtre.</p>`;
+}
+
+function renderStars() {
+  const acc = {};
+  DATA.by_gene_review.filter(inScope).forEach(r => { const k = r.stars ?? -1; acc[k] = (acc[k] || 0) + r.n; });
+  const items = [4, 3, 2, 1, 0, -1].map(k => ({ k, n: acc[k] || 0 }));
+  hbars(document.getElementById("star-rows"), items, i => i.k < 0 ? "Sans statut de revue"
+    : `<span class="stars" aria-label="${i.k} étoile${i.k > 1 ? "s" : ""}">${"★".repeat(i.k)}<span class="off">${"★".repeat(4 - i.k)}</span></span> ${["Sans critère", "Un déposant", "Plusieurs, concordants", "Panel d'experts", "Recommandation"][i.k]}`);
+}
+
+function renderTypes() {
+  const acc = {};
+  DATA.by_gene_type.filter(inScope).forEach(r => { const k = TYPE_FR[r.variant_type] ? r.variant_type : "Autres"; acc[k] = (acc[k] || 0) + r.n; });
+  const items = Object.entries(acc).map(([k, n]) => ({ k, n })).sort((a, b) => b.n - a.n);
+  hbars(document.getElementById("type-rows"), items, i => TYPE_FR[i.k] || "Autres (CNV, etc.)");
+}
+
+function renderReclass() {
+  const rec = DATA.reclass.filter(inScope);
+  const all = rec.reduce((a, r) => a + r.n, 0);
+  const acc = {};
+  rec.filter(r => r.significance_from !== r.significance_to).forEach(r => {
+    const k = r.significance_from + "→" + r.significance_to; acc[k] = (acc[k] || 0) + r.n;
+  });
+  const items = Object.entries(acc).map(([k, n]) => ({ from: k.split("→")[0], to: k.split("→")[1], n })).sort((a, b) => b.n - a.n).slice(0, 7);
+  const real = Object.values(acc).reduce((a, n) => a + n, 0);
+  document.getElementById("recl-hint").textContent = `Archive ${DATA.latest_month} : ${fmt.format(all)} versions de variants ont changé, dont ${fmt.format(real)} changent de signification. Les plus fréquents :`;
+  const max = Math.max(1, ...items.map(i => i.n));
+  const dot = s => { const g = GROUPS.find(x => x.id === group(s)); return `<i class="sw" style="width:8px;height:8px;background:${g ? g.color : "var(--muted)"}"></i>`; };
+  document.getElementById("trans").innerHTML = items.length ? items.map(i => `<div class="tr"><span class="path"><span class="pill">${dot(i.from)}${esc(sigFr(i.from))}</span><span class="arrow" aria-label="vers">→</span><span class="pill">${dot(i.to)}${esc(sigFr(i.to))}</span></span><span class="v">${fmt.format(i.n)}</span><span class="mini"><i style="width:${(100 * i.n / max).toFixed(1)}%"></i></span></div>`).join("")
+    : `<p class="empty">Aucun changement de signification pour ce filtre.</p>`;
+}
+
+const PAGE = 12;
+function renderDiseases() {
+  const q = state.q.trim().toLowerCase();
+  let rows = DATA.diseases.filter(d => inPanel(d) && (state.gene === "all" || (d.genes || "").split(", ").includes(state.gene))
+    && (!q || (d.disease_name || "").toLowerCase().includes(q)));
+  const k = state.sortK, dir = state.sortDir;
+  rows.sort((a, b) => { const x = a[k] ?? "", y = b[k] ?? ""; return (typeof x === "number" && typeof y === "number" ? x - y : String(x).localeCompare(String(y), "fr")) * dir; });
+  const pages = Math.max(1, Math.ceil(rows.length / PAGE));
+  state.page = Math.min(state.page, pages - 1);
+  const slice = rows.slice(state.page * PAGE, state.page * PAGE + PAGE);
+  const link = (id, url) => id ? `<a class="ext mono" href="${url}${encodeURIComponent(id)}" target="_blank" rel="noopener">${esc(id)}</a>` : `<span style="color:var(--muted)">–</span>`;
+  document.querySelector("#dis-table tbody").innerHTML = slice.map(d => `<tr>
+    <td>${esc(d.disease_name)}<div class="genes">${esc(d.medgen_cui)}</div></td>
+    <td class="genes">${esc(d.genes)}</td>
+    <td class="n">${fmt.format(d.variants)}</td>
+    <td>${link(d.omim_id, "https://omim.org/entry/")}</td>
+    <td>${link(d.orpha_id, "https://www.orpha.net/fr/disease/detail/")}</td>
+    <td style="font-size:12px;color:var(--muted)">${esc((d.modes_inheritance || "–").replace(/ inheritance/g, ""))}</td></tr>`).join("")
+    || `<tr><td colspan="6" class="empty">Aucune maladie ne correspond.</td></tr>`;
+  document.getElementById("pg-info").textContent = rows.length ? `${state.page * PAGE + 1}–${Math.min(rows.length, (state.page + 1) * PAGE)} sur ${fmt.format(rows.length)} maladies` : "";
+  document.getElementById("pg-prev").disabled = state.page === 0;
+  document.getElementById("pg-next").disabled = state.page >= pages - 1;
+  document.querySelectorAll("#dis-table th").forEach(th => th.setAttribute("aria-sort", th.dataset.k === k ? (dir > 0 ? "ascending" : "descending") : "none"));
+}
+document.querySelectorAll("#dis-table th").forEach(th => {
+  const go = () => { const k = th.dataset.k; state.sortDir = state.sortK === k ? -state.sortDir : (k === "variants" ? -1 : 1); state.sortK = k; state.page = 0; renderDiseases(); };
+  th.addEventListener("click", go); th.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } });
+});
+document.getElementById("pg-prev").onclick = () => { state.page--; renderDiseases(); };
+document.getElementById("pg-next").onclick = () => { state.page++; renderDiseases(); };
+document.getElementById("f-search").addEventListener("input", e => { state.q = e.target.value; state.page = 0; renderDiseases(); });
+
+function setMode(m) {
+  state.mode = m;
+  document.getElementById("m-count").setAttribute("aria-pressed", m === "count");
+  document.getElementById("m-share").setAttribute("aria-pressed", m === "share");
+  renderGenes();
+}
+document.getElementById("m-count").onclick = () => setMode("count");
+document.getElementById("m-share").onclick = () => setMode("share");
+document.getElementById("t-table").onclick = e => {
+  const t = document.getElementById("gene-table"), r = document.getElementById("gene-rows");
+  const show = t.hidden; t.hidden = !show; r.hidden = show;
+  document.getElementById("legend").hidden = show;
+  e.target.textContent = show ? "Voir en graphique" : "Voir en tableau";
+  e.target.setAttribute("aria-expanded", show);
+};
+fPanel.addEventListener("change", () => { state.panel = fPanel.value; fillGenes(); state.page = 0; render(); });
+fGene.addEventListener("change", () => { state.gene = fGene.value; state.page = 0; render(); });
+
+function render() { renderKpis(); renderGenes(); renderStars(); renderReclass(); renderTypes(); renderDiseases(); }
+fillGenes();
+render();
+</script>
