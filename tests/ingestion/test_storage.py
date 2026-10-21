@@ -457,3 +457,35 @@ def test_find_delta_tables_on_s3_reads_every_page():
         client.put_object(Bucket="silver", Key=key, Body=b"")
 
     assert find_delta_tables("s3://silver", client=client) == ["s3://silver/clinvar_variant", "s3://silver/hpo_term"]
+
+
+class _UnreachableS3:
+    def head_bucket(self, Bucket):
+        from botocore.exceptions import EndpointConnectionError
+
+        raise EndpointConnectionError(endpoint_url="http://minio:9000")
+
+
+class _ReachableS3:
+    def head_bucket(self, Bucket):
+        return {}
+
+
+def test_layer_reachable_on_minio(monkeypatch):
+    """MinIO éteint : le rappel doit le signaler, pas planter."""
+    from ingestion.storage import layer_reachable
+
+    monkeypatch.setenv("LAKE_URI", "s3://")
+
+    assert layer_reachable("raw", client=_ReachableS3()) is True
+    assert layer_reachable("raw", client=_UnreachableS3()) is False
+
+
+def test_layer_reachable_on_a_local_lake(monkeypatch, tmp_path):
+    from ingestion.storage import layer_reachable
+
+    monkeypatch.setenv("LAKE_URI", str(tmp_path))
+    (tmp_path / "raw").mkdir()
+
+    assert layer_reachable("raw") is True
+    assert layer_reachable("bronze") is False

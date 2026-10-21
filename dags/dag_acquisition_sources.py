@@ -14,6 +14,7 @@ from airflow.sdk.exceptions import AirflowFailException
 from dags.common.alerting import alert_args
 from dags.common.dates import record_sources_date, require_logical_date
 from dags.common.panels import HEAVY_CONVERSION_POOL, SHARED_SOURCES, SOURCES_READY
+from dags.common.schedule import ACQUISITION_CRON
 from ingestion.errors import ConfigurationError, SourceSchemaError
 from ingestion.storage import assert_partitions_complete
 from scripts.ingest_clinvar import ingest_clinvar
@@ -30,8 +31,8 @@ DEFAULT_ARGS = {
 with DAG(
     dag_id="dag_acquisition_sources",
     description="Sources communes à tous les panels : dépôt raw puis conversion bronze",
-    # Le 10 à 6 h UTC : l'archive ClinVar du mois paraît entre le 2 et le 6.
-    schedule="0 6 10 * *",
+    # Le 10 à 6 h UTC, partagé avec les rappels (dags/common/schedule.py).
+    schedule=ACQUISITION_CRON,
     start_date=dt.datetime(2026, 1, 1),
     catchup=False,
     # Deux runs écriraient la même partition `raw` partagée.

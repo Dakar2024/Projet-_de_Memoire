@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import polars as pl
-from botocore.exceptions import ClientError
+from botocore.exceptions import BotoCoreError, ClientError
 
 from ingestion.config import LOGICAL_DATE_PATTERN, current_lake_uri
 
@@ -139,6 +139,18 @@ def scan_parquet(uri: str) -> pl.LazyFrame:
     if uri.startswith(S3_SCHEME):
         return pl.scan_parquet(uri, storage_options=storage_options(uri))
     return pl.scan_parquet(_local_path(uri))
+
+
+def layer_reachable(layer: str, client=None) -> bool:
+    """Teste l'accès à une couche du lac (bucket MinIO, dossier en local), sans lever d'exception."""
+    uri = layer_uri(layer)
+    if uri.startswith(S3_SCHEME):
+        try:
+            (client or _s3_client()).head_bucket(Bucket=_split_s3(uri)[0])
+            return True
+        except (BotoCoreError, ClientError):
+            return False
+    return _local_path(uri).is_dir()
 
 
 def exists(uri: str, client=None) -> bool:
