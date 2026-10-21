@@ -11,8 +11,8 @@ PREFIXE=genomique-restauration-lac
 RESEAU="${PREFIXE}-reseau"
 PG_JETABLE="${PREFIXE}-postgres"
 MINIO_JETABLE="${PREFIXE}-minio"
-# Même image `mc` épinglée que scripts/sauvegarde.sh.
-MC_IMAGE=quay.io/minio/mc@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
+# Même image `mc` que scripts/sauvegarde.sh, construite par docker compose (docker/minio/Dockerfile).
+MC_IMAGE=genomique/minio-mc:RELEASE.2025-08-13T08-35-41Z
 BUCKETS="raw bronze silver gold"
 
 if [ "$#" -ge 1 ]; then

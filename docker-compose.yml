@@ -167,8 +167,12 @@ services:
 # Connexion : MINIO_ROOT_USER / MINIO_ROOT_PASSWORD du .env
 # API S3 : http://localhost:9000
 #===============================================================#
-  minio:
-    image: quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+  # Compilé depuis les sources (docker/minio/Dockerfile), joignable seulement par le proxy.
+  minio-server:
+    image: genomique/minio:RELEASE.2025-10-15T17-29-55Z
+    build:
+      context: docker/minio
+      target: server
     container_name: genomique-minio
     restart: unless-stopped
     stop_grace_period: 30s
@@ -179,13 +183,10 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER obligatoire, à renseigner}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD obligatoire, à renseigner}
-    ports:
-      - "127.0.0.1:${MINIO_API_PORT:-9000}:9000"
-      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - minio-data:/data
     networks:
-      - genomique-network
+      - minio-backend
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 10s
@@ -196,11 +197,54 @@ services:
         limits:
           memory: 1g
 
+  # Seule entrée vers MinIO : filtre les CVE de 2026 non corrigées (docker/minio/nginx.conf).
+  # Nommé `minio` : les clients gardent http://minio:9000.
+  minio:
+    image: nginxinc/nginx-unprivileged:1.30-alpine@sha256:15c994d10d6d78658721c3bcafff14cb281fba2a4bdf9d5ba92c416a472516e3
+    container_name: genomique-minio-proxy
+    restart: unless-stopped
+    user: "101:101"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging: *default-logging
+    # nginx lancé directement : les scripts d'entrée réécriraient la configuration montée.
+    entrypoint: ["nginx"]
+    command: ["-g", "daemon off;"]
+    volumes:
+      - ./docker/minio/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "127.0.0.1:${MINIO_API_PORT:-9000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
+    networks:
+      - genomique-network
+      - minio-backend
+    depends_on:
+      minio-server:
+        condition: service_healthy
+    # Traverse le proxy jusqu'au serveur.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 64m
+
 #======================== MinIO (amorçage) =====================#
 # Buckets, politique et compte de service, puis s'arrête
 #===============================================================#
   minio-init:
-    image: quay.io/minio/mc@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
+    image: genomique/minio-mc:RELEASE.2025-08-13T08-35-41Z
+    build:
+      context: docker/minio
+      target: mc
     container_name: genomique-minio-init
     restart: "no"
     depends_on:
@@ -652,6 +696,14 @@ volumes:
 networks:
   genomique-network:
     driver: bridge
+  # Proxy → serveur MinIO. Sous-réseau fixé : alloué automatiquement, il prenait 172.31.0.0/16
+  # (dernier bloc du pool Docker) et chevauchait rag-proxy-net.
+  minio-backend:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.31.251.0/24
   # Base vectorielle et embeddings : aucun accès sortant.
   rag-network:
     driver: bridge

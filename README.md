@@ -425,7 +425,7 @@ scripts/              ingest_*.py : un script par source, écrit dans raw
                       sauvegarde.sh : sauvegarde des buckets MinIO, de PostgreSQL et de la base vectorielle ;
                       verifier_restauration_rag.sh, verifier_restauration_lac_airflow.sh : tests de restauration
 dags/                 DAGs Airflow : acquisition mensuelle + un DAG par panel
-docker/               image Airflow, création des buckets MinIO
+docker/               image Airflow ; MinIO compilé depuis les sources, son proxy filtrant et la création des buckets
 docker-compose.yml    stack Airflow 3 + PostgreSQL + MinIO
 tests/                tests de la logique (rapides)
 tests_airflow/        tests de structure des DAGs

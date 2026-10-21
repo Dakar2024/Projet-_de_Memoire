@@ -91,6 +91,7 @@ indique comment elle évoluerait sur un serveur exposé.
 | M2 | La console d'administration et l'API S3 étaient publiées sur toutes les interfaces réseau, protégées par ces mêmes identifiants root. | **Élevé** | **Critique** | **Corrigé** |
 | M3 | Ni versioning, ni verrouillage d'objet, ni chiffrement au repos sur les buckets. Le versioning protégerait d'une suppression accidentelle, qui est le scénario le plus probable ici. | Moyen | Moyen | 🟠 Versioning activé le 16/10/2026 sur les quatre buckets (`create-buckets.sh`) ; anciennes versions supprimées après 30 jours sauf dans `raw`. Restent ouverts : verrouillage d'objet et chiffrement au repos. |
 | M4 | ✅ Une couche du médaillon correspond à un bucket : la séparation logique préexistait, ce qui a permis d'écrire une politique d'accès par bucket sans rien restructurer. | — | — | — |
+| M5 | Les images communautaires de MinIO ne sont plus distribuées et la dernière version publique reste exposée à quatre CVE élevées de 2026, corrigées seulement dans l'édition commerciale (AIStor). | **Élevé** | **Élevé** | 🟠 Atténué (§7) : compilation depuis les sources, proxy filtrant. Reste ouvert : passer à une version corrigée. |
 
 ### 3.5 Orchestration Docker et Airflow
 
@@ -258,7 +259,68 @@ de `airflow-init` ; l'apiserver démarre `healthy` sans imprimer de ligne de gé
 
 ---
 
-## 7. Conclusion
+## 7. Mise à jour du 21 octobre 2026 : fin de la distribution de MinIO (M5)
+
+### 7.1 Constat
+
+`docker compose up` échouait sur `401 Unauthorized` en tirant `quay.io/minio/mc`. Vérifié par
+des requêtes anonymes au registre : `quay.io/minio/minio` et `quay.io/minio/mc` refusent même
+`latest`, alors qu'une image témoin (`quay.io/prometheus/prometheus`) répond `200` ; sur Docker
+Hub, les dépôts `minio/minio` et `minio/mc` n'existent plus. Les dépôts GitHub `minio/minio` et
+`minio/mc` sont archivés mais publics. L'épinglage par empreinte (§4.5) n'y peut rien : une
+empreinte garantit le contenu, pas la disponibilité.
+
+La dernière version publique, `RELEASE.2025-10-15T17-29-55Z`, corrige CVE-2025-62506. Les avis
+de sécurité publiés ensuite sur le dépôt indiquent comme seule correction l'édition AIStor :
+
+| CVE | Gravité | Effet | Atténuation dans la stack |
+|---|---|---|---|
+| CVE-2026-41145 | Élevée (8.8) | Écriture d'objets sans signature valide (trailer non signé, aussi par la chaîne de requête) | En-tête et paramètre `STREAMING-UNSIGNED-PAYLOAD-TRAILER` refusés ; URL présignées refusées |
+| CVE-2026-40344 | Élevée (8.8) | Même contournement par l'extraction automatique Snowball | Même filtre ; en-tête `X-Amz-Meta-Snowball-Auto-Extract` refusé |
+| CVE-2026-34204 | Élevée | Injection de métadonnées SSE par les en-têtes de réplication | En-têtes `X-Minio-Replication-Server-Side-Encryption-*` refusés (pas de réplication ici) |
+| CVE-2026-39414 | Élevée | Déni de service par S3 Select sur CSV | Paramètre `select-type` refusé |
+| CVE-2026-42600 | Moyenne | Traversée de chemin entre nœuds d'un cluster | Sans objet : nœud unique, la route n'est pas enregistrée |
+| CVE-2026-33322, CVE-2026-33419 | Moyennes | OIDC et LDAP | Sans objet : ni OIDC ni LDAP configurés |
+
+### 7.2 Correction
+
+- **Compilation depuis les sources** (`docker/minio/Dockerfile`) : `minio` et `mc` aux commits
+  des derniers tags publics, épinglés par empreinte de commit (un tag peut être déplacé),
+  compilés avec Go 1.26.10 ; images de base Go et Alpine épinglées par empreinte. Le serveur
+  embarque `mc` pour son healthcheck, comme l'image officielle.
+- **Proxy filtrant** (`docker/minio/nginx.conf`) : un nginx non privilégié, en lecture seule et
+  sans capacité, prend le nom de service `minio`. Les clients gardent donc `http://minio:9000`
+  sans modification. Le serveur, renommé `minio-server`, n'est plus que sur le réseau interne
+  `minio-backend` et n'est joignable que par le proxy. Les règles appliquent les contournements
+  des avis et les durcissent : la stack n'utilise ni URL présignée, ni réplication, ni Snowball,
+  ni S3 Select, donc tout usage de ces mécanismes reçoit `403`.
+- Deux contournements du filtre ont été identifiés pendant la mise en place et sont fermés. Le
+  premier passe par les en-têtes dupliqués : nginx les joint par « , » alors que MinIO lit le
+  premier, d'où une expression régulière non ancrée. Le second passe par l'encodage `%XX` de la
+  chaîne de requête, que MinIO décode (`url.ParseQuery`) : tout caractère non réservé encodé est
+  refusé, ce que les SDK S3 ne produisent jamais (forme canonique SigV4).
+
+Vérifié en conditions réelles, à travers le proxy. `minio-init` amorce les quatre buckets
+(versioning, ILM, politique, compte de service). Avec boto3 1.41.5 et deltalake 1.6.3, les
+versions d'Airflow, une écriture, une lecture, une liste avec préfixe, un envoi multipart de
+20 Mio et une écriture Delta passent. Les neuf formes d'attaque, ainsi que l'en-tête dupliqué,
+sont refusées par nginx et non par MinIO (corps HTML et non XML S3). Le serveur ne répond pas
+depuis `genomique-network`.
+
+### 7.3 Risques résiduels
+
+- Le filtre réduit la surface d'attaque mais n'est pas un correctif : un contournement inconnu
+  du filtre exposerait de nouveau les CVE de 2026. Elles exigent toutes une clé d'accès valide,
+  et MinIO n'écoute que sur `127.0.0.1` et le réseau Docker.
+- La console web (port 9001) passe par le proxy sans filtre. Elle s'adresse à l'API depuis
+  l'intérieur du conteneur serveur et exige les identifiants root.
+- Aucune correction de sécurité ne sera plus publiée en source ouverte. Une sortie durable
+  passe par AIStor (licence à examiner) ou par un autre stockage S3 qui gère le versioning
+  (SeaweedFS, Ceph RGW).
+
+---
+
+## 8. Conclusion
 
 L'architecture du pipeline présente plusieurs propriétés favorables à la sécurité, qui ne sont
 pas des ajouts tardifs mais des conséquences de sa conception : la logique métier est isolée de
