@@ -327,11 +327,26 @@ cette semaine-là (consulter `~/sauvegarde.log`).
 ### Recevoir les alertes
 
 Le pipeline tourne une fois par mois sans surveillance : sans alerte, un échec ne se voit qu'en
-ouvrant l'interface. Airflow envoie un e-mail à chaque échec de tâche, dès qu'un serveur d'envoi
-est renseigné dans `.env` : `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `ALERT_FROM`
-et `ALERT_EMAIL` (destinataires séparés par des virgules). N'importe quel fournisseur SMTP
-convient. Laisser ces clés vides ne casse rien : les tâches échouent normalement, seul l'envoi
-est désactivé.
+ouvrant l'interface. Airflow envoie un e-mail à chaque échec définitif de tâche (pas aux relances)
+par le relais SMTP de [Resend](https://resend.com), port 465 en SSL. Renseigner dans `.env` :
+
+- `RESEND_API_KEY` : clé à permission « Sending access », limitée au domaine d'envoi ;
+- `ALERT_FROM` : expéditeur sur ce domaine, vérifié chez Resend (SPF et DKIM) ;
+- `ALERT_EMAIL` : destinataires séparés par des virgules.
+
+La connection `smtp_default` est déclarée dans `docker-compose.yml` (`AIRFLOW_CONN_SMTP_DEFAULT`),
+jamais dans la base d'Airflow. Laisser `ALERT_EMAIL` vide ne casse rien : seul l'envoi est
+désactivé. Après tout changement, vérifier de bout en bout avec le DAG manuel `dag_test_alerte`,
+qui échoue exprès :
+
+```
+docker compose exec airflow-scheduler airflow dags unpause dag_test_alerte
+docker compose exec airflow-scheduler airflow dags trigger dag_test_alerte
+docker compose exec airflow-scheduler airflow dags pause dag_test_alerte
+```
+
+Un envoi raté n'échoue pas la tâche une seconde fois : il est seulement écrit dans son journal
+(`Failed to send notification`). Une alerte qui n'arrive pas se diagnostique donc là.
 
 ## Sources de données
 

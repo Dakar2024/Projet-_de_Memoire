@@ -47,7 +47,7 @@ def ensure_free_space(
     free_bytes_fn: Callable[[Path], int] | None = None,
 ) -> None:
     """Lève `ConfigurationError` (non relancée) si l'espace libre est insuffisant."""
-    free = (free_bytes_fn or _free_bytes)(directory)
+    free = (free_bytes_fn or free_bytes)(directory)
     if free < minimum:
         raise ConfigurationError(
             f"espace disque insuffisant dans {directory} : {_gio(free)} libres pour "
@@ -55,7 +55,7 @@ def ensure_free_space(
         )
 
 
-def _free_bytes(directory: Path) -> int:
+def free_bytes(directory: Path) -> int:
     """Renvoie l'espace libre du disque de `directory` ou de son plus proche parent existant."""
     probe = directory
     while not probe.exists():

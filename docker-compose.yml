@@ -45,14 +45,10 @@ x-airflow-common: &airflow-common
     AWS_REGION: us-east-1
     NCBI_EMAIL: ${NCBI_EMAIL}
     NCBI_API_KEY: ${NCBI_API_KEY:-}
-    # Alertes e-mail : sans serveur ni destinataire, seul l'envoi est désactivé.
-    AIRFLOW__SMTP__SMTP_HOST: ${SMTP_HOST:-}
-    AIRFLOW__SMTP__SMTP_PORT: ${SMTP_PORT:-587}
-    AIRFLOW__SMTP__SMTP_STARTTLS: ${SMTP_STARTTLS:-True}
-    AIRFLOW__SMTP__SMTP_SSL: ${SMTP_SSL:-False}
-    AIRFLOW__SMTP__SMTP_USER: ${SMTP_USER:-}
-    AIRFLOW__SMTP__SMTP_PASSWORD: ${SMTP_PASSWORD:-}
-    AIRFLOW__SMTP__SMTP_MAIL_FROM: ${ALERT_FROM:-}
+    # Alertes e-mail : SmtpNotifier lit la connection `smtp_default`, pas la section [smtp].
+    # Resend en 465 (SSL implicite) : `disable_tls` évite un STARTTLS sur une session déjà chiffrée.
+    # Sans ALERT_EMAIL, aucun envoi n'est tenté (dags/common/alerting.py).
+    AIRFLOW_CONN_SMTP_DEFAULT: '{"conn_type": "smtp", "host": "smtp.resend.com", "port": 465, "login": "resend", "password": "${RESEND_API_KEY:-}", "extra": {"from_email": "${ALERT_FROM:-}", "disable_tls": true, "timeout": 30, "retry_limit": 3}}'
     ALERT_EMAIL: ${ALERT_EMAIL:-}
   volumes:
     - .:/opt/projet:ro

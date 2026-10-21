@@ -143,11 +143,13 @@ def test_task_failures_are_emailed(dag):
     """Un pipeline mensuel sans surveillance : sans alerte, un échec ne se voit que
     si quelqu'un ouvre l'interface. Le destinataire vient de l'environnement pour
     ne pas figer une adresse dans le dépôt."""
-    args = dag.default_args
+    from airflow.providers.smtp.notifications.smtp import SmtpNotifier
 
-    assert args["email_on_failure"] is True
-    assert args["email_on_retry"] is False
-    assert args["email"] == ["alerte@example.test"]
+    notifier = dag.default_args["on_failure_callback"]
+
+    assert isinstance(notifier, SmtpNotifier)
+    assert notifier.to == ["alerte@example.test"]
+    assert "on_retry_callback" not in dag.default_args
 
 
 def test_rag_indexing_runs_last_on_checked_gold_only(dag):

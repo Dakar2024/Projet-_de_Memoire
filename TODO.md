@@ -39,10 +39,10 @@ Ce qui n'est pas encore fait. Les audits complets sont dans `reference/audit_sec
 
 - [ ] **Relancer un run complet sur une pile restaurée** (E3b). La fidélité des copies est vérifiée :
       base vectorielle (14/10) puis base Airflow et lac (16/10, `verifier_restauration_lac_airflow.sh`).
-- [ ] **Brancher les alertes e-mail** (le câblage existe, les clés sont vides) : Resend au moment du
-      backend (`smtp.resend.com`, 587 STARTTLS, utilisateur `resend`, domaine vérifié obligatoire),
-      renseigner `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `ALERT_FROM`, `ALERT_EMAIL`,
-      puis faire échouer une tâche pour vérifier que le mail arrive.
+- [ ] **Design des e-mails** (alerte d'échec, rappels J-2 et jour J) une fois le design de l'application
+      validé : tout est dans `dags/common/emails.py`.
+- [ ] **Double déclenchement des panels** : l'acquisition du 21/10 a émis deux événements d'Asset
+      (02:49:47 et 02:50:12), donc deux runs par panel ; le second n'a rien réindexé. Trouver l'origine.
 - [ ] **Monitoring** : relire en entier la spec
       `docs/superpowers/specs/2026-09-29-monitoring-prometheus-grafana-design.md`, puis décider.
 
