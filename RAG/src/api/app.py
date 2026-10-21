@@ -19,7 +19,7 @@ from RAG.src.api.schemas import QuestionIn
 from RAG.src.api.security import require_api_key, require_json
 from RAG.src.utils.config import ApiConfig, load_api_config, load_api_key
 from RAG.src.utils.errors import (
-    EmbeddingServiceError, LlmProviderMismatchError, LlmQuotaExhaustedError, LlmUnavailableError,
+    EmbeddingServiceError, IndexEmptyError, LlmProviderMismatchError, LlmQuotaExhaustedError, LlmUnavailableError,
     QuestionRejectedError, RagPermanentError,
 )
 
@@ -30,6 +30,7 @@ _MESSAGES = {
     "busy": "Trop de questions en cours ; réessayez dans quelques secondes.",
     "timeout": "La réponse a dépassé le délai autorisé ; réessayez.",
     "unavailable": "Service de génération ou de recherche momentanément indisponible ; réessayez.",
+    "index_empty": "Index pas encore construit : lancer l'indexation (DAG de panel), puis réessayer.",
     "internal": "Erreur interne ; elle a été journalisée.",
     "not_found": "Ressource inconnue.",
     "method_not_allowed": "Méthode non autorisée pour cette ressource.",
@@ -67,6 +68,8 @@ def _classify(exc: BaseException) -> ApiError:
         return ApiError("method_not_allowed", 405)
     if isinstance(exc, HTTPException) and 400 <= exc.status_code < 500:
         return ApiError("invalid_request", exc.status_code)
+    if isinstance(exc, IndexEmptyError):
+        return ApiError("index_empty", 503)
     if isinstance(exc, LlmQuotaExhaustedError):
         return ApiError("unavailable", 503, getattr(exc, "retry_after_s", None))
     if isinstance(exc, (LlmUnavailableError, LlmProviderMismatchError, EmbeddingServiceError, psycopg.OperationalError)):
@@ -95,7 +98,7 @@ def health() -> dict:
 
 @get("/ready", guards=[require_api_key], sync_to_thread=True)
 def ready(state: State) -> dict:
-    """Indique si la base et le service d'embedding répondent."""
+    """Indique si la base, l'index et le service d'embedding répondent."""
     return state.pipeline.ready()
 
 
@@ -170,7 +173,7 @@ def create_app(pipeline_factory: Callable[[], object] | None = None, *, api_conf
 
     @asynccontextmanager
     async def lifespan(app: Litestar):
-        # Modèle, canari et index vérifiés à l'ouverture : un échec empêche le démarrage.
+        # Modèle, canari et index vérifiés à l'ouverture : un échec empêche le démarrage (index vide admis).
         pipeline = await asyncio.get_running_loop().run_in_executor(None, lambda: pipeline_factory().__enter__())
         app.state.pipeline = pipeline
         app.state.closing = threading.Event()

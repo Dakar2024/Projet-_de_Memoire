@@ -177,3 +177,34 @@ def test_ask_uses_the_slot_generator_and_the_configured_max_tokens(monkeypatch):
     assert out.answer.status == "answered"
     assert mine.searcher.questions == ["Que sait-on de rs80357906 ?"] and other.searcher.questions == []
     assert [c["max_tokens"] for c in mine.generator.calls] == [3000] and other.generator.calls == []
+
+
+class _ReadyConn:
+    def __init__(self, indexed):
+        self.indexed = indexed
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        pass
+
+    def execute(self, sql, params=None):
+        indexed = self.indexed
+
+        class _Cursor:
+            def fetchone(self):
+                return (indexed,)
+        return _Cursor()
+
+
+def test_ready_reports_whether_the_index_holds_documents(monkeypatch):
+    from types import SimpleNamespace
+
+    pipeline = _wire(monkeypatch)
+    monkeypatch.setattr(pipeline, "load_service_settings",
+                        lambda env: SimpleNamespace(pg_conninfo="postgresql://x", embeddings_url="http://e"))
+    monkeypatch.setattr(pipeline.requests, "get", lambda *a, **k: SimpleNamespace(status_code=200))
+    for indexed in (False, True):
+        monkeypatch.setattr(pipeline.psycopg, "connect", lambda *a, _i=indexed, **k: _ReadyConn(_i))
+        assert pipeline.QuestionPipeline(1).ready() == {"database": True, "embeddings": True, "index": indexed}

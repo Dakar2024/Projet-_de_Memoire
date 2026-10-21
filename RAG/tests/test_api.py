@@ -11,7 +11,7 @@ from RAG.src.generation.answer import Answer
 from RAG.src.generation.pipeline import PipelineResult
 from RAG.src.utils.config import ApiConfig
 from RAG.src.utils.errors import (
-    LlmPermanentError, LlmQuotaExhaustedError, LlmUnavailableError, QuestionRejectedError,
+    IndexEmptyError, LlmPermanentError, LlmQuotaExhaustedError, LlmUnavailableError, QuestionRejectedError,
 )
 from RAG.tests.test_generation_answer import result
 
@@ -130,6 +130,16 @@ def test_invalid_questions_are_422(payload, code):
     c, _ = client()
     with c:
         assert c.post("/v1/questions", json=payload, headers=H).status_code == code
+
+
+def test_question_on_an_empty_index_is_503_index_empty():
+    def boom(q):
+        raise IndexEmptyError("index vide")
+    c, _ = client(FakePipeline(behaviour=boom))
+    with c:
+        assert c.get("/health").status_code == 200
+        r = ask(c)
+    assert r.status_code == 503 and r.json()["error"] == "index_empty" and "request_id" in r.json()
 
 
 def test_blank_question_rejected_by_the_pipeline_is_422():
