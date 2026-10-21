@@ -12,7 +12,7 @@ import psycopg
 import requests
 
 from RAG.src.generation.answer import Answer, generate_answer
-from RAG.src.retrieval.retriever import SearchResult, Searcher, build_llm_client
+from RAG.src.retrieval.retriever import PANELS, SearchResult, Searcher, build_llm_client
 from RAG.src.utils.config import DEFAULT_CONFIG_PATH, load_generation_config, load_service_settings
 
 
@@ -149,13 +149,15 @@ class QuestionPipeline:
                                                   max_tokens=g.max_tokens))
 
     def ready(self) -> dict[str, bool]:
-        """Indique si la base et le service d'embedding répondent (connexion courte, hors emplacement)."""
+        """Indique si la base, l'index et le service d'embedding répondent (connexion courte, hors emplacement)."""
         services = load_service_settings(self._env)
-        status = {"database": False, "embeddings": False}
+        status = {"database": False, "embeddings": False, "index": False}
         try:
             with psycopg.connect(services.pg_conninfo, connect_timeout=5) as conn:
-                conn.execute("SELECT 1")
+                row = conn.execute("SELECT EXISTS (SELECT 1 FROM rag_documents WHERE panel = ANY(%s::text[]))",
+                                   (list(PANELS),)).fetchone()
             status["database"] = True
+            status["index"] = bool(row and row[0])
         except psycopg.Error:
             pass
         try:

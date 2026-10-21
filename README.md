@@ -166,6 +166,10 @@ docker compose ps        # les services doivent être « healthy »
                          # (minio-init et airflow-init s'arrêtent normalement après l'initialisation)
 ```
 
+Sur une installation neuve, l'index du RAG est vide : `rag-api` est sain mais répond
+`503 index_empty` tant que les DAG de panel n'ont pas exécuté `index_rag_documents`
+(`RAG/README.md` §4). Aucun redémarrage n'est nécessaire après l'indexation.
+
 Guide de prise en main d'Airflow — lancer un run, lire un échec, relancer une tâche, ajouter
 une étape : `reference/guide_airflow.md`.
 

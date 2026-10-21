@@ -522,7 +522,7 @@ La clé est lue dans l'environnement du shell, jamais tapée en clair dans la co
 ```bash
 set -a; . ./.env; set +a
 curl -s http://127.0.0.1:8090/health                                   # {"status":"ok"}, sans clé
-curl -s -H "X-API-Key: $RAG_API_KEY" http://127.0.0.1:8090/ready       # modèle d'embedding, base
+curl -s -H "X-API-Key: $RAG_API_KEY" http://127.0.0.1:8090/ready       # {"database", "embeddings", "index"} : base, embedding, index non vide
 curl -s -H "X-API-Key: $RAG_API_KEY" -H 'Content-Type: application/json' \
   -d '{"question": "Le variant rs80357906 sur BRCA1 est-il pathogène ?"}' \
   http://127.0.0.1:8090/v1/questions
@@ -541,6 +541,7 @@ La réponse contient `status`, `answer`, `sources`, `disclaimer`, `request_id`, 
 | 422 | `invalid_question` | JSON illisible, champ inconnu, question vide ou de plus de 1 000 caractères |
 | 429 | `busy` | 4 questions déjà en cours ; **ou, par la passerelle, plus de 30 questions par minute** : la passerelle répond alors par une page HTML de nginx, pas du JSON |
 | 503 | `unavailable` / `timeout` | LLM, embedding ou base injoignable, quota épuisé (en-tête `Retry-After`), ou délai de 120 s dépassé |
+| 503 | `index_empty` | index encore vide (installation neuve) : l'API démarre quand même, pour que `compose up` lance Airflow ; elle répond dès la première indexation (§4), sans redémarrage. Un index construit par un autre modèle empêche toujours le démarrage |
 | 500 | `internal` | erreur interne, journalisée avec le seul nom de la classe d'exception |
 
 ### 9.6 Journaux

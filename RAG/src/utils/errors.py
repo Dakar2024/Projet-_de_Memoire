@@ -34,6 +34,10 @@ class IndexLockedError(Exception):
     """Une autre indexation du même panel est en cours."""
 
 
+class IndexEmptyError(Exception):
+    """Index encore vide (installation neuve, avant la première indexation) : transitoire."""
+
+
 class IndexConsistencyError(Exception):
     """Après indexation, l'index ne reflète pas exactement le Gold."""
 

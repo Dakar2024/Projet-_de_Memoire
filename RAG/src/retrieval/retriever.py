@@ -32,7 +32,7 @@ from RAG.src.utils.config import (
     load_service_settings,
     served_fingerprint,
 )
-from RAG.src.utils.errors import QuestionRejectedError, RagConfigurationError
+from RAG.src.utils.errors import IndexEmptyError, QuestionRejectedError, RagConfigurationError
 
 MODES = ("similarity", "filters", "full")
 PANELS = tuple(PANEL_GENES)
@@ -206,12 +206,15 @@ def doc_ids_sha256(doc_ids: Iterable[str]) -> str:
     return hashlib.sha256("\n".join(sorted(doc_ids)).encode("utf-8")).hexdigest()
 
 
-def check_index_models(models: Sequence[str], expected: str) -> None:
-    """Vérifie que l'index a été construit par le seul modèle servi."""
+def check_index_models(models: Sequence[str], expected: str) -> bool:
+    """Vérifie que l'index a été construit par le seul modèle servi ; False s'il est encore vide."""
+    if not models:
+        return False
     if tuple(models) != (expected,):
         raise RagConfigurationError(
             f"modèles présents dans l'index : {list(models)} ; empreinte attendue : {expected}. "
             "Réindexer ou corriger la configuration avant toute recherche.")
+    return True
 
 
 class PgSearchStore:
@@ -350,11 +353,13 @@ class Searcher:
         self._cache = AnalysisCache(cache_path) if cache_path else None
         self._store = PgSearchStore(services.pg_conninfo)
         self._settings = SearchSettings(self.config.k, self.config.min_filtered, self.config.max_question_chars)
+        self._indexed = False
 
     def __enter__(self) -> Searcher:
+        # Index vide accepté (installation neuve) : l'API démarre et Airflow peut l'indexer ; autre modèle refusé.
         self._store.__enter__()
         try:
-            check_index_models(self._store.index_models(), self._fingerprint)
+            self._indexed = check_index_models(self._store.index_models(), self._fingerprint)
         except BaseException:
             self._store.__exit__(None, None, None)
             raise
@@ -377,8 +382,16 @@ class Searcher:
         """Renvoie l'empreinte des documents de l'index."""
         return self._store.doc_ids_sha256()
 
+    def _require_index(self) -> None:
+        """Revérifie un index vide jusqu'à ce qu'il soit rempli, puis plus jamais."""
+        if not self._indexed:
+            self._indexed = check_index_models(self._store.index_models(), self._fingerprint)
+        if not self._indexed:
+            raise IndexEmptyError("index vide : lancer l'indexation (DAG de panel) avant toute recherche")
+
     def search(self, question: str, mode: str = "full", force_exact: bool | None = None) -> SearchResult:
         """Cherche les documents d'une question avec les services réels."""
+        self._require_index()
         profile = self.config.analysis_profile
         return search(
             question, settings=self._settings, store=self._store, mode=mode, force_exact=force_exact,

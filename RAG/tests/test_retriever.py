@@ -2,8 +2,10 @@ import numpy as np
 import pytest
 
 from RAG.src.retrieval.analysis import QueryAnalysis
-from RAG.src.retrieval.retriever import PgSearchStore, RetrievedDocument, SearchSettings, check_index_models, search
-from RAG.src.utils.errors import QuestionRejectedError, RagConfigurationError
+from RAG.src.retrieval.retriever import (
+    PgSearchStore, RetrievedDocument, Searcher, SearchSettings, check_index_models, search,
+)
+from RAG.src.utils.errors import IndexEmptyError, QuestionRejectedError, RagConfigurationError
 
 SETTINGS = SearchSettings(k=10, min_filtered=3, max_question_chars=1000)
 KNOWN = ("Pathogenic", "Likely pathogenic", "Pathogenic/Likely pathogenic", "Benign", "Uncertain significance")
@@ -223,10 +225,59 @@ def test_connection_disables_prepared_plans(monkeypatch):
 
 
 def test_check_index_models():
-    check_index_models(("fp",), "fp")
-    for bad in ((), ("fp", "autre"), ("autre",)):
+    assert check_index_models(("fp",), "fp") is True
+    # Installation neuve : index pas encore construit, pas une incohérence.
+    assert check_index_models((), "fp") is False
+    for bad in (("fp", "autre"), ("autre",)):
         with pytest.raises(RagConfigurationError):
             check_index_models(bad, "fp")
+
+
+class _ModelsStore:
+    """Renvoie successivement les modèles présents dans l'index."""
+
+    def __init__(self, *answers):
+        self.answers, self.closed = list(answers), False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        self.closed = True
+
+    def index_models(self):
+        return self.answers.pop(0)
+
+
+def _bare_searcher(store):
+    s = Searcher.__new__(Searcher)
+    s._store, s._fingerprint, s._indexed = store, "fp", False
+    return s
+
+
+def test_searcher_opens_on_an_empty_index_but_not_on_another_model():
+    s = _bare_searcher(_ModelsStore(()))
+    assert s.__enter__() is s and s._indexed is False
+    store = _ModelsStore(("autre",))
+    with pytest.raises(RagConfigurationError):
+        _bare_searcher(store).__enter__()
+    assert store.closed
+
+
+def test_empty_index_is_rechecked_before_each_search_until_filled():
+    s = _bare_searcher(_ModelsStore((), ("fp",)))
+    # Vérifié avant tout appel : le Searcher nu n'a ni configuration ni client.
+    with pytest.raises(IndexEmptyError):
+        s.search("Que sait-on de rs80357906 ?")
+    s._require_index()
+    # Vérifié une fois pour toutes : une nouvelle requête viderait la liste et lèverait.
+    s._require_index()
+
+
+def test_a_wrong_model_found_after_opening_is_still_refused():
+    s = _bare_searcher(_ModelsStore(("autre",)))
+    with pytest.raises(RagConfigurationError):
+        s._require_index()
 
 
 def _captured_sql(monkeypatch):
