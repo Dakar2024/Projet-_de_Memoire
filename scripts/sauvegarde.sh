@@ -43,7 +43,7 @@ docker run --rm \
   --entrypoint sh \
   -e MC_HOST_lac="http://${MINIO_ROOT_USER}:${MINIO_ROOT_PASSWORD}@minio:9000" \
   -v "${CIBLE}:/sauvegarde" \
-  quay.io/minio/mc@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727 \
+  genomique/minio-mc:RELEASE.2025-08-13T08-35-41Z \
   -c 'for b in raw bronze silver gold; do mc --config-dir /tmp/mc mirror --quiet --overwrite "lac/$b" "/sauvegarde/$b" > /dev/null || exit 1; done'
 echo "   $(du -sh "${CIBLE}" | cut -f1) au total"
 
