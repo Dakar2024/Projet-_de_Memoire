@@ -1,0 +1,467 @@
+@import '@fontsource-variable/geist';
+@import '@fontsource-variable/geist-mono';
+@import 'tailwindcss';
+
+@import 'tw-animate-css';
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Genomica design tokens.
+ * - shadcn names are kept so generated components work unchanged; `--primary` carries the brand accent.
+ * - The accent is chosen by the user (`data-accent` on <html>); each palette has a light and a dark step.
+ * - Clinical significance colors (`--sig-*`) never follow the accent: they must stay comparable across screens.
+ *   Their light/dark steps were checked for colorblind separation (diverging orange -> gray -> blue, ochre apart).
+ */
+:root {
+  --brand-light: #0f766e;
+  --brand-dark: #2dd4bf;
+  --brand-dark-ink: #04201d;
+
+  --background: #f6f8f8;
+  --foreground: #0d1a1b;
+  --card: #ffffff;
+  --card-foreground: #0d1a1b;
+  --popover: #ffffff;
+  --popover-foreground: #0d1a1b;
+  --primary: var(--brand-light);
+  --primary-foreground: #ffffff;
+  --secondary: #eef2f2;
+  --secondary-foreground: #0d1a1b;
+  --muted: #eef2f2;
+  --muted-foreground: #4f6164;
+  --faint: #7e8f91;
+  --accent: #eef2f2;
+  --accent-foreground: #0d1a1b;
+  --destructive: #b42318;
+  --destructive-foreground: #b42318;
+  --success: #0f7a4e;
+  --border: #dde5e5;
+  --input: #dde5e5;
+  --ring: var(--primary);
+  --radius: 0.75rem;
+
+  --sidebar: #f4f7f7;
+  --sidebar-foreground: #0d1a1b;
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: #eef2f2;
+  --sidebar-accent-foreground: #0d1a1b;
+  --sidebar-border: #dde5e5;
+  --sidebar-ring: var(--primary);
+
+  --sig-p: #b4380c;
+  --sig-lp: #e98a45;
+  --sig-vus: #c4c8cc;
+  --sig-lb: #4a86da;
+  --sig-b: #1e4fb8;
+  --sig-conf: #c99a1e;
+  --sig-p-text: #b4380c;
+  --sig-lb-text: #2f6fc0;
+
+  --elevated: 0 1px 2px rgb(13 26 27 / 0.05), 0 12px 32px rgb(13 26 27 / 0.07);
+}
+
+.dark {
+  --background: #090e0f;
+  --foreground: #e6eeee;
+  --card: #101718;
+  --card-foreground: #e6eeee;
+  --popover: #121a1b;
+  --popover-foreground: #e6eeee;
+  --primary: var(--brand-dark);
+  --primary-foreground: var(--brand-dark-ink);
+  --secondary: #162022;
+  --secondary-foreground: #e6eeee;
+  --muted: #162022;
+  --muted-foreground: #9aaaac;
+  --faint: #6f8082;
+  --accent: #1a2426;
+  --accent-foreground: #e6eeee;
+  --destructive: #f97066;
+  --destructive-foreground: #f97066;
+  --success: #47cd89;
+  --border: #223033;
+  --input: #223033;
+
+  --sidebar: #0f1617;
+  --sidebar-foreground: #e6eeee;
+  --sidebar-accent: #1a2426;
+  --sidebar-accent-foreground: #e6eeee;
+  --sidebar-border: #223033;
+
+  --sig-p: #d9531c;
+  --sig-lp: #e8a56a;
+  --sig-vus: #6e767b;
+  --sig-lb: #5c9bea;
+  --sig-b: #2f55b8;
+  --sig-conf: #c9a032;
+  --sig-p-text: #f2793f;
+  --sig-lb-text: #8ec0f5;
+
+  --elevated: 0 1px 2px rgb(0 0 0 / 0.4), 0 16px 40px rgb(0 0 0 / 0.4);
+}
+
+/* Accent palettes: a light step (AA on white) and a dark step with its own ink. */
+[data-accent='indigo'] {
+  --brand-light: #4338ca;
+  --brand-dark: #a5b4fc;
+  --brand-dark-ink: #1e1b4b;
+}
+[data-accent='ocean'] {
+  --brand-light: #1d4ed8;
+  --brand-dark: #93c5fd;
+  --brand-dark-ink: #0b1f3a;
+}
+[data-accent='graphite'] {
+  --brand-light: #27272a;
+  --brand-dark: #e4e4e7;
+  --brand-dark-ink: #18181b;
+}
+
+@theme inline {
+  --font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'Geist Mono Variable', ui-monospace, monospace;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-faint: var(--faint);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --color-sig-p: var(--sig-p);
+  --color-sig-lp: var(--sig-lp);
+  --color-sig-vus: var(--sig-vus);
+  --color-sig-lb: var(--sig-lb);
+  --color-sig-b: var(--sig-b);
+  --color-sig-conf: var(--sig-conf);
+  --color-sig-p-text: var(--sig-p-text);
+  --color-sig-lb-text: var(--sig-lb-text);
+
+  --shadow-elevated: var(--elevated);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply m-0 bg-background font-sans text-foreground antialiased;
+    transition:
+      background-color 0.3s,
+      color 0.3s;
+  }
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-primary;
+  }
+}
+
+/* ---------- DNA helix (landing) ---------- */
+
+.dna-rung {
+  position: relative;
+  width: 240px;
+  height: 14px;
+}
+.dna-rung .dna-bar {
+  position: absolute;
+  left: 50%;
+  top: 6px;
+  width: 200px;
+  margin-left: -100px;
+  height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--primary), var(--sig-lb));
+  opacity: 0.5;
+  animation: dna-bar 5s infinite;
+  animation-delay: calc(var(--i) * -0.21s);
+}
+.dna-rung .dna-a,
+.dna-rung .dna-b {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: 14px;
+  height: 14px;
+  margin-left: -7px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font: 600 9px/1 var(--font-mono);
+  color: transparent;
+  animation: dna-node 5s infinite;
+  transition:
+    width 0.25s,
+    height 0.25s,
+    margin 0.25s,
+    top 0.25s,
+    color 0.25s,
+    box-shadow 0.25s;
+}
+.dna-rung .dna-a {
+  background: var(--primary);
+  animation-delay: calc(var(--i) * -0.21s);
+}
+.dna-rung .dna-b {
+  background: var(--sig-lb);
+  animation-delay: calc(var(--i) * -0.21s - 2.5s);
+}
+.dna-helix:hover .dna-a,
+.dna-helix:hover .dna-b,
+.dna-helix:hover .dna-bar,
+.dna-helix:focus-within .dna-a,
+.dna-helix:focus-within .dna-b,
+.dna-helix:focus-within .dna-bar {
+  animation-play-state: paused;
+}
+.dna-helix:hover .dna-a,
+.dna-helix:hover .dna-b {
+  width: 20px;
+  height: 20px;
+  margin-left: -10px;
+  top: -3px;
+  color: var(--primary-foreground);
+}
+.dna-rung:hover .dna-bar {
+  opacity: 1;
+  height: 3px;
+}
+.dna-rung:hover .dna-a,
+.dna-rung:hover .dna-b {
+  box-shadow: 0 0 0 4px color-mix(in oklab, var(--primary) 25%, transparent);
+}
+.dna-rung .dna-tip {
+  position: absolute;
+  left: calc(50% + 130px);
+  top: -6px;
+  white-space: nowrap;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  box-shadow: var(--elevated);
+  font: 500 12px/1.2 var(--font-mono);
+  color: var(--foreground);
+  opacity: 0;
+  transform: translateX(-6px);
+  transition:
+    opacity 0.2s,
+    transform 0.2s;
+  pointer-events: none;
+  z-index: 5;
+}
+.dna-rung:hover .dna-tip,
+.dna-rung[data-hot='true'] .dna-tip {
+  opacity: 1;
+  transform: none;
+}
+.dna-rung[data-hot='true'] .dna-a {
+  background: var(--sig-p);
+}
+.dna-rung[data-hot='true'] .dna-bar {
+  background: linear-gradient(90deg, var(--sig-p), var(--sig-lp));
+  opacity: 0.9;
+}
+.dna-rung[data-hot='true'] .dna-tip {
+  border-color: var(--sig-p);
+}
+
+@keyframes dna-node {
+  0% {
+    transform: translateX(0) scale(1.15);
+    opacity: 1;
+    z-index: 3;
+    animation-timing-function: cubic-bezier(0.61, 1, 0.88, 1);
+  }
+  25% {
+    transform: translateX(100px) scale(0.85);
+    opacity: 0.8;
+    animation-timing-function: cubic-bezier(0.12, 0, 0.39, 0);
+  }
+  50% {
+    transform: translateX(0) scale(0.5);
+    opacity: 0.35;
+    z-index: 1;
+    animation-timing-function: cubic-bezier(0.61, 1, 0.88, 1);
+  }
+  75% {
+    transform: translateX(-100px) scale(0.85);
+    opacity: 0.8;
+    animation-timing-function: cubic-bezier(0.12, 0, 0.39, 0);
+  }
+  100% {
+    transform: translateX(0) scale(1.15);
+    opacity: 1;
+    z-index: 3;
+  }
+}
+@keyframes dna-bar {
+  0% {
+    transform: scaleX(0);
+    animation-timing-function: cubic-bezier(0.61, 1, 0.88, 1);
+  }
+  25% {
+    transform: scaleX(1);
+    animation-timing-function: cubic-bezier(0.12, 0, 0.39, 0);
+  }
+  50% {
+    transform: scaleX(0);
+    animation-timing-function: cubic-bezier(0.61, 1, 0.88, 1);
+  }
+  75% {
+    transform: scaleX(1);
+    animation-timing-function: cubic-bezier(0.12, 0, 0.39, 0);
+  }
+  100% {
+    transform: scaleX(0);
+  }
+}
+
+/* Small floating DNA glyphs: decorative, react to hover, kept away from text. */
+.dna-float {
+  position: absolute;
+  color: var(--primary);
+  opacity: 0.22;
+  animation: dna-float 9s ease-in-out infinite;
+  transition:
+    opacity 0.3s,
+    color 0.3s,
+    transform 0.3s;
+}
+.dna-float:hover {
+  opacity: 0.9;
+  color: var(--sig-lb);
+  animation-play-state: paused;
+  transform: scale(1.4) rotate(20deg);
+}
+@keyframes dna-float {
+  0%,
+  100% {
+    translate: 0 0;
+    rotate: 0deg;
+  }
+  50% {
+    translate: 0 -18px;
+    rotate: 14deg;
+  }
+}
+
+/* Typing preview: the question types in, the answer fades in after it. */
+.typing {
+  display: inline-block;
+  overflow: hidden;
+  white-space: nowrap;
+  border-right: 2px solid var(--primary);
+  width: 0;
+  animation:
+    typing 2.6s steps(var(--chars, 38)) 0.6s forwards,
+    caret 0.8s step-end infinite;
+}
+@keyframes typing {
+  to {
+    width: calc(var(--chars, 38) * 1ch);
+  }
+}
+@keyframes caret {
+  50% {
+    border-color: transparent;
+  }
+}
+.reveal {
+  opacity: 0;
+  transform: translateY(6px);
+  animation: reveal 0.6s ease forwards;
+}
+@keyframes reveal {
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Auth panel: slow breathing glow and a helix that draws itself once on arrival. */
+.auth-glow {
+  background: radial-gradient(60% 50% at 30% 85%, rgb(94 234 212 / 0.28), transparent 70%);
+  animation: auth-breathe 7s ease-in-out infinite;
+}
+@keyframes auth-breathe {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.06);
+  }
+}
+.auth-draw path {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: auth-draw 2.4s cubic-bezier(0.65, 0, 0.35, 1) forwards;
+}
+.auth-draw path:nth-child(2) {
+  animation-delay: 0.25s;
+}
+.auth-draw path:nth-child(3) {
+  animation-delay: 0.45s;
+}
+.auth-draw path:nth-child(4) {
+  animation-delay: 0.9s;
+}
+@keyframes auth-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+  .typing {
+    width: calc(var(--chars, 38) * 1ch);
+  }
+  .reveal {
+    opacity: 1;
+    transform: none;
+  }
+  .auth-draw path {
+    stroke-dashoffset: 0;
+  }
+}
