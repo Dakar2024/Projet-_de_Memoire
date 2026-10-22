@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { passwordStrength, signUpSchema } from './schemas'
+import { passwordStrength, signUpFormSchema, signUpSchema } from './schemas'
 
 describe('passwordStrength', () => {
   it.each([
@@ -15,31 +15,38 @@ describe('passwordStrength', () => {
   })
 })
 
-describe('signUpSchema', () => {
+describe('signUpFormSchema', () => {
   const valid = {
-    firstName: 'Awa',
-    lastName: 'Diop',
     email: 'a.diop@chu-exemple.fr',
-    profession: 'medical_biologist',
-    organization: 'CHU',
     password: 'Abcdefghijk1!',
-    noPatientDataPledge: true,
+    passwordConfirm: 'Abcdefghijk1!',
     termsAccepted: true,
+    noPatientDataPledge: true,
   }
+  const failingFields = (input: object) =>
+    signUpFormSchema.safeParse(input).error?.issues.map((i) => String(i.path[0])).sort() ?? []
 
   it('accepts a complete request', () => {
-    expect(signUpSchema.safeParse(valid).success).toBe(true)
+    expect(signUpFormSchema.safeParse(valid).success).toBe(true)
   })
 
-  it('requires both pledges', () => {
-    const result = signUpSchema.safeParse({ ...valid, noPatientDataPledge: false, termsAccepted: false })
-    expect(result.success).toBe(false)
-    const fields = result.error?.issues.map((i) => i.path[0])
-    expect(fields).toEqual(expect.arrayContaining(['noPatientDataPledge', 'termsAccepted']))
+  it('refuses a consumer mailbox', () => {
+    expect(failingFields({ ...valid, email: 'a.diop@gmail.com' })).toEqual(['email'])
   })
 
-  it('rejects a short password and an unknown profession', () => {
-    const result = signUpSchema.safeParse({ ...valid, password: 'short', profession: 'astronaut' })
-    expect(result.error?.issues.map((i) => i.path[0]).sort()).toEqual(['password', 'profession'])
+  it('requires the confirmation to match', () => {
+    expect(failingFields({ ...valid, passwordConfirm: 'Abcdefghijk1?' })).toEqual(['passwordConfirm'])
+  })
+
+  it('requires the consent and a long enough password', () => {
+    expect(failingFields({ ...valid, password: 'short', passwordConfirm: 'short', termsAccepted: false })).toEqual([
+      'password',
+      'termsAccepted',
+    ])
+  })
+
+  it('never sends the confirmation to the backend', () => {
+    const parsed = signUpSchema.parse(valid)
+    expect(parsed).not.toHaveProperty('passwordConfirm')
   })
 })

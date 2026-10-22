@@ -1,5 +1,5 @@
 import * as z from 'zod'
-import { PROFESSIONS } from '@/shared/api/contracts'
+import { isProfessionalEmail } from './email'
 
 export const PASSWORD_MIN_LENGTH = 12
 
@@ -10,16 +10,16 @@ export const signInSchema = z.object({
 })
 
 export const signUpSchema = z.object({
-  firstName: z.string().trim().min(1).max(100),
-  lastName: z.string().trim().min(1).max(100),
-  email: z.email(),
-  profession: z.enum(PROFESSIONS),
-  organization: z.string().trim().min(2).max(200),
+  email: z.email().refine(isProfessionalEmail, { message: 'not_professional' }),
   password: z.string().min(PASSWORD_MIN_LENGTH).max(128),
-  intendedUse: z.string().trim().max(500).optional(),
-  noPatientDataPledge: z.literal(true),
   termsAccepted: z.literal(true),
+  noPatientDataPledge: z.literal(true),
 })
+
+/** Form-only shape: the confirmation never leaves the browser. */
+export const signUpFormSchema = signUpSchema
+  .extend({ passwordConfirm: z.string() })
+  .refine((v) => v.password === v.passwordConfirm, { path: ['passwordConfirm'], message: 'mismatch' })
 
 export const emailSchema = z.object({ email: z.email() })
 

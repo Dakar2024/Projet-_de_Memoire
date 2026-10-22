@@ -2,10 +2,6 @@ import { describe, expect, it } from 'vitest'
 import { mockSignIn, mockSignOut, mockSignUp, mockUserForToken } from './auth-store'
 
 const request = {
-  firstName: 'Awa',
-  lastName: 'Diop',
-  profession: 'researcher' as const,
-  organization: 'Université',
   password: 'Abcdefghijk1!',
   noPatientDataPledge: true as const,
   termsAccepted: true as const,

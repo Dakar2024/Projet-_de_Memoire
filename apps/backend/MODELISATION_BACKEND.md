@@ -71,7 +71,7 @@ erDiagram
     USERS {
         uuid id PK
         varchar email UK
-        varchar status "pending_email|pending_review|active|rejected|suspended"
+        varchar status "pending_email|onboarding|pending_review|active|rejected|suspended"
         varchar role "user|admin"
         varchar profession
         varchar organization
@@ -125,8 +125,8 @@ phone, location, profile_picture, is_active, created_at`].
 
 | Colonne | Type | Pourquoi |
 |---|---|---|
-| `status` | Varchar, défaut `pending_email` | remplace le booléen `is_active` : cinq états (§ 4.1) |
-| `profession` | Varchar | biologiste, généticien, bioinformaticien… (formulaire de demande) |
+| `status` | Varchar, défaut `pending_email` | remplace le booléen `is_active` : six états (§ 4.1) |
+| `profession` | Varchar null | biologiste, généticien, bioinformaticien… (renseigné à l'onboarding) |
 | `organization`, `intended_use` | Varchar / Text | examen de la demande par l'admin |
 | `email_verified_at`, `approved_at`, `last_login_at` | Timestamptz null | traçabilité |
 | `approved_by` | FK `users` null | qui a validé |
@@ -199,8 +199,9 @@ donnée sensible), `created_at`. Append-only.
 ```mermaid
 stateDiagram-v2
     [*] --> pending_email : POST /auth/register
-    pending_email --> pending_review : clic sur le lien (mode admin_review)
-    pending_email --> active : clic sur le lien (mode open_domains + domaine autorisé)
+    pending_email --> onboarding : clic sur le lien de vérification
+    onboarding --> pending_review : profil complété (mode admin_review)
+    onboarding --> active : profil complété (mode open_domains + domaine autorisé)
     pending_review --> active : admin approuve
     pending_review --> rejected : admin refuse
     active --> suspended : admin suspend
@@ -213,6 +214,14 @@ Règles :
   `transition(user, to_status, actor) -> User`, qui refuse toute transition absente du diagramme
   et écrit l'`audit_log`. Les contrôleurs ne modifient jamais `status` directement. C'est la
   logique à tester en premier (table de transitions exhaustive).
+- **Inscription minimale** : l'écran ne demande que l'e-mail professionnel, le mot de passe (et sa
+  confirmation, côté navigateur seulement) et une case qui vaut acceptation des conditions et engagement
+  « aucune donnée patient » (les deux dates sont stockées). Les domaines de messageries grand public
+  (Gmail, Outlook.com, Orange…) sont refusés côté serveur, en plus de `allowed_email_domains`.
+  Nom, fonction et établissement sont demandés à l'étape `onboarding`, après la vérification de
+  l'e-mail : l'administrateur n'examine que des profils complets.
+- **SSO Microsoft (Entra ID)** : un compte créé par SSO arrive directement à `onboarding` (e-mail
+  déjà vérifié par Microsoft) ; même règle de domaine professionnel.
 - **Connexion** : refusée hors `active`, avec un message par état (« vérifiez votre e-mail »,
   « demande en cours d'examen », « compte suspendu »).
 - **Réponses neutres** sur `/register` et `/forgot-password` : même réponse que l'e-mail existe ou
@@ -383,7 +392,9 @@ dans ce fuseau. Requête paramétrée, jamais de f-string.
 
 | Méthode et chemin | Garde | Rôle |
 |---|---|---|
-| `POST /api/auth/register` | public, limité | crée un compte `pending_email` |
+| `POST /api/auth/register` | public, limité | crée un compte `pending_email` (e-mail professionnel, mot de passe, consentement) |
+| `PUT /api/me/onboarding` | e-mail vérifié | nom, fonction, établissement, usage prévu ; passe à l'examen |
+| `GET /api/auth/microsoft/start` · `/callback` | public | SSO Entra ID ; `next` validé comme une redirection sûre |
 | `POST /api/auth/verify-email` | public | consomme le jeton, passe à l'état suivant |
 | `POST /api/auth/login` · `DELETE /api/auth/logout` | public / auth | session |
 | `POST /api/auth/forgot-password` · `/reset-password` | public, limité | starter |

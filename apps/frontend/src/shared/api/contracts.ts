@@ -3,7 +3,7 @@
  * The frontend only talks to that backend; it never calls the RAG API directly.
  */
 
-export type AccountStatus = 'pending_email' | 'pending_review' | 'active' | 'rejected' | 'suspended'
+export type AccountStatus = 'pending_email' | 'onboarding' | 'pending_review' | 'active' | 'rejected' | 'suspended'
 
 export type Role = 'user' | 'admin'
 
@@ -33,16 +33,16 @@ export type SignInInput = {
   remember: boolean
 }
 
+/**
+ * Access request, kept to the minimum as on the sign-in screen: name, profession and organisation
+ * are collected after the e-mail is verified (onboarding), before the admin review.
+ * One checkbox covers both the terms and the no-patient-data pledge; the backend stores both dates.
+ */
 export type SignUpInput = {
-  firstName: string
-  lastName: string
   email: string
-  profession: Profession
-  organization: string
   password: string
-  intendedUse?: string
-  noPatientDataPledge: true
   termsAccepted: true
+  noPatientDataPledge: true
 }
 
 export type PanelId = 'brca' | 'sickle'

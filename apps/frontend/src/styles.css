@@ -413,7 +413,7 @@
 
 /* Auth panel: slow breathing glow and a helix that draws itself once on arrival. */
 .auth-glow {
-  background: radial-gradient(60% 50% at 30% 85%, rgb(94 234 212 / 0.28), transparent 70%);
+  background: radial-gradient(65% 55% at 50% 90%, color-mix(in oklab, var(--primary) 30%, transparent), transparent 70%);
   animation: auth-breathe 7s ease-in-out infinite;
 }
 @keyframes auth-breathe {
@@ -440,6 +440,14 @@
 }
 .auth-draw path:nth-child(4) {
   animation-delay: 0.9s;
+}
+.auth-rung {
+  animation: auth-rung-in 0.6s ease 2s both;
+}
+@keyframes auth-rung-in {
+  from {
+    opacity: 0;
+  }
 }
 @keyframes auth-draw {
   to {

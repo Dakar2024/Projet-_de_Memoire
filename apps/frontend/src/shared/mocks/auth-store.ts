@@ -67,11 +67,12 @@ export function mockSignUp(input: SignUpInput): MockResult<null> {
     users.set(email, {
       id: crypto.randomUUID(),
       email,
-      fullName: `${input.firstName} ${input.lastName}`.trim(),
+      // Filled in during onboarding, after the e-mail check.
+      fullName: '',
       role: 'user',
       status: 'pending_email',
-      profession: input.profession,
-      organization: input.organization,
+      profession: 'other',
+      organization: '',
       password: input.password,
     })
   }

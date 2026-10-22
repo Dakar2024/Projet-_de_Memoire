@@ -8,7 +8,8 @@ import type { ApiErrorCode } from '@/shared/api/contracts'
 import { useSignIn } from '../hooks'
 import { safeRedirect } from '../redirect'
 import { signInSchema } from '../schemas'
-import { AuthTabs, Field, FormAlert, PasswordInput, inputClass } from './FormBits'
+import { AuthHeading, AuthTabs, Field, FormAlert, PasswordInput, inputClass } from './FormBits'
+import { SsoBlock } from './SsoBlock'
 
 /** Statuses that are not errors to fix but a step to wait for: they get their own screen. */
 const PENDING: Partial<Record<ApiErrorCode, 'pending_email' | 'pending_review'>> = {
@@ -23,6 +24,7 @@ export function SignInForm({ redirectTo }: { redirectTo?: string }) {
   const signIn = useSignIn()
   const [fieldErrors, setFieldErrors] = useState<{ email?: string; password?: string }>({})
   const [formError, setFormError] = useState<string | null>(null)
+  const next = safeRedirect(redirectTo, `/${lang}/assistant`)
 
   function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -31,7 +33,7 @@ export function SignInForm({ redirectTo }: { redirectTo?: string }) {
     const parsed = signInSchema.safeParse({
       email: String(form.get('email') ?? '').trim(),
       password: String(form.get('password') ?? ''),
-      remember: form.get('remember') === 'on',
+      remember: false,
     })
     if (!parsed.success) {
       const fields = new Set(parsed.error.issues.map((issue) => issue.path[0]))
@@ -44,7 +46,7 @@ export function SignInForm({ redirectTo }: { redirectTo?: string }) {
     setFieldErrors({})
     signIn.mutate(parsed.data, {
       onSuccess: (result) => {
-        if (result.ok) return navigate({ href: safeRedirect(redirectTo, `/${lang}/assistant`) })
+        if (result.ok) return navigate({ href: next })
         const reason = PENDING[result.code]
         if (reason) return navigate({ to: '/$lang/pending', params: { lang }, search: { reason } })
         setFormError(i18n._(errorMessage(new ApiError(result.code, 400))))
@@ -54,52 +56,41 @@ export function SignInForm({ redirectTo }: { redirectTo?: string }) {
   }
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-8 animate-in fade-in slide-in-from-bottom-1">
+      <AuthHeading
+        title={<Trans>Ravi de vous revoir</Trans>}
+        lead={<Trans>Connectez-vous pour reprendre vos recherches.</Trans>}
+      />
       <AuthTabs current="sign-in" />
-      <form noValidate onSubmit={onSubmit} className="flex flex-col gap-[18px] animate-in fade-in slide-in-from-bottom-1">
-        <div className="flex flex-col gap-2">
-          <h1 className="text-[30px] font-semibold tracking-[-0.03em]">
-            <Trans>Ravi de vous revoir</Trans>
-          </h1>
-          <p className="text-[15px] text-muted-foreground">
-            <Trans>Connectez-vous pour reprendre vos recherches.</Trans>
-          </p>
-        </div>
+      <form noValidate onSubmit={onSubmit} className="flex flex-col gap-5">
+        <SsoBlock next={next} />
         {formError && <FormAlert>{formError}</FormAlert>}
         <Field label={<Trans>E-mail professionnel</Trans>} error={fieldErrors.email}>
           {(a11y) => (
-            <input {...a11y} name="email" type="email" autoComplete="email" placeholder="prenom.nom@chu-exemple.fr" className={inputClass} />
+            <input
+              {...a11y}
+              name="email"
+              type="email"
+              autoComplete="email"
+              placeholder="prenom.nom@chu-exemple.fr"
+              className={inputClass}
+            />
           )}
         </Field>
-        <Field
-          label={<Trans>Mot de passe</Trans>}
-          error={fieldErrors.password}
-          aside={
-            <LocalizedLink
-              to="/forgot-password"
-              className="-my-3 inline-flex min-h-11 items-center text-[13px] font-medium text-primary hover:underline"
-            >
-              <Trans>Mot de passe oublié ?</Trans>
-            </LocalizedLink>
-          }
-        >
-          {(a11y) => <PasswordInput {...a11y} name="password" autoComplete="current-password" placeholder={t`Votre mot de passe`} />}
+        <Field label={<Trans>Mot de passe</Trans>} error={fieldErrors.password}>
+          {(a11y) => (
+            <PasswordInput {...a11y} name="password" autoComplete="current-password" placeholder={t`Votre mot de passe`} />
+          )}
         </Field>
-        <label className="flex items-start gap-2.5 text-[13px] leading-normal text-muted-foreground">
-          <input type="checkbox" name="remember" className="mt-0.5 size-[18px] accent-primary" />
-          <Trans>Rester connecté sur cet appareil (30 jours)</Trans>
-        </label>
-        <Button type="submit" size="lg" className="h-[46px] text-[15px]" disabled={signIn.isPending}>
+        <LocalizedLink
+          to="/forgot-password"
+          className="-my-3 inline-flex min-h-11 items-center self-end text-sm font-semibold text-foreground underline underline-offset-4 hover:text-primary"
+        >
+          <Trans>Mot de passe oublié ?</Trans>
+        </LocalizedLink>
+        <Button type="submit" size="lg" className="h-[54px] w-full rounded-xl text-base font-semibold" disabled={signIn.isPending}>
           {signIn.isPending ? <Trans>Connexion…</Trans> : <Trans>Se connecter</Trans>}
         </Button>
-        <p className="text-center text-sm text-muted-foreground">
-          <Trans>
-            Pas encore de compte ?{' '}
-            <LocalizedLink to="/sign-up" className="text-primary hover:underline">
-              Demander un accès
-            </LocalizedLink>
-          </Trans>
-        </p>
       </form>
     </div>
   )

@@ -23,28 +23,25 @@ msgstr ""
 msgid "{0} variants"
 msgstr ""
 
-#. placeholder {0}: data.panels.length
-#: src/features/auth/components/AuthAside.tsx:60
-msgid "{geneCount} gènes, {0} panels"
+#. placeholder {0}: i18n.number(data.variantCount)
+#. placeholder {1}: data.archive
+#: src/features/auth/components/AuthArt.tsx:100
+msgid "{0} variants · {geneCount} gènes · archive {1}"
 msgstr ""
 
-#: src/features/auth/components/SignUpForm.tsx:131
+#: src/features/auth/components/SignUpForm.tsx:100
 msgid "{PASSWORD_MIN_LENGTH} caractères minimum"
 msgstr ""
 
-#: src/features/auth/components/SignUpForm.tsx:36
+#: src/features/auth/components/SignUpForm.tsx:49
 msgid "{PASSWORD_MIN_LENGTH} caractères minimum."
-msgstr ""
-
-#: src/features/auth/components/AuthAside.tsx:65
-msgid "{variants} variants courants, {diseases} maladies associées."
 msgstr ""
 
 #: src/features/landing/components/AnswerPreview.tsx:103
 msgid "1 étoile"
 msgstr ""
 
-#: src/features/auth/components/FormBits.tsx:91
+#: src/features/auth/components/FormBits.tsx:101
 msgid "12 caractères minimum, avec majuscules, chiffres et symboles."
 msgstr ""
 
@@ -60,11 +57,15 @@ msgstr ""
 msgid "Adresse confirmée"
 msgstr ""
 
-#: src/features/auth/components/FormBits.tsx:76
+#: src/features/auth/components/SignUpForm.tsx:80
+msgid "Adresse de votre établissement ou laboratoire. Un lien de vérification vous sera envoyé."
+msgstr ""
+
+#: src/features/auth/components/FormBits.tsx:86
 msgid "Afficher le mot de passe"
 msgstr ""
 
-#: src/app/$lang/_auth.tsx:50
+#: src/app/$lang/_auth.tsx:47
 msgid "Aide à la consultation de bases publiques. Ne remplace pas l'interprétation clinique d'un biologiste."
 msgstr ""
 
@@ -84,21 +85,8 @@ msgstr ""
 msgid "Aperçu"
 msgstr ""
 
-#. placeholder {0}: data.archive
-#: src/features/auth/components/AuthAside.tsx:73
-msgid "Archive ClinVar <0>{0}</0> · prochaine mise à jour le 10 du mois"
-msgstr ""
-
-#: src/features/auth/components/AuthAside.tsx:55
-msgid "Archive consultée et historique des reclassifications."
-msgstr ""
-
 #: src/features/landing/components/Features.tsx:13
 msgid "Assistant en langage naturel"
-msgstr ""
-
-#: src/features/auth/components/AuthAside.tsx:48
-msgid "Assistant sourcé"
 msgstr ""
 
 #: src/features/landing/components/Trust.tsx:10
@@ -121,7 +109,7 @@ msgstr ""
 msgid "Biologiste médical"
 msgstr ""
 
-#: src/features/auth/components/FormBits.tsx:94
+#: src/features/auth/components/FormBits.tsx:104
 msgid "Bon"
 msgstr ""
 
@@ -142,12 +130,12 @@ msgstr ""
 msgid "Certains champs sont invalides."
 msgstr ""
 
-#: src/features/auth/components/SignUpForm.tsx:37
-msgid "Cet engagement est obligatoire."
-msgstr ""
-
 #: src/shared/components/NotFound.tsx:12
 msgid "Cette page n'existe pas."
+msgstr ""
+
+#: src/features/auth/components/AuthArt.tsx:60
+msgid "Chaque affirmation reliée à sa fiche"
 msgstr ""
 
 #: src/features/landing/components/Features.tsx:29
@@ -158,16 +146,12 @@ msgstr ""
 msgid "Chercheur"
 msgstr ""
 
-#: src/features/auth/components/SignUpForm.tsx:120
-msgid "CHU, laboratoire…"
-msgstr ""
-
 #: src/features/landing/components/AnswerPreview.tsx:17
 msgid "Classification de BRCA1 c.68_69del ?"
 msgstr ""
 
-#: src/features/auth/components/AuthAside.tsx:52
-msgid "Classifications par gène, niveaux de revue, maladies."
+#: src/features/auth/components/AuthArt.tsx:52
+msgid "ClinVar, MedGen, HPO et NCBI Gene"
 msgstr ""
 
 #: src/features/landing/components/Method.tsx:8
@@ -186,6 +170,10 @@ msgstr ""
 msgid "Confidentialité"
 msgstr ""
 
+#: src/features/auth/components/SignUpForm.tsx:108
+msgid "Confirmer le mot de passe"
+msgstr ""
+
 #: src/shared/api/errors.ts:20
 msgid "Confirmez d'abord votre adresse avec le lien reçu par e-mail."
 msgstr ""
@@ -194,16 +182,28 @@ msgstr ""
 msgid "Confirmez d'abord votre adresse avec le lien reçu par e-mail. Vous serez prévenu dès que votre accès sera activé."
 msgstr ""
 
-#: src/features/auth/components/SignInForm.tsx:65
+#: src/features/auth/components/SignInForm.tsx:62
 msgid "Connectez-vous pour reprendre vos recherches."
 msgstr ""
 
-#: src/features/auth/components/SignInForm.tsx:93
+#: src/features/auth/components/FormBits.tsx:23
+msgid "Connexion"
+msgstr ""
+
+#: src/features/auth/components/FormBits.tsx:21
+msgid "Connexion ou inscription"
+msgstr ""
+
+#: src/features/auth/components/SignInForm.tsx:92
 msgid "Connexion…"
 msgstr ""
 
 #: src/features/auth/professions.ts:9
 msgid "Conseiller en génétique"
+msgstr ""
+
+#: src/features/auth/components/SsoBlock.tsx:33
+msgid "Continuer avec Microsoft"
 msgstr ""
 
 #: src/features/landing/components/Method.tsx:20
@@ -214,20 +214,12 @@ msgstr ""
 msgid "Couverture"
 msgstr ""
 
-#: src/features/auth/components/FormBits.tsx:26
-msgid "Créer un compte"
-msgstr ""
-
 #: src/features/landing/components/Panels.tsx:41
 msgid "D'autres panels à venir"
 msgstr ""
 
 #: src/features/landing/components/Method.tsx:41
 msgid "De la base publique à la réponse, chaque étape est tracée."
-msgstr ""
-
-#: src/features/auth/components/SignUpForm.tsx:170
-msgid "Déjà un compte ? <0>Se connecter</0>"
 msgstr ""
 
 #: src/features/auth/components/PendingStatus.tsx:24
@@ -242,11 +234,15 @@ msgstr ""
 msgid "Demande reçue"
 msgstr ""
 
-#: src/features/auth/components/SignUpForm.tsx:82
+#: src/features/auth/components/SignUpForm.tsx:70
 #: src/features/landing/components/Hero.tsx:37
 #: src/features/landing/components/SiteHeader.tsx:52
 #: src/features/landing/components/Trust.tsx:62
 msgid "Demander un accès"
+msgstr ""
+
+#: src/features/auth/components/AuthArt.tsx:51
+msgid "Des fiches retrouvées"
 msgstr ""
 
 #: src/features/landing/components/Panels.tsx:15
@@ -274,8 +270,8 @@ msgid "E-mail ou mot de passe incorrect."
 msgstr ""
 
 #: src/features/auth/components/ForgotPasswordForm.tsx:48
-#: src/features/auth/components/SignInForm.tsx:69
-#: src/features/auth/components/SignUpForm.tsx:98
+#: src/features/auth/components/SignInForm.tsx:68
+#: src/features/auth/components/SignUpForm.tsx:78
 msgid "E-mail professionnel"
 msgstr ""
 
@@ -283,7 +279,7 @@ msgstr ""
 msgid "En attente de votre clic"
 msgstr ""
 
-#: src/features/auth/components/SignUpForm.tsx:167
+#: src/features/auth/components/SignUpForm.tsx:140
 msgid "Envoi…"
 msgstr ""
 
@@ -291,7 +287,7 @@ msgstr ""
 msgid "Envoyer le lien"
 msgstr ""
 
-#: src/features/auth/components/SignUpForm.tsx:167
+#: src/features/auth/components/SignUpForm.tsx:140
 msgid "Envoyer ma demande"
 msgstr ""
 
@@ -299,24 +295,12 @@ msgstr ""
 msgid "Erreur inattendue. Elle a été signalée."
 msgstr ""
 
-#: src/features/auth/components/SignUpForm.tsx:118
-msgid "Établissement"
-msgstr ""
-
-#: src/features/auth/components/SignUpForm.tsx:152
-msgid "Ex. : interprétation de variants en oncogénétique"
-msgstr ""
-
-#: src/features/auth/components/FormBits.tsx:95
+#: src/features/auth/components/FormBits.tsx:105
 msgid "Excellent"
 msgstr ""
 
 #: src/features/landing/components/AnswerPreview.tsx:77
 msgid "Exemples de questions"
-msgstr ""
-
-#: src/features/auth/components/AuthAside.tsx:51
-msgid "Explorateur"
 msgstr ""
 
 #: src/features/landing/components/Features.tsx:23
@@ -325,10 +309,6 @@ msgstr ""
 
 #: src/features/landing/components/SiteHeader.tsx:22
 msgid "Fiabilité"
-msgstr ""
-
-#: src/features/auth/components/SignUpForm.tsx:107
-msgid "Fonction"
 msgstr ""
 
 #: src/features/landing/components/Features.tsx:56
@@ -348,15 +328,15 @@ msgstr ""
 msgid "Genomica — aide à la consultation de ClinVar, MedGen, HPO et NCBI Gene. Ne remplace pas l'interprétation clinique d'un biologiste."
 msgstr ""
 
-#: src/features/auth/components/SignUpForm.tsx:85
-msgid "Genomica est réservé aux professionnels. Votre demande sera examinée par un administrateur."
+#: src/features/auth/components/AuthArt.tsx:70
+msgid "Genomica en trois étapes"
 msgstr ""
 
 #: src/features/landing/components/Trust.tsx:26
 msgid "Genomica restitue les classifications déposées ; l'interprétation clinique reste l'acte du biologiste."
 msgstr ""
 
-#: src/app/$lang/_auth.tsx:33
+#: src/app/$lang/_auth.tsx:37
 #: src/features/landing/components/SiteHeader.tsx:31
 msgid "Genomica, accueil"
 msgstr ""
@@ -365,28 +345,24 @@ msgstr ""
 msgid "Historique des reclassifications"
 msgstr ""
 
+#: src/features/auth/components/AuthArt.tsx:44
+msgid "Identifiant rs, notation HGVS ou phrase libre"
+msgstr ""
+
 #: src/features/auth/components/ForgotPasswordForm.tsx:45
 msgid "Indiquez votre e-mail : nous vous enverrons un lien pour en choisir un nouveau."
 msgstr ""
 
-#: src/features/auth/components/SignUpForm.tsx:35
-msgid "Indiquez votre établissement."
+#: src/features/auth/components/FormBits.tsx:26
+msgid "Inscription"
 msgstr ""
 
-#: src/features/auth/components/SignUpForm.tsx:33
-msgid "Indiquez votre nom."
+#: src/features/auth/components/SignUpForm.tsx:71
+msgid "Inscrivez-vous avec votre e-mail professionnel ; un administrateur validera votre accès."
 msgstr ""
 
-#: src/features/auth/components/SignUpForm.tsx:32
-msgid "Indiquez votre prénom."
-msgstr ""
-
-#: src/features/auth/components/SignUpForm.tsx:161
-msgid "J'accepte les <0>conditions d'utilisation</0> et la <1>politique de confidentialité</1>."
-msgstr ""
-
-#: src/features/auth/components/SignUpForm.tsx:158
-msgid "Je m'engage à ne saisir aucune donnée permettant d'identifier un patient."
+#: src/features/auth/components/SignUpForm.tsx:120
+msgid "J'accepte les <0>conditions d'utilisation</0> et la <1>politique de confidentialité</1>, et je m'engage à ne saisir aucune donnée permettant d'identifier un patient."
 msgstr ""
 
 #: src/features/landing/components/Trust.tsx:59
@@ -409,6 +385,10 @@ msgstr ""
 msgid "L'outil interroge des bases publiques. Ne saisissez jamais d'information permettant d'identifier une personne."
 msgstr ""
 
+#: src/features/auth/components/SsoBlock.tsx:28
+msgid "La connexion Microsoft sera disponible avec le backend. Utilisez votre e-mail en attendant."
+msgstr ""
+
 #: src/shared/components/NotFound.tsx:15
 msgid "Le lien est peut-être incomplet, ou la page a été déplacée."
 msgstr ""
@@ -421,12 +401,12 @@ msgstr ""
 msgid "Les journaux techniques ne contiennent ni la question, ni la réponse, ni aucune clé."
 msgstr ""
 
-#: src/features/landing/components/Hero.tsx:24
-msgid "Les variants de l'ADN, expliqués <0>avec leurs sources.</0>"
+#: src/features/auth/components/SignUpForm.tsx:50
+msgid "Les mots de passe ne correspondent pas."
 msgstr ""
 
-#: src/features/auth/components/AuthAside.tsx:40
-msgid "Les variants de l'ADN, expliqués avec leurs sources."
+#: src/features/landing/components/Hero.tsx:24
+msgid "Les variants de l'ADN, expliqués <0>avec leurs sources.</0>"
 msgstr ""
 
 #: src/features/landing/components/StatsBand.tsx:10
@@ -437,7 +417,7 @@ msgstr ""
 msgid "Maladies associées à PALB2 ?"
 msgstr ""
 
-#: src/features/auth/components/FormBits.tsx:76
+#: src/features/auth/components/FormBits.tsx:86
 msgid "Masquer le mot de passe"
 msgstr ""
 
@@ -454,12 +434,8 @@ msgstr ""
 msgid "Mise à jour mensuelle"
 msgstr ""
 
-#: src/features/auth/components/FormBits.tsx:21
-msgid "Mode d'accès"
-msgstr ""
-
-#: src/features/auth/components/SignInForm.tsx:75
-#: src/features/auth/components/SignUpForm.tsx:124
+#: src/features/auth/components/SignInForm.tsx:80
+#: src/features/auth/components/SignUpForm.tsx:93
 msgid "Mot de passe"
 msgstr ""
 
@@ -467,11 +443,11 @@ msgstr ""
 msgid "Mot de passe oublié"
 msgstr ""
 
-#: src/features/auth/components/SignInForm.tsx:82
+#: src/features/auth/components/SignInForm.tsx:89
 msgid "Mot de passe oublié ?"
 msgstr ""
 
-#: src/features/auth/components/FormBits.tsx:93
+#: src/features/auth/components/FormBits.tsx:103
 msgid "Moyen"
 msgstr ""
 
@@ -483,10 +459,6 @@ msgstr ""
 msgid "Nettoyage, dédoublonnage, liens variant–gène–maladie–phénotype, historique des classifications."
 msgstr ""
 
-#: src/features/auth/components/SignUpForm.tsx:93
-msgid "Nom"
-msgstr ""
-
 #: src/features/landing/components/Method.tsx:14
 msgid "Normalisation"
 msgstr ""
@@ -495,8 +467,8 @@ msgstr ""
 msgid "Notation HGVS, identifiant rs, nom de protéine ou question libre : l'assistant reconnaît la forme, retrouve les fiches pertinentes et répond en français, avec un numéro de source sur chaque affirmation."
 msgstr ""
 
-#: src/features/auth/components/SignInForm.tsx:96
-msgid "Pas encore de compte ? <0>Demander un accès</0>"
+#: src/features/auth/components/SsoBlock.tsx:42
+msgid "ou avec votre e-mail professionnel"
 msgstr ""
 
 #: src/shared/components/ThemeToggle.tsx:25
@@ -523,10 +495,6 @@ msgstr ""
 msgid "Posez votre question en langage naturel. Genomica cherche dans ClinVar, MedGen, HPO et NCBI Gene, répond en français et relie chaque affirmation à sa fiche d'origine. Quand la donnée n'existe pas, l'assistant le dit plutôt que d'inventer."
 msgstr ""
 
-#: src/features/auth/components/SignUpForm.tsx:90
-msgid "Prénom"
-msgstr ""
-
 #: src/features/landing/components/AnswerPreview.tsx:64
 msgid "Probablement bénin"
 msgstr ""
@@ -539,7 +507,7 @@ msgstr ""
 msgid "Questions non journalisées"
 msgstr ""
 
-#: src/features/auth/components/SignInForm.tsx:62
+#: src/features/auth/components/SignInForm.tsx:61
 msgid "Ravi de vous revoir"
 msgstr ""
 
@@ -559,15 +527,6 @@ msgstr ""
 msgid "Réponse sourcée"
 msgstr ""
 
-#: src/features/auth/components/AuthAside.tsx:49
-msgid "Réponses en français, une fiche ClinVar par affirmation."
-msgstr ""
-
-#: src/features/auth/components/SignInForm.tsx:90
-msgid "Rester connecté sur cet appareil (30 jours)"
-msgstr ""
-
-#: src/app/$lang/_auth.tsx:41
 #: src/features/auth/components/PendingStatus.tsx:54
 #: src/shared/components/NotFound.tsx:18
 msgid "Retour à l'accueil"
@@ -583,18 +542,17 @@ msgid "rs334 sur HBB est-il pathogène ?"
 msgstr ""
 
 #: src/features/auth/components/ForgotPasswordForm.tsx:17
-#: src/features/auth/components/SignInForm.tsx:39
-#: src/features/auth/components/SignUpForm.tsx:34
+#: src/features/auth/components/SignInForm.tsx:41
+#: src/features/auth/components/SignUpForm.tsx:29
 msgid "Saisissez une adresse e-mail valide."
 msgstr ""
 
-#: src/features/auth/components/SignInForm.tsx:40
+#: src/features/auth/components/SignInForm.tsx:42
 msgid "Saisissez votre mot de passe."
 msgstr ""
 
-#: src/features/auth/components/FormBits.tsx:23
 #: src/features/auth/components/PendingStatus.tsx:57
-#: src/features/auth/components/SignInForm.tsx:93
+#: src/features/auth/components/SignInForm.tsx:92
 #: src/features/landing/components/SiteHeader.tsx:49
 msgid "Se connecter"
 msgstr ""
@@ -640,28 +598,16 @@ msgstr ""
 msgid "TP53 p.Arg175His a-t-il été reclassé ?"
 msgstr ""
 
-#: src/features/auth/components/AuthAside.tsx:54
-msgid "Traçabilité"
-msgstr ""
-
 #: src/shared/api/errors.ts:26
 msgid "Trop de tentatives. Réessayez dans quelques minutes."
 msgstr ""
 
-#: src/features/auth/components/FormBits.tsx:92
+#: src/features/auth/components/FormBits.tsx:102
 msgid "Trop faible"
 msgstr ""
 
 #: src/features/landing/components/AnswerPreview.tsx:30
 msgid "Un identifiant dbSNP peut désigner plusieurs allèles. Genomica les distingue et cite la fiche ClinVar de chacun."
-msgstr ""
-
-#: src/features/auth/components/SignUpForm.tsx:100
-msgid "Un lien de vérification vous sera envoyé."
-msgstr ""
-
-#: src/features/auth/components/AuthAside.tsx:43
-msgid "Une base de connaissances actualisée chaque mois à partir de ClinVar, MedGen, HPO et NCBI Gene."
 msgstr ""
 
 #: src/features/landing/components/Features.tsx:43
@@ -676,12 +622,20 @@ msgstr ""
 msgid "Une incohérence entre étapes arrête la mise à jour : la base consultée n'est jamais partielle."
 msgstr ""
 
+#: src/features/auth/components/AuthArt.tsx:43
+msgid "Une question posée"
+msgstr ""
+
 #: src/features/landing/components/AnswerPreview.tsx:28
 msgid "Une question, une réponse, ses preuves."
 msgstr ""
 
-#: src/features/auth/components/SignUpForm.tsx:141
-msgid "Usage prévu <0>(facultatif)</0>"
+#: src/features/auth/components/AuthArt.tsx:59
+msgid "Une réponse sourcée"
+msgstr ""
+
+#: src/features/auth/components/SignUpForm.tsx:28
+msgid "Utilisez l'adresse de votre établissement ou laboratoire, pas une messagerie personnelle."
 msgstr ""
 
 #: src/features/auth/components/PendingStatus.tsx:48
@@ -716,7 +670,7 @@ msgstr ""
 msgid "Votre demande d'accès n'a pas été acceptée."
 msgstr ""
 
-#: src/features/auth/components/SignInForm.tsx:86
+#: src/features/auth/components/SignInForm.tsx:82
 msgid "Votre mot de passe"
 msgstr ""
 
@@ -724,8 +678,8 @@ msgstr ""
 msgid "Votre session a expiré. Reconnectez-vous."
 msgstr ""
 
-#: src/features/auth/components/SignUpForm.tsx:38
-msgid "Vous devez accepter les conditions pour continuer."
+#: src/features/auth/components/SignUpForm.tsx:51
+msgid "Vous devez accepter ces conditions pour continuer."
 msgstr ""
 
 #: src/features/auth/components/PendingStatus.tsx:49
