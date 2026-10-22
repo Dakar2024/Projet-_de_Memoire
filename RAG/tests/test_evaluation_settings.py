@@ -27,9 +27,8 @@ _DELETE = object()
 def test_the_versioned_settings_load():
     s = load_settings()
     assert s.judge.name == "juge-gemini-3.8-flash"
-    assert s.judge.model == "google/gemini-3.8-flash"
-    assert s.judge.provider_name == "Google"
-    assert s.candidates == ("claude-opus-5.5", "mistral-medium", "gpt-oss-120b")
+    assert (s.judge.model, s.judge.backend, s.judge.provider_name) == ("gemini-3.8-flash", "gemini", "Google")
+    assert s.candidates == ("groq-gpt-oss-120b", "groq-gpt-oss-20b", "groq-qwen3.8-27b")
     assert s.strata == {"I": 25, "S": 25, "G": 10, "M": 10}
     assert s.total_questions == 70
     assert (s.repeat_questions, s.passes, s.sample_size) == (20, 3, 40)
@@ -38,9 +37,27 @@ def test_the_versioned_settings_load():
     assert (s.budget_usd, s.reserve_per_call_usd) == (25.0, 0.25)
 
 
-def test_a_judge_of_a_candidate_family_is_refused(tmp_path):
+@pytest.mark.parametrize("changes", [
+    {"judge__model": "openai/gpt-oss-safeguard-20b", "judge__backend": "openrouter"},
+    {"judge__model": "qwen/qwen3-max", "judge__backend": "openrouter"},
+])
+def test_a_judge_of_a_candidate_family_is_refused(tmp_path, changes):
     with pytest.raises(RagConfigurationError, match="famille"):
-        load_settings(_write(tmp_path, judge__model="mistralai/mistral-large"))
+        load_settings(_write(tmp_path, **changes))
+
+
+def test_a_gemini_judge_belongs_to_the_google_family():
+    from RAG.src.evaluation.settings import model_family
+    from RAG.src.utils.config import LlmProfile
+
+    direct = LlmProfile("j", "gemini-3.8-flash", "gemini-api", "Google", None, backend="gemini")
+    routed = LlmProfile("j", "google/gemini-3.8-flash", "google-vertex/global", "Google", None)
+    assert model_family(direct) == model_family(routed) == "google"
+
+
+def test_a_groq_judge_is_refused(tmp_path):
+    with pytest.raises(RagConfigurationError, match="Gemini ou OpenRouter"):
+        load_settings(_write(tmp_path, judge__backend="groq", judge__provider_name="Groq"))
 
 
 def test_incomplete_judge_is_refused(tmp_path):
@@ -50,7 +67,7 @@ def test_incomplete_judge_is_refused(tmp_path):
 
 def test_unknown_candidate_is_refused(tmp_path):
     with pytest.raises(RagConfigurationError, match="inconnu"):
-        load_settings(_write(tmp_path, candidates=["claude-opus-5.5", "nope"]))
+        load_settings(_write(tmp_path, candidates=["groq-gpt-oss-120b", "nope"]))
 
 
 def test_trial_profile_cannot_be_a_candidate(tmp_path):

@@ -15,12 +15,41 @@
 | Code, tests, jeu de questions, documentation | **faits**, branche `rag/e3a-evaluation` (14 commits, non poussée) |
 | Jeu de questions | **relu et validé tel quel par l'utilisateur** le 14/10, figé |
 | Base de la branche | rebasée le 14/10 sur `rag/e2b-correctifs` (5 correctifs post-recette des contrôles de E2b) : E3a mesurera les modèles avec les contrôles corrigés |
-| Mesure réelle | **pas encore lancée** : elle attend les crédits OpenRouter, la mesure officielle de E2a et la fin de la recette E2b |
+| Mesure réelle | **pas encore lancée** : elle attend la mesure officielle de E2a et la fin de la recette E2b (plus les crédits OpenRouter : §1.1) |
 
 Rien n'a été envoyé à OpenRouter : aucun appel payant n'a été fait. Le code de E2b, gelé à 751fae3
 pour la recette, n'a pas été touché. Le travail est fait dans une copie de travail séparée
 (`../Projet-_de_Memoire-e3a`, `git worktree`), si bien que la recette quotidienne continue sur le
 dossier principal sans être affectée.
+
+### 1.1 Amendement du 22/10/2026 : offres gratuites (Groq et Gemini)
+
+Décidé par l'utilisateur, faute de budget pour les crédits OpenRouter. Le reste du protocole
+(questions, règle de choix, seuils, annotation) est inchangé ; OpenRouter reviendra quand il y aura
+des ressources (`llm.reserve_profiles` de `RAG/config.yaml`).
+
+| Avant | Après | Vérification |
+|---|---|---|
+| Candidats : Claude Opus 5.5, Mistral Medium 3.5, gpt-oss-120b (OpenRouter, zéro rétention) | `groq-gpt-oss-120b`, `groq-gpt-oss-20b`, `groq-qwen3.8-27b` (Groq, offre gratuite) | Appel réel le 22/10 : schéma strict et `reasoning_effort: low` acceptés par les trois, analyse de question valide en moins d'une seconde |
+| Juge : `google/gemini-3.8-flash` via OpenRouter (`google-vertex/global`) | `gemini-3.8-flash` en appel direct (`RAG/src/llm/gemini.py`, interface compatible OpenAI) | Jugement réel le 22/10 (3 appels, schémas de `juge-v1`) : affirmation non soutenue repérée ; environ 36 s par appel, 503 « forte demande » fréquents |
+| Budget 25 $ | 0 $ (plafond conservé pour OpenRouter) | — |
+| `juger` dans `rag-search` | `juger` sur l'hôte | La clé Gemini n'entre dans aucun conteneur ; le proxy du RAG reste fermé à Google |
+
+Conséquences à assumer dans le mémoire :
+
+- **Plus de modèle de pointe fermé** parmi les candidats : la comparaison porte sur trois modèles
+  ouverts de taille moyenne. La question « quel modèle mettre en service » devient « lequel des
+  modèles accessibles gratuitement », ce qui reste la décision réelle du projet.
+- **Juge sans zéro rétention** : sur l'offre gratuite, Google utilise requêtes et réponses pour
+  améliorer ses produits, et des personnes peuvent les relire (conditions de l'API Gemini,
+  https://ai.google.dev/gemini-api/terms, section « Unpaid Services »). Acceptable ici parce que
+  seules des questions de test et des fiches ClinVar publiques lui sont envoyées ; `config.yaml`
+  refuse tout profil Gemini, pour que l'application n'y envoie jamais de vraie question.
+- **Coût nul pour tous** : le départage par le coût ne départage plus ; la latence prend le relais.
+- **Quotas** : quotidiens sur les deux offres. Les commandes s'arrêtent sur quota épuisé et reprennent
+  le lendemain (caches) ; la mesure peut prendre plusieurs jours.
+- La famille du juge (`google`) reste distincte de celles des candidats (`openai`, `qwen`) : la
+  garde contre l'auto-préférence (`model_family`, `RAG/src/evaluation/settings.py`) est conservée.
 
 ## 2. Ce que E3a mesure, en une page
 

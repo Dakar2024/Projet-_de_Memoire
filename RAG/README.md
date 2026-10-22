@@ -238,12 +238,20 @@ canari) et que toutes les lignes de l'index portent cette empreinte.
 
 Dans le `.env` de la racine, facultatives pour le pipeline :
 
-- `OPENROUTER_API_KEY` : profils officiels (`llm.profiles` de `RAG/config.yaml`), chacun figé sur
-  un point d'accès OpenRouter sans basculement, en zéro rétention, sortie JSON stricte. Le
-  fournisseur servi (champ `provider` de la réponse) et le coût (`usage.cost`) sont contrôlés ; une
-  réponse d'un autre fournisseur est rejetée.
-- `GROQ_API_KEY` : profil d'essai gratuit (`llm.trial_profiles`), zéro rétention à activer dans
-  *Data Controls* de la console Groq. Il valide la chaîne ; il ne sert jamais au choix du modèle.
+- `GROQ_API_KEY` : depuis le 22/10/2026, profils officiels (`llm.profiles` de `RAG/config.yaml`,
+  candidats de E2a et E3a) et profil d'essai (`llm.trial_profiles`), offre gratuite, zéro rétention
+  à activer dans *Data Controls* de la console Groq. Ni quantification ni fournisseur figés : Groq
+  sert lui-même ses modèles.
+- `GEMINI_API_KEY` : juge de E3a seulement (`RAG/experiments/evaluation_e3a.yaml`), offre gratuite
+  de l'API Gemini, appelée **depuis l'hôte**, jamais depuis un conteneur. Google réutilise les
+  requêtes et réponses de l'offre gratuite, et des personnes peuvent les relire
+  ([conditions](https://ai.google.dev/gemini-api/terms)) : seules des questions de test et des
+  fiches ClinVar publiques y partent. `config.yaml` refuse tout profil Gemini.
+- `OPENROUTER_API_KEY` : **en réserve** (crédits non achetés). Les profils `llm.reserve_profiles`
+  sont figés chacun sur un point d'accès OpenRouter sans basculement, en zéro rétention, sortie
+  JSON stricte ; le fournisseur servi (`provider`) et le coût (`usage.cost`) sont contrôlés. Pour
+  les réactiver, les remettre dans `llm.profiles` : l'empreinte des séries change, donc tout est
+  remesuré.
 
 ### 8.4 Essayer une question
 
@@ -494,7 +502,7 @@ sous le nom `generation_unavailable`.
 
 - `analysis_profile` et `generation_profile` valent `essai-groq-gpt-oss-120b` (API Groq, offre
   gratuite, zéro rétention à activer dans *Data Controls*). **Provisoires** : le profil d'analyse
-  sera désigné par la mesure officielle de E2a (crédits OpenRouter), celui de génération par RAGAS en E3.
+  sera désigné par la mesure officielle de E2a (candidats Groq), celui de génération par E3a.
 - Chaque réponse porte le modèle, le fournisseur et le coût réellement observés.
 - Le quota gratuit de Groq est quotidien : la recette (§9.10) est reprenable sur plusieurs jours.
 
@@ -764,9 +772,11 @@ documents** (recherche faite une fois, puis refaite et comparée avant chaque g�
 | Abstention à tort | `not_in_sources` / `out_of_scope` du modèle alors qu'un document pertinent est transmis |
 | Recherche | précision, rappel@k par strate, contre la vérité terrain par règles (sans LLM) |
 
-Juge : `google/gemini-3.8-flash` (`google-vertex/global`, zéro rétention, sorties structurées),
-famille distincte des candidats, **sans température envoyée** (recommandation de Google pour
-Gemini 3). Il est validé contre une **annotation humaine en aveugle** de 40 réponses : kappa de
+Candidats (depuis le 22/10/2026, faute de crédits OpenRouter) : `groq-gpt-oss-120b`,
+`groq-gpt-oss-20b`, `groq-qwen3.8-27b`, tous servis par Groq (coût nul, départage par la latence).
+Juge : `gemini-3.8-flash` en appel direct (offre gratuite de l'API Gemini, interface compatible
+OpenAI, sorties structurées vérifiées le 22/10/2026), famille distincte des candidats, **sans
+température envoyée** (recommandation de Google pour Gemini 3). Pas de zéro rétention : voir §8.3. Il est validé contre une **annotation humaine en aveugle** de 40 réponses : kappa de
 Cohen ≥ 0,6 pour la fidélité, kappa pondéré ≥ 0,6 pour la pertinence. Sans cela, ses scores sont
 indicatifs et `evaluer` n'applique pas la règle.
 
@@ -778,8 +788,11 @@ latence.
 ### 10.2 Commandes, dans l'ordre
 
 À lancer **après** la mesure officielle de E2a (qui fixe `llm.analysis_profile`) et **après** la fin
-de la recette E2b. Les commandes payantes sont plafonnées à 25 $ au total (`depenses.json`) et ne
-peuvent pas tourner en même temps.
+de la recette E2b. Les offres gratuites coûtent 0 $ ; le plafond de 25 $ (`depenses.json`) reste
+actif pour le jour où des profils OpenRouter reviendront. Les commandes ne peuvent pas tourner en
+même temps. Les quotas gratuits sont quotidiens (Groq ; Gemini : remise à zéro à minuit, heure du
+Pacifique) : un quota épuisé arrête la commande, qui reprend le lendemain là où elle s'est arrêtée.
+Gemini répond souvent « 503, forte demande » : la question est retentée au `juger` suivant.
 
 ```bash
 mkdir -p data/experiments/e3a
@@ -788,12 +801,15 @@ venv/bin/python -m RAG.experiments.evaluation_generation verite-terrain
 # 2. Recherches figées, puis les trois candidats (passage 1 = 70 questions ; 2 et 3 = 20 reprises)
 R="docker compose --env-file .env --profile outils run --rm rag-search -m RAG.experiments.evaluation_generation"
 $R rechercher
-for p in gpt-oss-120b mistral-medium claude-opus-5.5; do for n in 1 2 3; do $R lancer --profil $p --passage $n; done; done
-# 3. Jugement, échantillon aveugle, annotation humaine, rejugement de l'échantillon (stabilité)
-$R juger
+for p in groq-gpt-oss-120b groq-gpt-oss-20b groq-qwen3.8-27b; do for n in 1 2 3; do $R lancer --profil $p --passage $n; done; done
+# 3. Jugement (sur l'hôte : la clé Gemini n'entre dans aucun conteneur, le proxy du RAG reste fermé à
+#    Google), échantillon aveugle, annotation humaine, rejugement de l'échantillon (stabilité)
+# Sous-shell : la clé est lue dans .env sans apparaître dans la ligne de commande ni rester dans le shell.
+H() { ( set -a; . ./.env; set +a; PYTHONPATH=src:. venv/bin/python -m RAG.experiments.evaluation_generation "$@" ); }
+H juger
 PYTHONPATH=src:. venv/bin/python -m RAG.experiments.evaluation_generation echantillonner
 PYTHONPATH=src:. venv/bin/python -m RAG.experiments.evaluation_generation annoter   # ne pas ouvrir echantillon.json avant la fin
-$R juger --rejuger-echantillon
+H juger --rejuger-echantillon
 # 4. Conclusion
 PYTHONPATH=src:. venv/bin/python -m RAG.experiments.evaluation_generation evaluer
 ```
@@ -821,7 +837,10 @@ fichier existant.
 - La fidélité dépend du découpage en affirmations par le juge ; les découpages fautifs signalés par
   l'annotateur sont comptés, pas corrigés.
 - Un appel rejeté par le client après facturation (fournisseur inattendu, coût absent) n'a pas de
-  coût lisible : la réserve par appel (0,25 $) le couvre.
+  coût lisible : la réserve par appel (0,25 $) le couvre (profils OpenRouter seulement).
+- Offres gratuites : Groq ne permet pas de figer la quantification ; le juge Gemini n'est pas en zéro
+  rétention ; les trois candidats sont des modèles ouverts de taille moyenne, sans modèle de pointe
+  fermé (écart au protocole d'origine, imposé par le budget).
 - 70 questions écrites à partir d'un tirage : les noms de maladie tirés au hasard sont parfois
   inattendus (variants listés pour de nombreuses affections) ; c'est le prix d'un tirage sans choix
   humain.

@@ -279,7 +279,7 @@ def test_output_dir_separates_trial_and_official_runs(tmp_path, monkeypatch):
     m = _dirs(tmp_path, monkeypatch)
 
     assert m.output_dir(load_search_config(profile=TRIAL_PROFILE)) == tmp_path / "e2a-essai"
-    assert m.output_dir(load_search_config(profile="gpt-oss-120b")) == tmp_path / "e2a"
+    assert m.output_dir(load_search_config(profile="groq-gpt-oss-120b")) == tmp_path / "e2a"
 
 
 class _FakeSearcher:
@@ -310,7 +310,7 @@ class _FakeSearcher:
         return Result()
 
 
-@pytest.mark.parametrize("profile, folder", [(TRIAL_PROFILE, "e2a-essai"), ("gpt-oss-120b", "e2a")])
+@pytest.mark.parametrize("profile, folder", [(TRIAL_PROFILE, "e2a-essai"), ("groq-gpt-oss-120b", "e2a")])
 def test_mesurer_writes_trial_runs_apart_from_official_ones(tmp_path, monkeypatch, profile, folder):
     import argparse
 

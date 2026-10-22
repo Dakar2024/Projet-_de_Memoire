@@ -490,7 +490,7 @@ def _setup_outputs(monkeypatch, tmp_path):
 
 
 class JudgeLlm:
-    """Faux OpenRouter du juge : sortie incohérente au premier appel de verdicts si `broken`."""
+    """Faux client du juge : sortie incohérente au premier appel de verdicts si `broken`."""
 
     instances = []
 
@@ -511,11 +511,12 @@ class JudgeLlm:
 
 
 def test_juger_records_judgements_and_skips_incoherent_ones(tmp_path, monkeypatch):
-    import RAG.src.llm.openrouter as openrouter
+    import RAG.src.retrieval.retriever as retriever
     _small_settings(monkeypatch)
     first = _setup_outputs(monkeypatch, tmp_path)
-    monkeypatch.setenv("OPENROUTER_API_KEY", "test")
-    monkeypatch.setattr(openrouter, "OpenRouterClient", JudgeLlm)
+    # Le juge passe par build_llm_client : son backend (gemini) choisit le client.
+    monkeypatch.setenv("GEMINI_API_KEY", "test")
+    monkeypatch.setattr(retriever, "GeminiClient", JudgeLlm)
     JudgeLlm.broken = True
     ev.main(["juger"])
     assert not ev.JUDGEMENTS.exists()  # une sortie incohérente n'est jamais un score
@@ -661,7 +662,7 @@ def _full_setup(monkeypatch, tmp_path, *, human_agrees=True, faith=(1.0, 0.95, 0
             manifest = {**base, "generation_prompt_sha": "g", "generation_max_tokens": 3000, "settings_sha256": "s",
                         "profile": name, "passage": passage}
             ev._write_json_atomic(ev.GENERATIONS / f"{name}__p{passage}.json", {"manifest": manifest, "records": {
-                q: _g(strate=strata[q], cost={"claude-opus-5.5": 0.05}.get(name, 0.01)) for q in todo}})
+                q: _g(strate=strata[q], cost={"groq-gpt-oss-120b": 0.05}.get(name, 0.01)) for q in todo}})
             for i, q in enumerate(todo):
                 judgements[ev.judge_key(name, passage, q)] = _j(f if i % 2 else 1.0, r=2 if i % 3 else 1,
                                                                 claims=4)
@@ -686,10 +687,10 @@ def test_evaluer_applies_the_rule_end_to_end(tmp_path, monkeypatch, capsys):
     ev.main(["evaluer"])
     report = json.loads(ev.EVALUATION.read_text(encoding="utf-8"))
     assert report["juge_valide"] is True
-    assert report["decision"]["chosen"] == "claude-opus-5.5"
-    assert "gpt-oss-120b" in report["decision"]["eliminated"]   # fidélité 0,75 < 0,90
+    assert report["decision"]["chosen"] == "groq-gpt-oss-120b"
+    assert "groq-qwen3.8-27b" in report["decision"]["eliminated"]   # fidélité 0,75 < 0,90
     assert report["questions"] == {"total": 17, "llm_appele": 16, "message_fixe": 1}
-    assert "modèle retenu : claude-opus-5.5" in capsys.readouterr().out
+    assert "modèle retenu : groq-gpt-oss-120b" in capsys.readouterr().out
 
 
 def test_evaluer_does_not_apply_the_rule_with_a_bad_judge(tmp_path, monkeypatch, capsys):
@@ -711,7 +712,7 @@ def test_evaluer_refuses_incomplete_annotation(tmp_path, monkeypatch):
 
 def test_evaluer_refuses_a_missing_generation(tmp_path, monkeypatch):
     _full_setup(monkeypatch, tmp_path)
-    path = ev.GENERATIONS / "mistral-medium__p1.json"
+    path = ev.GENERATIONS / "groq-gpt-oss-20b__p1.json"
     data = json.loads(path.read_text(encoding="utf-8"))
     data["records"].pop(sorted(data["records"])[0])
     ev._write_json_atomic(path, data)

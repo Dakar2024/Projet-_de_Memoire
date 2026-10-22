@@ -71,8 +71,8 @@ class ServiceSettings:
     served_model_dir: Path
 
 
-# `openrouter` pour la mesure officielle, `groq` pour les profils d'essai gratuits.
-LLM_BACKENDS = ("openrouter", "groq")
+# Clients LLM : `groq` (candidats, offre gratuite), `gemini` (juge de E3a), `openrouter` (en réserve, payant).
+LLM_BACKENDS = ("openrouter", "groq", "gemini")
 
 
 @dataclass(frozen=True)
@@ -100,6 +100,8 @@ class SearchConfig:
     llm_max_tokens: int
     # Profils d'essai : jamais candidats de la règle de choix du modèle.
     trial_profiles: dict[str, LlmProfile] = field(default_factory=dict)
+    # Profils OpenRouter en réserve (crédits non achetés) : validés, jamais candidats ni sélectionnables.
+    reserve_profiles: dict[str, LlmProfile] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -222,6 +224,14 @@ def _profile(name: str, raw: Mapping) -> LlmProfile:
                       **{k: v.strip() for k, v in fields.items()})
 
 
+def _refuse_gemini(path: Path, *sections: Mapping[str, LlmProfile]) -> None:
+    """Refuse Gemini dans config.yaml : son offre gratuite réutilise les données, elle ne sert qu'au juge de E3a."""
+    names = sorted(name for section in sections for name, p in section.items() if p.backend == "gemini")
+    if names:
+        raise RagConfigurationError(f"{path} : profils sur l'offre gratuite de Gemini {names} : elle sert au "
+                                    "juge de E3a seulement (Google réutilise les requêtes)")
+
+
 def load_search_config(path: Path = DEFAULT_CONFIG_PATH, profile: str | None = None) -> SearchConfig:
     """Lit les réglages de recherche ; `profile` remplace le profil d'analyse (officiel ou d'essai)."""
     try:
@@ -229,6 +239,7 @@ def load_search_config(path: Path = DEFAULT_CONFIG_PATH, profile: str | None = N
         search, llm = raw["search"], raw["llm"]
         profiles = {name: _profile(name, value) for name, value in llm["profiles"].items()}
         trials = {name: _profile(name, value) for name, value in (llm.get("trial_profiles") or {}).items()}
+        reserve = {name: _profile(name, value) for name, value in (llm.get("reserve_profiles") or {}).items()}
         k = int(search["k"])
         min_filtered = int(search["min_filtered"])
         max_chars = int(search["max_question_chars"])
@@ -239,14 +250,11 @@ def load_search_config(path: Path = DEFAULT_CONFIG_PATH, profile: str | None = N
         raise RagConfigurationError(f"{path} : sections search/llm illisibles ou incomplètes : {exc!r}") from exc
     if not profiles:
         raise RagConfigurationError(f"{path} : aucun profil LLM")
-    # Les profils officiels concourent à la règle de choix, mesurée sur OpenRouter seulement.
-    off_router = sorted(name for name, p in profiles.items() if p.backend != "openrouter")
-    if off_router:
-        raise RagConfigurationError(f"{path} : profils officiels hors OpenRouter {off_router} "
-                                    "(backend) : les déplacer dans llm.trial_profiles")
-    both = sorted(set(profiles) & set(trials))
+    # Les profils officiels concourent à la règle de choix : Groq depuis le 22/10/2026 (pas de crédits OpenRouter).
+    _refuse_gemini(path, profiles, trials, reserve)
+    both = sorted((set(profiles) & set(trials)) | (set(reserve) & (set(profiles) | set(trials))))
     if both:
-        raise RagConfigurationError(f"{path} : profils à la fois officiels et d'essai {both}")
+        raise RagConfigurationError(f"{path} : profils présents dans plusieurs sections {both}")
     if chosen not in profiles and chosen not in trials:
         raise RagConfigurationError(
             f"{path} : profil d'analyse « {chosen} » absent de llm.profiles et de llm.trial_profiles")
@@ -261,7 +269,7 @@ def load_search_config(path: Path = DEFAULT_CONFIG_PATH, profile: str | None = N
     return SearchConfig(
         k=k, min_filtered=min_filtered, max_question_chars=max_chars,
         analysis_profile=profiles.get(chosen) or trials[chosen], profiles=profiles,
-        llm_timeout_s=timeout, llm_max_tokens=max_tokens, trial_profiles=trials,
+        llm_timeout_s=timeout, llm_max_tokens=max_tokens, trial_profiles=trials, reserve_profiles=reserve,
     )
 
 
@@ -275,11 +283,20 @@ def load_openrouter_key(env: Mapping[str, str] | None = None) -> str:
 
 
 def load_groq_key(env: Mapping[str, str] | None = None) -> str:
-    """Lit la clé Groq (essai seulement) ; l'erreur nomme la variable, jamais sa valeur."""
+    """Lit la clé Groq ; l'erreur nomme la variable, jamais sa valeur."""
     env = os.environ if env is None else env
     key = (env.get("GROQ_API_KEY") or "").strip()
     if not key:
         raise RagConfigurationError("GROQ_API_KEY absente ou vide (.env)")
+    return key
+
+
+def load_gemini_key(env: Mapping[str, str] | None = None) -> str:
+    """Lit la clé Gemini (juge de E3a) ; l'erreur nomme la variable, jamais sa valeur."""
+    env = os.environ if env is None else env
+    key = (env.get("GEMINI_API_KEY") or "").strip()
+    if not key:
+        raise RagConfigurationError("GEMINI_API_KEY absente ou vide (.env)")
     return key
 
 
@@ -295,6 +312,7 @@ def load_generation_config(path: Path = DEFAULT_CONFIG_PATH) -> GenerationConfig
         timeout = float(llm["request_timeout_s"])
     except (OSError, KeyError, TypeError, ValueError, AttributeError, yaml.YAMLError) as exc:
         raise RagConfigurationError(f"{path} : llm.generation_profile / generation_max_tokens illisibles : {exc!r}") from exc
+    _refuse_gemini(path, profiles, trials)
     profile = profiles.get(chosen) or trials.get(chosen)
     if profile is None:
         raise RagConfigurationError(f"{path} : llm.generation_profile « {chosen} » absent des profils")

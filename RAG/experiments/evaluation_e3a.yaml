@@ -3,21 +3,23 @@
 # Toute modification de ce fichier change son empreinte, inscrite dans chaque manifeste :
 # `evaluer` refuse alors de mêler les séries obtenues avant et après.
 
-# Juge unique, d'une famille distincte des trois candidats (spec §3). Vérifié le 14/10/2026 sur
-# l'API publique d'OpenRouter : point d'accès zéro rétention avec sorties structurées. Aucune
-# température n'est envoyée (recommandation de Google pour Gemini 3, et paramètre non annoncé par
-# ce point d'accès : spec §2.1).
+# Juge unique, d'une famille distincte des trois candidats (spec §3). Depuis le 22/10/2026, appelé en
+# direct sur l'offre gratuite de Gemini (interface compatible OpenAI), faute de crédits OpenRouter :
+# pas de zéro rétention, Google réutilise requêtes et réponses (conditions de l'API Gemini). Seules des
+# questions de test et des fiches ClinVar publiques lui sont envoyées. Aucune température n'est envoyée
+# (recommandation de Google pour Gemini 3 : spec §2.1).
 judge:
   name: juge-gemini-3.8-flash
-  model: google/gemini-3.8-flash
-  provider_tag: google-vertex/global
+  model: gemini-3.8-flash
+  backend: gemini
+  provider_tag: gemini-api
   provider_name: Google
   quantization: null
   # Plafond par appel, réflexion interne comprise (découpage, verdicts ou pertinence).
   max_tokens: 4000
 
-# Profils candidats : noms de llm.profiles dans RAG/config.yaml (spec §2, Q2).
-candidates: [claude-opus-5.5, mistral-medium, gpt-oss-120b]
+# Profils candidats : noms de llm.profiles dans RAG/config.yaml (spec §2, Q2), servis par Groq.
+candidates: [groq-gpt-oss-120b, groq-gpt-oss-20b, groq-qwen3.8-27b]
 
 seeds:
   draw: 20261014        # tirage du jeu, des reprises et de l'échantillon

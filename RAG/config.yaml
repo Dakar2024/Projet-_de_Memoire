@@ -33,8 +33,39 @@ llm:
   request_timeout_s: 60
   # La réflexion interne du modèle compte dans ce plafond (documentation OpenRouter).
   max_tokens: 2000
-  # Chaque profil fige un point d'accès à zéro rétention et sorties structurées.
+  # Candidats de la règle de choix (E2a, E3a) depuis le 22/10/2026 : Groq, offre gratuite, faute de crédits
+  # OpenRouter. Appel direct : ni zéro rétention ni quantification figée ; provider_tag y est informatif.
+  # Vérifié le 22/10/2026 par un appel réel : sortie par schéma strict et reasoning_effort « low » acceptés.
   profiles:
+    groq-gpt-oss-120b:
+      model: openai/gpt-oss-120b
+      backend: groq
+      provider_tag: groq
+      provider_name: Groq
+      quantization: null
+    groq-gpt-oss-20b:
+      model: openai/gpt-oss-20b
+      backend: groq
+      provider_tag: groq
+      provider_name: Groq
+      quantization: null
+    groq-qwen3.8-27b:
+      model: qwen/qwen3.8-27b
+      backend: groq
+      provider_tag: groq
+      provider_name: Groq
+      quantization: null
+  # Essai gratuit (Groq), jamais candidat de la règle de choix ; provider_tag y est informatif.
+  trial_profiles:
+    essai-groq-gpt-oss-120b:
+      model: openai/gpt-oss-120b
+      backend: groq
+      provider_tag: groq
+      provider_name: Groq
+      quantization: null
+  # En réserve jusqu'à l'achat de crédits OpenRouter : chaque profil fige un point d'accès à zéro rétention
+  # et sorties structurées. Validés au chargement, jamais candidats ni sélectionnables.
+  reserve_profiles:
     claude-opus-5.5:
       model: anthropic/claude-opus-5.5
       provider_tag: google-vertex/europe
@@ -50,14 +81,6 @@ llm:
       provider_tag: deepinfra/bf16
       provider_name: DeepInfra
       quantization: bf16
-  # Essai gratuit (Groq), jamais candidat de la règle de choix ; provider_tag y est informatif.
-  trial_profiles:
-    essai-groq-gpt-oss-120b:
-      model: openai/gpt-oss-120b
-      backend: groq
-      provider_tag: groq
-      provider_name: Groq
-      quantization: null
 
 api:
   # Questions simultanées, une connexion PostgreSQL chacune ; au-delà, 429.

@@ -46,6 +46,13 @@ class EvaluationSettings:
         return sum(self.strata.values())
 
 
+def model_family(profile: LlmProfile) -> str:
+    """Renvoie la famille du modèle : préfixe « éditeur/ », ou « google » pour un appel direct à Gemini."""
+    if profile.backend == "gemini":
+        return "google"
+    return profile.model.split("/")[0]
+
+
 def settings_sha256(path: Path = DEFAULT_SETTINGS_PATH) -> str:
     """Calcule l'empreinte du fichier de réglages."""
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -75,16 +82,16 @@ def load_settings(path: Path = DEFAULT_SETTINGS_PATH, config_path: Path = DEFAUL
     except RagConfigurationError as exc:
         raise RagConfigurationError(f"{path} : profil du juge invalide ({exc})") from exc
     settings = EvaluationSettings(judge=judge, **values)
-    if not judge.name or judge.backend != "openrouter":
-        raise RagConfigurationError(f"{path} : le juge doit être nommé et servi par OpenRouter")
+    if not judge.name or judge.backend not in ("gemini", "openrouter"):
+        raise RagConfigurationError(f"{path} : le juge doit être nommé et servi par Gemini ou OpenRouter")
     official = load_search_config(config_path).profiles
     unknown = sorted(set(settings.candidates) - set(official))
     if unknown or not settings.candidates:
         raise RagConfigurationError(f"{path} : candidat inconnu de llm.profiles {unknown} "
                                     "(les profils d'essai ne concourent pas)")
     # Pas d'auto-préférence : le juge n'appartient à la famille d'aucun candidat (spec §2, Q3).
-    family = judge.model.split("/")[0]
-    if family in {official[name].model.split("/")[0] for name in settings.candidates}:
+    family = model_family(judge)
+    if family in {model_family(official[name]) for name in settings.candidates}:
         raise RagConfigurationError(f"{path} : le juge est de la même famille ({family}) qu'un candidat")
     for name, value in vars(thresholds).items():
         if not 0.0 <= value <= 1.0:

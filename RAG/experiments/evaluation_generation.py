@@ -967,8 +967,7 @@ def cmd_juger(args) -> None:
     """Juge fidélité et pertinence de chaque réponse."""
     from RAG.src.evaluation.judge import JudgeOutputError, judge_answer
     from RAG.src.evaluation.settings import load_settings
-    from RAG.src.llm.openrouter import OpenRouterClient
-    from RAG.src.utils.config import load_openrouter_key
+    from RAG.src.retrieval.retriever import build_llm_client
     from RAG.src.utils.errors import LlmPermanentError, LlmUnavailableError
 
     settings = load_settings()
@@ -992,7 +991,7 @@ def cmd_juger(args) -> None:
     todo = [(k, r) for k, r in todo if k not in data["records"]]
     print(f"{len(todo)} réponse(s) à juger (répétition {repetition})")
     budget = Budget(SPENDING, settings.budget_usd, settings.reserve_per_call_usd)
-    client = CachedClient(BudgetedClient(OpenRouterClient(load_openrouter_key(), timeout_s=_JUDGE_TIMEOUT_S), budget),
+    client = CachedClient(BudgetedClient(build_llm_client(settings.judge, None, _JUDGE_TIMEOUT_S), budget),
                           JUDGE_CACHE, f"juge-r{repetition}")
     missing = 0
     try:

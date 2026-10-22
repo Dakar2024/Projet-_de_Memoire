@@ -3,18 +3,25 @@
 Ce qui n'est pas encore fait. Les audits complets sont dans `reference/audit_securite.md` et
 `reference/audit_production.md` ; ce qui est livré se lit dans `CLAUDE.md` et les rapports de `reference/`.
 
-**Dernière vérification :** 16 octobre 2026, chaque ligne confrontée à l'état réel du dépôt.
+**Dernière vérification :** 16 octobre 2026, chaque ligne confrontée à l'état réel du dépôt ; §1 et §3
+mis à jour le 22 octobre 2026.
 
 ---
 
-## 1. RAG — terminer les mesures (bloqué par les crédits OpenRouter)
+## 1. RAG — terminer les mesures (offres gratuites Groq + Gemini depuis le 22/10)
 
-- [ ] **Acheter les crédits OpenRouter** (prévu vers le 19/10) et renseigner `OPENROUTER_API_KEY`.
-- [ ] **Mesure officielle E2a** : séries `full` des 3 profils, `evaluer`, ablation sur le profil
+Faute de budget, les candidats sont servis par Groq et le juge de E3a par Gemini (offres gratuites) ;
+OpenRouter reste en réserve (`llm.reserve_profiles`). Écarts au protocole : `reference/rapport_e3a.md` §1.1.
+
+- [ ] **Commiter la bascule** (branche `rag/mesures-groq-gemini` : client Gemini, candidats Groq, docs).
+- [ ] **Activer la zéro rétention de Groq** (*Data Controls* de la console) avant la mesure.
+- [ ] **Mesure officielle E2a** : séries `full` des 3 profils Groq, `evaluer`, ablation sur le profil
       retenu, rapport `reference/mesure_recherche_e2a.md`. Fixe `llm.analysis_profile`, encore
       provisoire (`essai-groq-gpt-oss-120b`).
-- [ ] **Lancer E3a** (`RAG/README.md` §10.2, environ 14 $, plafond 25 $) depuis le dossier principal
-      sur `rag/e3a-evaluation`, verite-terrain refaite. Fixe `llm.generation_profile`, encore provisoire.
+- [ ] **Lancer E3a** (`RAG/README.md` §10.2, 0 $, sur plusieurs jours à cause des quotas gratuits),
+      verite-terrain refaite. Fixe `llm.generation_profile`, encore provisoire.
+- [ ] **Réactiver OpenRouter** plus tard, quand il y aura des crédits : remettre les profils de
+      `llm.reserve_profiles` dans `llm.profiles` et tout remesurer.
 - [ ] **Annoter les 40 réponses** (environ 1 h 30, `annoter`) sans ouvrir `echantillon.json`.
 - [ ] **Refaire la recette E2b avec le modèle retenu**, avec une **nouvelle série de contrôle P4**
       (l'actuelle est compromise). Dernière recette : échec P2 19/20 et P3 9/10.
@@ -31,9 +38,10 @@ Ce qui n'est pas encore fait. Les audits complets sont dans `reference/audit_sec
 
 ## 3. Application web (`apps/`)
 
-- [ ] **Backend et frontend** : `apps/backend` et `apps/Frontend` sont vides. Suivre
-      `apps/CONTEXT.template.md` (Litestar + Piccolo + asyncpg, TanStack Start), lecture du RAG et de
-      `gold/analytique` via DuckDB.
+- [ ] **Frontend** (`apps/frontend`, copie C:) : itération 1 livrée (accueil, connexion avec faux
+      backend). Reste : améliorer la page de connexion, puis l'itération 2 (interface de l'assistant).
+- [ ] **Backend** (`apps/backend`) : seule `MODELISATION_BACKEND.md` existe. Litestar + Piccolo +
+      asyncpg, lecture du RAG et de `gold/analytique` via DuckDB.
 
 ## 4. Exploitation
 

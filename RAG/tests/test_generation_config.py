@@ -64,3 +64,13 @@ def test_openapi_must_be_a_real_boolean(tmp_path, value):
     # bool("false") vaudrait True : une chaîne activerait /schema sans clé.
     with pytest.raises(RagConfigurationError, match="openapi"):
         load_api_config(_write(tmp_path, BASE.replace("openapi: false", f"openapi: {value}")))
+
+
+def test_a_gemini_generation_profile_is_refused(tmp_path):
+    """L'offre gratuite de Gemini réutilise les requêtes : jamais pour générer les réponses de l'application."""
+    gemini = ("    gem:\n      model: gemini-3.8-flash\n      backend: gemini\n      provider_tag: gemini-api\n"
+              "      provider_name: Google\n      quantization: null\n")
+    text = BASE.replace("  trial_profiles:\n", "  trial_profiles:\n" + gemini).replace(
+        "generation_profile: essai-groq-gpt-oss-120b", "generation_profile: gem")
+    with pytest.raises(RagConfigurationError, match="Gemini"):
+        load_generation_config(_write(tmp_path, text))

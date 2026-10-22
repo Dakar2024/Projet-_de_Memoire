@@ -15,6 +15,7 @@ from pgvector.psycopg import register_vector
 from ingestion.config import PANEL_GENES
 from RAG.src.embeddings.canary import load_canary, verify_canary
 from RAG.src.embeddings.embedder import EmbeddingClient
+from RAG.src.llm.gemini import GeminiClient
 from RAG.src.llm.groq import GroqClient
 from RAG.src.llm.openrouter import OpenRouterClient
 from RAG.src.retrieval.analysis import AnalysisCache, QueryAnalysis, analyze
@@ -26,6 +27,7 @@ from RAG.src.utils.config import (
     SearchConfig,
     check_served_model,
     load_config,
+    load_gemini_key,
     load_groq_key,
     load_openrouter_key,
     load_search_config,
@@ -324,12 +326,14 @@ class PgSearchStore:
         return self._documents(self._rows(_resorted(sql), params, exact=exact, limit=limit), stage)
 
 
-def build_llm_client(profile: LlmProfile, env, timeout_s: float) -> OpenRouterClient | GroqClient:
-    """Crée le client LLM du profil (OpenRouter ou Groq) ; seule sa clé est exigée."""
+def build_llm_client(profile: LlmProfile, env, timeout_s: float) -> OpenRouterClient | GroqClient | GeminiClient:
+    """Crée le client LLM du profil (OpenRouter, Groq ou Gemini) ; seule sa clé est exigée."""
     if profile.backend == "openrouter":
         return OpenRouterClient(load_openrouter_key(env), timeout_s=timeout_s)
     if profile.backend == "groq":
         return GroqClient(load_groq_key(env), timeout_s=timeout_s)
+    if profile.backend == "gemini":
+        return GeminiClient(load_gemini_key(env), timeout_s=timeout_s)
     raise RagConfigurationError(f"profil {profile.name} : backend {profile.backend!r} inconnu")
 
 

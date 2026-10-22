@@ -9,6 +9,8 @@ Trois étapes, chacune avec son lieu d'exécution :
 
 Aucune conclusion si les manifestes divergent ou si une seule analyse a échoué.
 
+Depuis le 22/10/2026, les profils officiels (`llm.profiles`) sont eux aussi servis par Groq.
+
 Essai gratuit (profils de `llm.trial_profiles`, Groq) : `mesurer --profile <essai>` écrit
 dans data/experiments/e2a-essai, jamais dans e2a ; `evaluer --essai` y lit ses séries et
 affiche les mêmes contrôles et scores, sans choix de modèle. La vérité terrain reste celle
@@ -135,8 +137,8 @@ def load_v0_scores(path: Path, questions: list[dict]) -> dict[str, list[float]] 
 def config_sha256(raw_config: dict) -> str:
     """Calcule l'empreinte des conditions de mesure (sections search et llm, sans les choix de mise en service)."""
     llm = {key: value for key, value in (raw_config.get("llm") or {}).items()
-           if key not in ("analysis_profile", "trial_profiles", "generation_profile",
-                          "generation_max_tokens")}
+           if key not in ("analysis_profile", "trial_profiles", "reserve_profiles",
+                          "generation_profile", "generation_max_tokens")}
     sections = {"search": raw_config.get("search"), "llm": llm}
     return hashlib.sha256(json.dumps(sections, sort_keys=True).encode("utf-8")).hexdigest()
 
