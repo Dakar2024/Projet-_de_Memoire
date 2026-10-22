@@ -1,4 +1,4 @@
-"""Client Groq (offre gratuite) : candidats de la mesure officielle depuis le 22/10/2026, et profils d'essai."""
+"""Client Groq (offre gratuite) : candidats de la mesure officielle depuis le 20/10/2026, et profils d'essai."""
 from __future__ import annotations
 
 import math

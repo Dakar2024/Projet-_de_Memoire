@@ -250,7 +250,7 @@ def load_search_config(path: Path = DEFAULT_CONFIG_PATH, profile: str | None = N
         raise RagConfigurationError(f"{path} : sections search/llm illisibles ou incomplètes : {exc!r}") from exc
     if not profiles:
         raise RagConfigurationError(f"{path} : aucun profil LLM")
-    # Les profils officiels concourent à la règle de choix : Groq depuis le 22/10/2026 (pas de crédits OpenRouter).
+    # Les profils officiels concourent à la règle de choix : Groq depuis le 20/10/2026 (spec E2a §10).
     _refuse_gemini(path, profiles, trials, reserve)
     both = sorted((set(profiles) & set(trials)) | (set(reserve) & (set(profiles) | set(trials))))
     if both:

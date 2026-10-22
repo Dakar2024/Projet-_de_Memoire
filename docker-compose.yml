@@ -645,8 +645,9 @@ services:
       # Seuls dossiers inscriptibles ; à créer sur l'hôte avant (sinon Docker les crée en root).
       - ./data/experiments/e2a:/opt/projet/data/experiments/e2a
       - ./data/experiments/e2a-essai:/opt/projet/data/experiments/e2a-essai
+      - ./data/experiments/e2a-groq:/opt/projet/data/experiments/e2a-groq
       - ./data/experiments/e2b-recette:/opt/projet/data/experiments/e2b-recette
-      - ./data/experiments/e3a:/opt/projet/data/experiments/e3a
+      - ./data/experiments/e3a-groq:/opt/projet/data/experiments/e3a-groq
     entrypoint: ["python"]
     deploy:
       resources:

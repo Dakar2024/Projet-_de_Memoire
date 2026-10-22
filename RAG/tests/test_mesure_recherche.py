@@ -40,7 +40,7 @@ def test_choose_model_takes_the_best_when_others_are_clearly_worse():
     scores = {"cher": [1.0] * 30, "moyen": [0.2] * 30, "bon_marche": [0.1] * 30}
     costs = {"cher": 1.0, "moyen": 0.4, "bon_marche": 0.01}
 
-    choice, details = choose_model(scores, costs)
+    choice, details = choose_model(scores, costs, dict.fromkeys(scores, 500.0))
 
     assert choice == "cher" and details["best"] == "cher"
 
@@ -49,7 +49,7 @@ def test_choose_model_takes_the_cheapest_indistinguishable_model():
     scores = {"cher": [1.0, 0.0] * 15, "bon_marche": [0.0, 1.0] * 15}
     costs = {"cher": 1.0, "bon_marche": 0.01}
 
-    choice, details = choose_model(scores, costs)
+    choice, details = choose_model(scores, costs, {"cher": 100.0, "bon_marche": 900.0})
 
     assert choice == "bon_marche"
     assert details["indistinguishable"] == ["bon_marche", "cher"]
@@ -59,7 +59,20 @@ def test_choose_model_is_reproducible():
     scores = {"a": [0.5, 0.7, 0.9] * 10, "b": [0.4, 0.8, 0.85] * 10}
     costs = {"a": 1.0, "b": 0.5}
 
-    assert choose_model(scores, costs) == choose_model(scores, costs)
+    latencies = {"a": 300.0, "b": 400.0}
+
+    assert choose_model(scores, costs, latencies) == choose_model(scores, costs, latencies)
+
+
+def test_at_equal_cost_the_fastest_indistinguishable_model_wins():
+    """Groq coûte 0 $ : la latence médiane d'analyse départage (spec E2a §10.2), jamais l'ordre de la liste."""
+    scores = {"a": [1.0, 0.0] * 15, "b": [0.0, 1.0] * 15, "c": [0.0] * 30}
+    costs = dict.fromkeys(scores, 0.0)
+
+    choice, details = choose_model(scores, costs, {"a": 900.0, "b": 400.0, "c": 10.0})
+
+    assert choice == "b"  # c est le plus rapide, mais nettement moins bon
+    assert details["indistinguishable"] == ["a", "b"] and details["latencies"]["b"] == 400.0
 
 
 def test_significance_accuracy():
@@ -82,7 +95,7 @@ from RAG.src.retrieval.identifiers import Identifiers
 
 def test_choose_model_refuses_an_empty_field():
     with pytest.raises(ValueError):
-        choose_model({}, {})
+        choose_model({}, {}, {})
 
 
 def test_v0_scores_groups_e1_scores_by_family():
@@ -269,6 +282,7 @@ def _dirs(tmp_path, monkeypatch):
 
     monkeypatch.setattr(m, "OUT", tmp_path / "e2a")
     monkeypatch.setattr(m, "OUT_ESSAI", tmp_path / "e2a-essai")
+    monkeypatch.setattr(m, "OUT_GROQ", tmp_path / "e2a-groq")
     monkeypatch.setattr(m, "E1_SCORES_PATH", tmp_path / "absent.json")
     return m
 
@@ -279,7 +293,7 @@ def test_output_dir_separates_trial_and_official_runs(tmp_path, monkeypatch):
     m = _dirs(tmp_path, monkeypatch)
 
     assert m.output_dir(load_search_config(profile=TRIAL_PROFILE)) == tmp_path / "e2a-essai"
-    assert m.output_dir(load_search_config(profile="groq-gpt-oss-120b")) == tmp_path / "e2a"
+    assert m.output_dir(load_search_config(profile="groq-gpt-oss-120b")) == tmp_path / "e2a-groq"
 
 
 class _FakeSearcher:
@@ -310,7 +324,7 @@ class _FakeSearcher:
         return Result()
 
 
-@pytest.mark.parametrize("profile, folder", [(TRIAL_PROFILE, "e2a-essai"), ("groq-gpt-oss-120b", "e2a")])
+@pytest.mark.parametrize("profile, folder", [(TRIAL_PROFILE, "e2a-essai"), ("groq-gpt-oss-120b", "e2a-groq")])
 def test_mesurer_writes_trial_runs_apart_from_official_ones(tmp_path, monkeypatch, profile, folder):
     import argparse
 
@@ -324,8 +338,12 @@ def test_mesurer_writes_trial_runs_apart_from_official_ones(tmp_path, monkeypatc
 
     assert _FakeSearcher.instances[0].cache_path == tmp_path / folder / "cache_analyses.json"
     assert [p.name for p in (tmp_path / folder / "runs").iterdir()] == [f"{profile}__full.json"]
-    other = "e2a" if folder == "e2a-essai" else "e2a-essai"
-    assert not (tmp_path / other).exists()
+    import json
+
+    run = json.loads((tmp_path / folder / "runs" / f"{profile}__full.json").read_text(encoding="utf-8"))
+    assert run["manifest"]["backend"] == "groq"
+    others = {"e2a", "e2a-essai", "e2a-groq"} - {folder}
+    assert not any((tmp_path / other).exists() for other in others)
 
 
 def _perfect_run(profile, mode, questions, *, broken_part2=False):
@@ -497,8 +515,39 @@ def test_official_evaluer_ignores_trial_runs(tmp_path, monkeypatch):
     m = _dirs(tmp_path, monkeypatch)
     _write_trial_field(tmp_path)
 
-    with pytest.raises(SystemExit, match="aucune mesure dans data/experiments/e2a/runs"):
+    with pytest.raises(SystemExit, match="aucune mesure dans data/experiments/e2a-groq/runs"):
         m.cmd_evaluer(argparse.Namespace(essai=False))
+
+
+def test_campaign_dir_follows_the_backend_of_the_official_profiles(tmp_path, monkeypatch):
+    from RAG.src.utils.config import load_search_config
+
+    m = _dirs(tmp_path, monkeypatch)
+    assert m.official_backend(load_search_config()) == "groq"
+    assert (m.campaign_dir("groq"), m.campaign_dir("openrouter")) == (tmp_path / "e2a-groq", tmp_path / "e2a")
+    with pytest.raises(SystemExit, match="gemini"):
+        m.campaign_dir("gemini")
+
+
+def test_a_campaign_mixing_two_backends_is_refused():
+    from types import SimpleNamespace
+
+    from RAG.experiments.mesure_recherche import official_backend
+    config = SimpleNamespace(profiles={"a": SimpleNamespace(backend="groq"),
+                                       "b": SimpleNamespace(backend="openrouter")})
+    with pytest.raises(SystemExit, match="plusieurs fournisseurs"):
+        official_backend(config)
+
+
+def test_runs_of_another_backend_are_refused():
+    from RAG.experiments.mesure_recherche import check_campaign_backend
+    check_campaign_backend({"a__full": _manifest(backend="groq")}, "groq")
+    for manifest in (_manifest(backend="openrouter"), _manifest()):
+        with pytest.raises(SystemExit, match="a__full"):
+            check_campaign_backend({"a__full": manifest}, "groq")
+    with pytest.raises(SystemExit, match="backend"):
+        check_runs_consistency({"a__full": _manifest(backend="groq"),
+                                "b__full": _manifest(profile="b", backend="openrouter")})
 
 
 def test_evaluer_dispatches_on_the_essai_flag(monkeypatch):

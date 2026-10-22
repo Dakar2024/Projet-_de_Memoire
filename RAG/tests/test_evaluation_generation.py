@@ -688,7 +688,7 @@ def test_evaluer_applies_the_rule_end_to_end(tmp_path, monkeypatch, capsys):
     report = json.loads(ev.EVALUATION.read_text(encoding="utf-8"))
     assert report["juge_valide"] is True
     assert report["decision"]["chosen"] == "groq-gpt-oss-120b"
-    assert "groq-qwen3.8-27b" in report["decision"]["eliminated"]   # fidélité 0,75 < 0,90
+    assert "groq-gpt-oss-20b" in report["decision"]["eliminated"]   # fidélité 0,75 < 0,90
     assert report["questions"] == {"total": 17, "llm_appele": 16, "message_fixe": 1}
     assert "modèle retenu : groq-gpt-oss-120b" in capsys.readouterr().out
 

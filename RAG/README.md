@@ -226,10 +226,10 @@ Outil à la demande (profil `outils`), conservé à côté de l'API (`rag-api`, 
 (`docker/rag-api/`), mêmes réglages. Utilisateur non root, racine en lecture seule,
 `no-new-privileges`, `cap_drop: ALL`, compte PostgreSQL `rag_reader`. Réseaux : `rag-network` (base,
 embedding) et `rag-proxy-net` (interne) ; sa seule sortie Internet passe par le proxy filtrant
-`rag-proxy` (§9.7), variables `HTTPS_PROXY` / `NO_PROXY`. Seuls `data/experiments/e2a` et
-`data/experiments/e2a-essai` y sont montés en écriture : les créer sur l'hôte avant la première
-mesure (`mkdir -p data/experiments/e2a data/experiments/e2a-essai`), sinon Docker les crée au nom de
-root.
+`rag-proxy` (§9.7), variables `HTTPS_PROXY` / `NO_PROXY`. Seuls `data/experiments/e2a`,
+`e2a-essai`, `e2a-groq`, `e2b-recette` et `e3a-groq` y sont montés en écriture : les créer sur l'hôte
+avant la première mesure (`mkdir -p data/experiments/{e2a,e2a-essai,e2a-groq,e2b-recette,e3a-groq}`),
+sinon Docker les crée au nom de root.
 
 Au démarrage, la recherche vérifie que le service d'embedding sert le modèle de l'index (empreinte,
 canari) et que toutes les lignes de l'index portent cette empreinte.
@@ -238,7 +238,7 @@ canari) et que toutes les lignes de l'index portent cette empreinte.
 
 Dans le `.env` de la racine, facultatives pour le pipeline :
 
-- `GROQ_API_KEY` : depuis le 22/10/2026, profils officiels (`llm.profiles` de `RAG/config.yaml`,
+- `GROQ_API_KEY` : depuis le 20/10/2026 (spec E2a §10), profils officiels (`llm.profiles` de `RAG/config.yaml`,
   candidats de E2a et E3a) et profil d'essai (`llm.trial_profiles`), offre gratuite, zéro rétention
   à activer dans *Data Controls* de la console Groq. Ni quantification ni fournisseur figés : Groq
   sert lui-même ses modèles.
@@ -275,7 +275,7 @@ venv/bin/python -m RAG.experiments.mesure_recherche verite-terrain
 
 # 2. Séries, dans rag-search (le cache évite de repayer une analyse déjà faite)
 R="docker compose --env-file .env --profile outils run --rm rag-search -m RAG.experiments.mesure_recherche"
-for p in claude-opus-5.5 mistral-medium gpt-oss-120b; do $R mesurer --profile $p --mode full; done
+for p in groq-gpt-oss-120b groq-qwen3.8-27b groq-gpt-oss-20b; do $R mesurer --profile $p --mode full; done
 venv/bin/python -m RAG.experiments.mesure_recherche evaluer        # désigne le profil retenu
 for m in similarity filters; do $R mesurer --profile <retenu> --mode $m; done
 $R mesurer --profile <retenu> --mode similarity --approx           # diagnostic de l'index HNSW
@@ -284,8 +284,13 @@ venv/bin/python -m RAG.experiments.mesure_recherche evaluer
 ```
 
 `evaluer` refuse de conclure si une série diverge (questions, prompt, configuration, corpus indexé,
-modèle d'embedding), si un candidat manque, ou si les questions à identifiants ne sont pas réussies
-à 100 %.
+modèle d'embedding, fournisseur), si un candidat manque, ou si les questions à identifiants ne sont
+pas réussies à 100 %.
+
+Campagne (spec E2a §10, 20/10/2026) : candidats Groq, séries dans `data/experiments/e2a-groq/` ;
+`e2a/` garde la vérité terrain et reste réservé à une campagne OpenRouter future. Le dossier suit le
+fournisseur des profils officiels (`backend`, consigné dans chaque manifeste). Les coûts valent tous
+0 $ : parmi les modèles indistinguables du meilleur, la **latence médiane d'analyse** départage.
 
 Répétition générale du 5 octobre 2026 (essai Groq, gpt-oss-120b, recherche exacte) :
 
@@ -665,7 +670,7 @@ docker compose --env-file .env --profile outils run --rm rag-search -m RAG.exper
 venv/bin/python -m RAG.experiments.recette_generation evaluer    # résumé et critères
 ```
 
-`rag-search` monte `data/experiments/e2b-recette` en écriture (avec `e2a` et `e2a-essai`). `lancer`
+`rag-search` monte `data/experiments/e2b-recette` en écriture (avec les dossiers de E2a et E3a, §8.2). `lancer`
 enregistre chaque réponse (avec la version du prompt) dans `records.json` et reprend où il s'est
 arrêté. Le quota quotidien de Groq peut l'interrompre : relancer le lendemain. Un changement de prompt
 purge les enregistrements antérieurs, pour que tous aient la même version. Une génération
@@ -772,8 +777,9 @@ documents** (recherche faite une fois, puis refaite et comparée avant chaque g�
 | Abstention à tort | `not_in_sources` / `out_of_scope` du modèle alors qu'un document pertinent est transmis |
 | Recherche | précision, rappel@k par strate, contre la vérité terrain par règles (sans LLM) |
 
-Candidats (depuis le 22/10/2026, faute de crédits OpenRouter) : `groq-gpt-oss-120b`,
-`groq-gpt-oss-20b`, `groq-qwen3.8-27b`, tous servis par Groq (coût nul, départage par la latence).
+Candidats (spec E3a §16, décidé le 20/10/2026 faute de crédits OpenRouter) : `groq-gpt-oss-120b`,
+`groq-qwen3.8-27b`, `groq-gpt-oss-20b`, tous servis par Groq (coût nul, départage par la latence).
+Sorties dans `data/experiments/e3a-groq/`.
 Juge : `gemini-3.8-flash` en appel direct (offre gratuite de l'API Gemini, interface compatible
 OpenAI, sorties structurées vérifiées le 22/10/2026), famille distincte des candidats, **sans
 température envoyée** (recommandation de Google pour Gemini 3). Pas de zéro rétention : voir §8.3. Il est validé contre une **annotation humaine en aveugle** de 40 réponses : kappa de
@@ -795,13 +801,13 @@ Pacifique) : un quota épuisé arrête la commande, qui reprend le lendemain là
 Gemini répond souvent « 503, forte demande » : la question est retentée au `juger` suivant.
 
 ```bash
-mkdir -p data/experiments/e3a
+mkdir -p data/experiments/e3a-groq
 # 1. Vérité terrain, sur l'hôte (variables MinIO comme au §8.5)
 venv/bin/python -m RAG.experiments.evaluation_generation verite-terrain
 # 2. Recherches figées, puis les trois candidats (passage 1 = 70 questions ; 2 et 3 = 20 reprises)
 R="docker compose --env-file .env --profile outils run --rm rag-search -m RAG.experiments.evaluation_generation"
 $R rechercher
-for p in groq-gpt-oss-120b groq-gpt-oss-20b groq-qwen3.8-27b; do for n in 1 2 3; do $R lancer --profil $p --passage $n; done; done
+for p in groq-gpt-oss-120b groq-qwen3.8-27b groq-gpt-oss-20b; do for n in 1 2 3; do $R lancer --profil $p --passage $n; done; done
 # 3. Jugement (sur l'hôte : la clé Gemini n'entre dans aucun conteneur, le proxy du RAG reste fermé à
 #    Google), échantillon aveugle, annotation humaine, rejugement de l'échantillon (stabilité)
 # Sous-shell : la clé est lue dans .env sans apparaître dans la ligne de commande ni rester dans le shell.

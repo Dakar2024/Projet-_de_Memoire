@@ -12,7 +12,7 @@ Spec : docs/superpowers/specs/2026-10-14-sous-projet-e3a-evaluation-generation-d
   evaluer         n'importe où : métriques, kappas, règle de choix ; refuse de conclure s'il
                   manque quelque chose ou si deux séries divergent
 
-Toutes les sorties vont dans data/experiments/e3a (non versionné), écrites de façon atomique.
+Toutes les sorties vont dans data/experiments/e3a-groq (non versionné), écrites de façon atomique.
 """
 
 from __future__ import annotations
@@ -30,7 +30,8 @@ _ROOT = Path(__file__).resolve().parents[2]  # racine du dépôt, ou /opt/projet
 EXPERIMENTS = Path(__file__).resolve().parent
 QUESTIONS_PATH = EXPERIMENTS / "questions_evaluation_e3a.yaml"
 QUESTIONS_E2A = EXPERIMENTS / "questions_recherche.yaml"
-OUT = _ROOT / "data" / "experiments" / "e3a"
+# Campagne sur Groq (spec E3a §16.8) ; une campagne OpenRouter future aura son propre dossier.
+OUT = _ROOT / "data" / "experiments" / "e3a-groq"
 
 STRATA = ("I", "S", "G", "M")
 # Libellés ClinVar exacts par classe : mêmes listes que les règles de E1/E2a (famille C).
@@ -66,8 +67,9 @@ GENERATIONS = OUT / "generations"
 EVALUATION = OUT / "evaluation.json"
 _ABSTENTIONS = ("not_in_sources", "out_of_scope")
 _JUDGED_STATUSES = ("answered", "partial")
-# Délai par appel au juge : sa réflexion interne sur 10 fiches dépasse parfois la minute.
-_JUDGE_TIMEOUT_S = 120.0
+# Délai par appel au juge : sa réflexion interne sur 10 fiches dépasse parfois la minute, et l'offre
+# gratuite de Gemini a déjà dépassé 120 s de lecture (spec E3a §16.4).
+_JUDGE_TIMEOUT_S = 180.0
 
 
 def _write_json_atomic(path: Path, data) -> None:

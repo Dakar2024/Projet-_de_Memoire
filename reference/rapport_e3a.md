@@ -22,17 +22,21 @@ pour la recette, n'a pas été touché. Le travail est fait dans une copie de tr
 (`../Projet-_de_Memoire-e3a`, `git worktree`), si bien que la recette quotidienne continue sur le
 dossier principal sans être affectée.
 
-### 1.1 Amendement du 22/10/2026 : offres gratuites (Groq et Gemini)
+### 1.1 Amendement : offres gratuites (Groq et Gemini)
 
-Décidé par l'utilisateur, faute de budget pour les crédits OpenRouter. Le reste du protocole
+Décidé par l'utilisateur le 20/10/2026 (option A, spec E3a §16 et spec E2a §10), faute de budget
+pour les crédits OpenRouter ; implémenté et vérifié le 22/10 (branche `rag/mesures-groq-gemini`).
+Écart à la spec : `juger` tourne sur l'hôte au lieu d'ouvrir le proxy à Google (spec E3a §17). Le reste du protocole
 (questions, règle de choix, seuils, annotation) est inchangé ; OpenRouter reviendra quand il y aura
 des ressources (`llm.reserve_profiles` de `RAG/config.yaml`).
 
 | Avant | Après | Vérification |
 |---|---|---|
-| Candidats : Claude Opus 5.5, Mistral Medium 3.5, gpt-oss-120b (OpenRouter, zéro rétention) | `groq-gpt-oss-120b`, `groq-gpt-oss-20b`, `groq-qwen3.8-27b` (Groq, offre gratuite) | Appel réel le 22/10 : schéma strict et `reasoning_effort: low` acceptés par les trois, analyse de question valide en moins d'une seconde |
+| Candidats : Claude Opus 5.5, Mistral Medium 3.5, gpt-oss-120b (OpenRouter, zéro rétention) | `groq-gpt-oss-120b`, `groq-qwen3.8-27b`, `groq-gpt-oss-20b` (Groq, offre gratuite) | Appel réel le 22/10 : schéma strict et `reasoning_effort: low` acceptés par les trois, analyse de question valide en moins d'une seconde |
 | Juge : `google/gemini-3.8-flash` via OpenRouter (`google-vertex/global`) | `gemini-3.8-flash` en appel direct (`RAG/src/llm/gemini.py`, interface compatible OpenAI) | Jugement réel le 22/10 (3 appels, schémas de `juge-v1`) : affirmation non soutenue repérée ; environ 36 s par appel, 503 « forte demande » fréquents |
 | Budget 25 $ | 0 $ (plafond conservé pour OpenRouter) | — |
+| Sorties `data/experiments/e2a/`, `e3a/` | `e2a-groq/`, `e3a-groq/` ; le manifeste E2a porte le `backend` | `evaluer` refuse de mêler deux fournisseurs |
+| Départage E2a par le coût | Coût, puis latence médiane d'analyse (tous à 0 $) | Test `test_at_equal_cost_the_fastest_indistinguishable_model_wins` |
 | `juger` dans `rag-search` | `juger` sur l'hôte | La clé Gemini n'entre dans aucun conteneur ; le proxy du RAG reste fermé à Google |
 
 Conséquences à assumer dans le mémoire :

@@ -8,7 +8,7 @@ mis à jour le 22 octobre 2026.
 
 ---
 
-## 1. RAG — terminer les mesures (offres gratuites Groq + Gemini depuis le 22/10)
+## 1. RAG — terminer les mesures (offres gratuites Groq + Gemini, décidé le 20/10)
 
 Faute de budget, les candidats sont servis par Groq et le juge de E3a par Gemini (offres gratuites) ;
 OpenRouter reste en réserve (`llm.reserve_profiles`). Écarts au protocole : `reference/rapport_e3a.md` §1.1.

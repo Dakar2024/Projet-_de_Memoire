@@ -33,8 +33,8 @@ llm:
   request_timeout_s: 60
   # La réflexion interne du modèle compte dans ce plafond (documentation OpenRouter).
   max_tokens: 2000
-  # Candidats de la règle de choix (E2a, E3a) depuis le 22/10/2026 : Groq, offre gratuite, faute de crédits
-  # OpenRouter. Appel direct : ni zéro rétention ni quantification figée ; provider_tag y est informatif.
+  # Candidats de la règle de choix (E2a, E3a) depuis le 20/10/2026 (spec E2a §10, E3a §16) : Groq, offre
+  # gratuite, faute de crédits OpenRouter. Appel direct : ni zéro rétention ni quantification figée ; provider_tag y est informatif.
   # Vérifié le 22/10/2026 par un appel réel : sortie par schéma strict et reasoning_effort « low » acceptés.
   profiles:
     groq-gpt-oss-120b:
@@ -43,14 +43,14 @@ llm:
       provider_tag: groq
       provider_name: Groq
       quantization: null
-    groq-gpt-oss-20b:
-      model: openai/gpt-oss-20b
+    groq-qwen3.8-27b:
+      model: qwen/qwen3.8-27b
       backend: groq
       provider_tag: groq
       provider_name: Groq
       quantization: null
-    groq-qwen3.8-27b:
-      model: qwen/qwen3.8-27b
+    groq-gpt-oss-20b:
+      model: openai/gpt-oss-20b
       backend: groq
       provider_tag: groq
       provider_name: Groq

@@ -28,7 +28,7 @@ def test_the_versioned_settings_load():
     s = load_settings()
     assert s.judge.name == "juge-gemini-3.8-flash"
     assert (s.judge.model, s.judge.backend, s.judge.provider_name) == ("gemini-3.8-flash", "gemini", "Google")
-    assert s.candidates == ("groq-gpt-oss-120b", "groq-gpt-oss-20b", "groq-qwen3.8-27b")
+    assert s.candidates == ("groq-gpt-oss-120b", "groq-qwen3.8-27b", "groq-gpt-oss-20b")
     assert s.strata == {"I": 25, "S": 25, "G": 10, "M": 10}
     assert s.total_questions == 70
     assert (s.repeat_questions, s.passes, s.sample_size) == (20, 3, 40)

@@ -35,6 +35,8 @@ _ROOT = Path(__file__).resolve().parents[2]  # racine du dépôt, ou /opt/projet
 OUT = _ROOT / "data" / "experiments" / "e2a"
 # Séries de l'essai gratuit : jamais mêlées aux séries officielles.
 OUT_ESSAI = _ROOT / "data" / "experiments" / "e2a-essai"
+# Campagne officielle sur Groq (spec E2a §10.4) ; e2a/ reste réservé à une campagne OpenRouter.
+OUT_GROQ = _ROOT / "data" / "experiments" / "e2a-groq"
 E1_SCORES_PATH = _ROOT / "data" / "experiments" / "scores.json"
 K = 10
 SEED = 20261001
@@ -73,8 +75,9 @@ def score_question(question: dict, doc_ids: list[str], flags: list[str], identif
     return 1.0 if same_ids and set(question["expected_flags"]) <= set(flags) else 0.0
 
 
-def choose_model(scores: dict[str, list[float]], costs: dict[str, float], seed: int = SEED) -> tuple[str, dict]:
-    """Applique la règle fixée d'avance : le moins cher des modèles indistinguables du meilleur."""
+def choose_model(scores: dict[str, list[float]], costs: dict[str, float], latencies: dict[str, float],
+                 seed: int = SEED) -> tuple[str, dict]:
+    """Applique la règle fixée d'avance : le moins cher des indistinguables du meilleur, puis le plus rapide."""
     if not scores:
         raise ValueError("choose_model : aucun modèle à comparer")
     means = {name: float(np.mean(values)) for name, values in scores.items()}
@@ -88,9 +91,10 @@ def choose_model(scores: dict[str, list[float]], costs: dict[str, float], seed: 
         intervals[name] = {"ecart": mean, "ic_bas": low, "ic_haut": high}
         if low <= 0:
             indistinguishable.append(name)
-    choice = min(indistinguishable, key=lambda name: costs[name])
+    # À coût égal (0 $ sur Groq), la latence médiane d'analyse départage (spec E2a §10.2).
+    choice = min(indistinguishable, key=lambda name: (costs[name], latencies[name], name))
     return choice, {"best": best, "means": means, "intervals": intervals,
-                    "indistinguishable": sorted(indistinguishable), "costs": costs}
+                    "indistinguishable": sorted(indistinguishable), "costs": costs, "latencies": latencies}
 
 
 def significance_accuracy(questions: list[dict], analyses: dict[str, dict]) -> float:
@@ -143,9 +147,28 @@ def config_sha256(raw_config: dict) -> str:
     return hashlib.sha256(json.dumps(sections, sort_keys=True).encode("utf-8")).hexdigest()
 
 
+def campaign_dir(backend: str) -> Path:
+    """Renvoie le dossier de la campagne officielle d'un fournisseur : e2a-groq, ou e2a pour OpenRouter."""
+    dirs = {"groq": OUT_GROQ, "openrouter": OUT}
+    if backend not in dirs:
+        raise SystemExit(f"aucune campagne E2a prévue pour le backend {backend!r}")
+    return dirs[backend]
+
+
+def official_backend(config) -> str:
+    """Renvoie le fournisseur commun des profils officiels ; refuse une campagne mêlant deux fournisseurs."""
+    backends = {p.backend for p in config.profiles.values()}
+    if len(backends) != 1:
+        raise SystemExit(f"profils officiels sur plusieurs fournisseurs {sorted(backends)} : une campagne "
+                         "n'en compare qu'un")
+    return backends.pop()
+
+
 def output_dir(config) -> Path:
-    """Renvoie le dossier des séries du profil : e2a-essai pour un essai, e2a sinon."""
-    return OUT_ESSAI if config.analysis_profile.name in config.trial_profiles else OUT
+    """Renvoie le dossier des séries du profil : e2a-essai pour un essai, sinon celui de sa campagne."""
+    if config.analysis_profile.name in config.trial_profiles:
+        return OUT_ESSAI
+    return campaign_dir(config.analysis_profile.backend)
 
 
 def check_trial_field(run_profiles: set[str], trial_profiles: set[str]) -> None:
@@ -204,6 +227,8 @@ def check_runs_consistency(manifests: dict[str, dict]) -> None:
     fingerprints = {m["embedding_fingerprint"] for m in manifests.values()}
     if len(fingerprints) > 1:
         raise SystemExit("modèle d'embedding différent entre les mesures : remesurer")
+    if len({m.get("backend") for m in manifests.values()}) > 1:
+        raise SystemExit("séries de fournisseurs différents (backend) : une campagne n'en compare qu'un")
     configs = {m.get("config_sha256") for m in manifests.values()}
     if len(configs) > 1 or None in configs:
         raise SystemExit("configuration (search, llm) différente ou absente entre les mesures : remesurer")
@@ -226,7 +251,14 @@ def check_index_matches_truth(manifests: dict[str, dict], truth_sha: str) -> Non
                          "relancer verite-terrain sur le Gold indexé, ou réindexer")
 
 
-def check_complete_field(full_profiles: set[str], configured: set[str]) -> None:
+def check_campaign_backend(manifests: dict[str, dict], backend: str) -> None:
+    """Refuse une série d'un autre fournisseur que celui de la campagne (ou sans backend consigné)."""
+    stray = sorted(name for name, m in manifests.items() if m.get("backend") != backend)
+    if stray:
+        raise SystemExit(f"séries hors de la campagne {backend} (backend absent ou différent) : {stray}")
+
+
+def check_complete_field(full_profiles: set[str], configured: set[str], runs_dir: str = "e2a") -> None:
     """Les séries « full » doivent couvrir exactement les profils configurés."""
     missing = sorted(configured - full_profiles)
     if missing:
@@ -234,7 +266,7 @@ def check_complete_field(full_profiles: set[str], configured: set[str]) -> None:
     extra = sorted(full_profiles - configured)
     if extra:
         raise SystemExit(f"mesures « full » de profils non configurés {extra} : fichiers périmés à retirer "
-                         "de data/experiments/e2a/runs")
+                         f"de data/experiments/{runs_dir}/runs")
 
 
 # --- Sous-commandes --------------------------------------------------------------------
@@ -307,7 +339,7 @@ def cmd_mesurer(args) -> None:
     from RAG.src.prompts.analysis import PROMPT_SHA, PROMPT_VERSION
     from RAG.src.utils.config import DEFAULT_CONFIG_PATH, load_config
     manifest = {"questions_sha256": _sha256(QUESTIONS_PATH), "profile": profile.name, "model": profile.model,
-                "provider_tag": profile.provider_tag, "prompt_version": PROMPT_VERSION,
+                "provider_tag": profile.provider_tag, "backend": profile.backend, "prompt_version": PROMPT_VERSION,
                 "prompt_sha256": PROMPT_SHA, "mode": args.mode,
                 "approx": bool(args.approx), "k": searcher.config.k,
                 "embedding_fingerprint": load_config().embedding.fingerprint,
@@ -410,17 +442,22 @@ def cmd_evaluer(args) -> None:
     """Calcule les scores, le critère d'acceptation et le choix du modèle."""
     from RAG.src.utils.config import load_search_config
 
-    questions, relevant, loaded = _load_field(OUT / "runs")
+    config = load_search_config()
+    backend = official_backend(config)
+    out = campaign_dir(backend)
+    questions, relevant, loaded = _load_field(out / "runs")
+    check_campaign_backend({n: r["manifest"] for n, r in loaded.items()}, backend)
     scored = {n: _scores_of(r, questions, relevant) for n, r in loaded.items()}
     full = {n.split("__")[0]: r for n, r in loaded.items() if n.endswith("__full")}
-    check_complete_field(set(full), set(load_search_config().profiles))
+    check_complete_field(set(full), set(config.profiles), out.name)
 
     if _print_part2(full, scored, questions):
         raise SystemExit("critère partie 2 non atteint : bug à corriger avant toute décision")
 
     costs = {p: sum(r["results"][q["id"]]["analysis"]["cost_usd"] for q in questions) for p, r in full.items()}
     per_q = {p: [scored[f"{p}__full"][q["id"]] for q in questions] for p in full}
-    choice, details = choose_model(per_q, costs)
+    latencies = {p: _median_latency(r) for p, r in full.items()}
+    choice, details = choose_model(per_q, costs, latencies)
     print("\n## Choix du modèle d'analyse (règle fixée d'avance)\n")
     print("| Profil | Score moyen | Coût total ($) | Exactitude signification | Latence médiane (ms) |\n|---|---|---|---|---|")
     for p, run in full.items():
