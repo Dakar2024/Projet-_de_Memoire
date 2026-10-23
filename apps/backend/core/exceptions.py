@@ -16,6 +16,7 @@ class AppError(Exception):
 
     code = "internal"
     status = HTTPStatus.INTERNAL_SERVER_ERROR
+    headers: dict[str, str] | None = None  # e.g. Retry-After
 
 
 class NotFoundError(AppError):
@@ -57,7 +58,7 @@ def _error(code: str, message: str, status: int, headers: dict[str, str] | None 
 
 
 def app_error_handler(_: Request, exc: AppError) -> Response:
-    return _error(exc.code, str(exc), exc.status)
+    return _error(exc.code, str(exc), exc.status, headers=exc.headers)
 
 
 def http_exception_handler(_: Request, exc: HTTPException) -> Response:

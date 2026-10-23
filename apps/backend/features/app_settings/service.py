@@ -19,7 +19,7 @@ class SettingsSnapshot(BaseModel):
     allowed_email_domains:       list[str]
     default_daily_quota:         int
     monthly_budget_usd:          Decimal
-    conversation_retention_days: int
+    conversation_retention_days: int | None
     admin_trace_visible:         bool
     banner_message:              str | None
 

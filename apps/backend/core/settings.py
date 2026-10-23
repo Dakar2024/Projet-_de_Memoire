@@ -54,6 +54,11 @@ class Settings(BaseSettings):
     # Redis (Huey task queue, rate limit counters)
     REDIS_URL: str = "redis://localhost:6379/0"
 
+    # RAG gateway (docker network genomique_rag-api-ingress). The key stays on the server.
+    RAG_BASE_URL:  str   = "http://genomique-rag-gateway:8080"
+    RAG_API_KEY:   str   = ""
+    RAG_TIMEOUT_S: float = 135.0  # the RAG stops at 120 s, nginx at 130 s
+
     # Frontend
     FRONTEND_URL: str = "http://localhost:3000"
 

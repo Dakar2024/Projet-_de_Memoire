@@ -3,6 +3,7 @@
 A task is known to the worker only if its module was imported: list every feature's tasks here.
 """
 
+import features.assistant.tasks  # noqa: F401
 import features.auth.tasks  # noqa: F401
 from core.worker import huey
 

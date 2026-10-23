@@ -177,7 +177,8 @@ atomique (§ 4.3). On ne recompte pas `usage_events` à chaque question.
 
 **`app_settings`** — une seule ligne (ou clé/valeur typée) : `registration_mode`
 (`admin_review|open_domains|invite_only`), `allowed_email_domains` (Array), `default_daily_quota`
-(20), `monthly_budget_usd` (50), `conversation_retention_days` (90 ; 0 = ne pas conserver),
+(20), `monthly_budget_usd` (50), `conversation_retention_days` (null = conservé jusqu'à suppression par
+l'utilisateur, décision du 23/10/2026),
 `admin_trace_visible` (bool), `banner_message`, `updated_by`, `updated_at`.
 
 **`audit_log`** : `actor` FK, `action` (`user.approve`, `user.reject`, `user.suspend`,
@@ -243,8 +244,10 @@ Règles :
 2. **Réservation du quota** (§ 4.3) ; refus `429 quota_exceeded` avec l'heure de remise à zéro.
 3. **Contrôle du budget mensuel** : somme `usage_events.cost_usd` du mois (en cache) ≥ budget →
    `503 budget_exhausted`.
-4. **Écriture** de la conversation (création si besoin) et du message `user`, dans une transaction
-   courte, **avant** l'appel : la question n'est pas perdue si le RAG échoue.
+4. **Écriture** de la conversation, de la question et de la réponse **après** le succès de l'appel,
+   dans une seule transaction (étape 7) [décidé le 23/10/2026, au lieu d'écrire la question avant] :
+   un échec ne laisse ni question orpheline dans le fil ni doublon au nouvel essai ; la question reste
+   dans le champ de saisie du frontend.
 5. **Appel RAG** via `httpx.AsyncClient` partagé (créé au démarrage, fermé à l'arrêt),
    `X-API-Key` depuis l'environnement, **`trace: true` toujours**. Raison : le coût, le modèle et le
    fournisseur ne sont renvoyés que dans la trace [vérifié, `PipelineResult.as_dict`]. Délai
@@ -261,6 +264,11 @@ Règles :
    | 503 `index_empty` | 503 `index_building` (message « base en cours de construction ») | rendu |
    | 401 | 500 `internal` + alerte : c'est une erreur de configuration, pas de l'utilisateur | rendu |
    | réseau, délai client | 503 `assistant_unavailable` | rendu |
+   | 429 de la passerelle nginx (page HTML, `limit_req` 30/min) | 503 `assistant_busy` + `Retry-After: 2` | rendu |
+   | 502 / 504 de la passerelle (rag-api arrêté) | 503 `assistant_unavailable` | rendu |
+
+   La passerelle limite à 30 questions par minute **par IP** ; le backend étant son seul client, cette
+   limite vaut pour toute l'application [vérifié, `docker/rag-gateway/nginx.conf`].
 
    « Rendu » = la réservation est annulée : l'utilisateur ne paie pas une panne.
 7. **Enregistrement** dans une transaction : message `assistant`, `message_sources` (dans l'ordre
@@ -301,7 +309,8 @@ le retriever filtre déjà en SQL sur `panel = ANY(%(panels)s)` avec la constant
 À exclure : un sélecteur purement décoratif. Afficher « Drépanocytose » alors que la réponse peut
 venir de BRCA1 promet une restriction qui n'existe pas, ce qui est inacceptable dans un outil
 clinique. Tant que l'évolution du RAG n'est pas faite, le sélecteur est masqué dans l'assistant et
-le filtre n'existe que dans l'explorateur.
+le filtre n'existe que dans l'explorateur ; le backend refuse un `panel` non nul (422
+`panel_filter_unavailable`) [implémenté le 23/10/2026].
 
 ### 4.3 Quota sans course critique
 
@@ -367,10 +376,16 @@ dans ce fuseau. Requête paramétrée, jamais de f-string.
 
 ### 4.6 Rétention et RGPD
 
-- Tâche Huey périodique (`@huey.periodic_task`, quotidienne) : supprime définitivement les
-  conversations `deleted_at` ou plus anciennes que `conversation_retention_days`, avec leurs
-  messages, sources et retours (`ON DELETE CASCADE`). `usage_events` garde `user` et coûts mais
-  plus de lien vers un message supprimé (`message` mis à null).
+- **Historique conservé sans limite de durée** [décidé le 23/10/2026] : l'utilisateur retrouve ses
+  conversations dans la barre latérale à chaque connexion, depuis n'importe quel appareil.
+- Tâche Huey périodique (quotidienne, 3 h 30) : supprime définitivement les conversations
+  `deleted_at` (supprimées par l'utilisateur) et, seulement si un admin fixe
+  `conversation_retention_days`, celles plus anciennes que cette durée, avec leurs messages, sources
+  et retours (`ON DELETE CASCADE`). `usage_events` garde les coûts mais plus de lien vers un message
+  supprimé (`message` mis à null) ; l'effacement d'un compte met `user` à null, pour que les dépenses
+  du mois ne diminuent pas.
+- À justifier dans les mentions RGPD : conservation jusqu'à suppression par la personne (finalité :
+  relire ses échanges), suppression unitaire et effacement du compte toujours possibles.
 - Rappel permanent dans le composer : « Ne saisissez aucune donnée permettant d'identifier un
   patient ». Les journaux du backend, comme ceux du RAG [vérifié, `_ALLOWED` dans `logs.py`],
   ne contiennent **jamais** la question ni la réponse.

@@ -207,6 +207,25 @@ Codes d'erreur propres aux comptes : `invalid_credentials`, `account_pending_ema
 
 ---
 
+## Assistant — routes
+
+Flux complet : `MODELISATION_BACKEND.md` § 4.2. Garde : compte `active`.
+
+| Méthode | Route | Description |
+|---|---|---|
+| `POST` | `/assistant/questions` | quota → budget → RAG → enregistrement de la question, de la réponse et des sources |
+| `GET` | `/assistant/conversations?cursor=&q=` | historique de la barre latérale, 30 par page, recherche dans les titres |
+| `GET` | `/assistant/conversations/{id}` | fil complet avec sources figées (404 si elle appartient à un autre) |
+| `PATCH` | `/assistant/conversations/{id}` | titre, épingle |
+| `DELETE` | `/assistant/conversations/{id}` | suppression douce, purge la nuit suivante |
+| `PUT` | `/assistant/messages/{id}/feedback` | utile (+1) / à améliorer (−1), commentaire |
+| `GET` | `/me/usage` | quota du jour, remise à zéro (minuit UTC) |
+
+Codes d'erreur : `quota_exceeded` (429), `budget_exhausted`, `assistant_busy`, `assistant_unavailable`,
+`index_building` (503), `panel_filter_unavailable` (422).
+
+---
+
 ## Protéger une route
 
 ```python

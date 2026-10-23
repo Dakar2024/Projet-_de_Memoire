@@ -14,12 +14,12 @@ dependencies = [
     "jinja2>=3.1",
     "huey>=2.5",
     "redis>=6.0",
+    "httpx>=0.28",  # RAG gateway client
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=8.4",
-    "httpx>=0.28",
     "ruff>=0.14",
 ]
 

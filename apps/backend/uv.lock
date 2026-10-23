@@ -331,6 +331,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "aiosmtplib" },
     { name = "argon2-cffi" },
+    { name = "httpx" },
     { name = "huey" },
     { name = "jinja2" },
     { name = "litestar", extra = ["standard"] },
@@ -343,7 +344,6 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "httpx" },
     { name = "pytest" },
     { name = "ruff" },
 ]
@@ -352,6 +352,7 @@ dev = [
 requires-dist = [
     { name = "aiosmtplib", specifier = ">=4.0" },
     { name = "argon2-cffi", specifier = ">=25.1" },
+    { name = "httpx", specifier = ">=0.28" },
     { name = "huey", specifier = ">=2.5" },
     { name = "jinja2", specifier = ">=3.1" },
     { name = "litestar", extras = ["standard"], specifier = ">=2.25" },
@@ -364,7 +365,6 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "httpx", specifier = ">=0.28" },
     { name = "pytest", specifier = ">=8.4" },
     { name = "ruff", specifier = ">=0.14" },
 ]

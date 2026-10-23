@@ -17,5 +17,7 @@ APP_REGISTRY = AppRegistry(apps=[
     "features.auth.piccolo_app",
     "features.audit.piccolo_app",
     "features.app_settings.piccolo_app",
+    "features.assistant.piccolo_app",
+    "features.usage.piccolo_app",
     # "features.my_feature.piccolo_app",
 ])

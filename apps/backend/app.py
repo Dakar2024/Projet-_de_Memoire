@@ -19,8 +19,11 @@ from core.redis import redis_client
 from core.security import check_origin, client_ip
 from core.settings import settings
 from features.admin.controller import AccessRequestController
+from features.assistant.controller import AssistantController
+from features.assistant.rag_client import RagClient, build_http_client
 from features.auth.controller import AuthController, MeController
 from features.auth.status import AccountStatus
+from features.usage.controller import UsageController
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +71,16 @@ async def close_redis() -> None:
     await redis_client.aclose()
 
 
+async def open_rag_client(app: Litestar) -> None:
+    if not settings.RAG_API_KEY:
+        logger.warning("RAG_API_KEY vide : l'assistant répondra 500 tant que la clé n'est pas dans .env")
+    app.state.rag = RagClient(build_http_client())
+
+
+async def close_rag_client(app: Litestar) -> None:
+    await app.state.rag.aclose()
+
+
 logging_config = LoggingConfig(
     root={"level": "INFO", "handlers": ["queue_listener"]},
     formatters={"standard": {"format": "%(asctime)s %(levelname)s %(name)s — %(message)s"}},
@@ -94,6 +107,8 @@ api = Router(
         AuthController,
         MeController,
         AccessRequestController,
+        AssistantController,
+        UsageController,
         # Ajouter ici les controllers des nouvelles features
     ],
 )
@@ -103,8 +118,8 @@ app = Litestar(
     route_handlers=[health_check, api],
     stores={"rate_limit": RedisStore(redis_client, namespace="rate_limit")},
     plugins=[PydanticPlugin(prefer_alias=True)],
-    on_startup=[open_database_pool, seed_admin],
-    on_shutdown=[close_database_pool, close_redis],
+    on_startup=[open_database_pool, seed_admin, open_rag_client],
+    on_shutdown=[close_rag_client, close_database_pool, close_redis],
     before_request=check_origin,
     exception_handlers=EXCEPTION_HANDLERS,
     logging_config=logging_config,

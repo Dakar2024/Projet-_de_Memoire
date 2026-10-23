@@ -11,11 +11,13 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import asyncpg
+import httpx
 import pytest
 from litestar.testing import TestClient
 from redis import Redis
 
 from core.settings import settings
+from features.assistant.rag_client import RagClient
 from features.auth import controller as auth_controller
 from features.auth.emails import Email
 
@@ -25,7 +27,10 @@ ADMIN_EMAIL = settings.ADMIN_EMAIL
 ADMIN_PASSWORD = settings.ADMIN_PASSWORD
 PASSWORD = "correct-horse-battery"
 
-_TABLES = "audit_log, app_settings, email_verification_tokens, password_reset_tokens, users"
+_TABLES = (
+    "usage_events, daily_usage, feedback, message_sources, messages, conversations, "
+    "audit_log, app_settings, email_verification_tokens, password_reset_tokens, users"
+)
 
 
 def sql(query: str, *args: Any) -> list[asyncpg.Record]:
@@ -80,14 +85,74 @@ def mailer(monkeypatch: pytest.MonkeyPatch) -> RecordingMailer:
     return recording
 
 
+class FakeRag:
+    """Stands in for the RAG gateway: records the requests, answers what the test queued."""
+
+    def __init__(self) -> None:
+        self.requests: list[httpx.Request] = []
+        self.replies: list[httpx.Response | Exception] = []
+
+    def reply(self, response: httpx.Response | Exception) -> None:
+        self.replies.append(response)
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        reply = self.replies.pop(0) if self.replies else httpx.Response(200, json=rag_answer())
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
+
+
+def rag_answer(status: str = "answered", sources: int = 2, cost: float = 0.0012) -> dict:
+    """A body shaped like PipelineResult.as_dict(include_trace=True) of the RAG."""
+    return {
+        "status": status,
+        "answer": "Le variant est classé pathogène [1][2].",
+        "history": ["Classé VUS jusqu'en 2019."],
+        "sources": [
+            {
+                "doc_id": f"clinvar:{1000 + i}",
+                "gene": "BRCA1",
+                "variant": f"NM_007294.4(BRCA1):c.{68 + i}_{69 + i}del",
+                "protein": "p.Glu23fs",
+                "significance": "Pathogenic",
+                "significance_fr": "Pathogène",
+                "review_status": "reviewed by expert panel",
+                "clinvar_variation_id": str(1000 + i),
+                "clinvar_url": f"https://www.ncbi.nlm.nih.gov/clinvar/variation/{1000 + i}/",
+                "archive": "2026-10",
+                "previous_significance": None,
+                "previous_significance_fr": None,
+                "previous_until": None,
+            }
+            for i in range(sources)
+        ],
+        "disclaimer": "Information de recherche, pas un avis médical.",
+        "scope_reason": None,
+        "timings_ms": {"analysis": 1.0, "search": 20.0, "generation": 900.0, "total": 925.0},
+        "trace": {"generation": {"provider_name": "groq", "model": "llama", "cost_usd": cost}},
+        "request_id": "rag-req-1",
+    }
+
+
 @pytest.fixture
-def client(mailer: RecordingMailer) -> Iterator[TestClient]:
+def rag() -> FakeRag:
+    return FakeRag()
+
+
+@pytest.fixture
+def client(mailer: RecordingMailer, rag: FakeRag) -> Iterator[TestClient]:
     sql(f"TRUNCATE {_TABLES} CASCADE")
     Redis.from_url(settings.REDIS_URL).flushdb()
     from app import app
 
-    with TestClient(app=app) as c:  # startup seeds the admin
+    with TestClient(app=app) as c:  # startup seeds the admin and opens the real RAG client
+        real = app.state.rag
+        app.state.rag = RagClient(
+            httpx.AsyncClient(transport=httpx.MockTransport(rag.handler), base_url="http://rag-gateway")
+        )
         yield c
+        app.state.rag = real
 
 
 def set_registration(mode: str, domains: list[str] | None = None) -> None:

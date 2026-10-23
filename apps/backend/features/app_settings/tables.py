@@ -17,7 +17,7 @@ class AppSettings(Table, tablename="app_settings"):
     allowed_email_domains       = Array(base_column=Varchar(length=255), default=list)
     default_daily_quota         = Integer(default=20)
     monthly_budget_usd          = Numeric(digits=(10, 2), default=Decimal("50.00"))
-    conversation_retention_days = Integer(default=90)  # 0 = keep nothing
+    conversation_retention_days = Integer(null=True, default=None)  # null = kept until the user deletes them
     admin_trace_visible         = Boolean(default=False)
     banner_message              = Text(null=True, default=None)
     updated_by                  = ForeignKey(references=User, null=True, default=None, on_delete=OnDelete.set_null)
