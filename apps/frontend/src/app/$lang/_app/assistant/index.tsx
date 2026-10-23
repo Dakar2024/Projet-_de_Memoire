@@ -1,50 +1,66 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { Trans } from '@lingui/react/macro'
-import { LogOut } from 'lucide-react'
-import { useSignOut } from '@/features/auth/hooks'
-import { Logo } from '@/shared/components/brand/Logo'
-import { ThemeToggle } from '@/shared/components/ThemeToggle'
-import { Button } from '@/shared/components/ui/button'
+import { useState } from 'react'
+import type { ApiErrorCode, PanelId } from '@/shared/api/contracts'
+import { Composer } from '@/features/assistant/components/Composer'
+import { EmptyState } from '@/features/assistant/components/EmptyState'
+import { Thread } from '@/features/assistant/components/Thread'
+import { useAskQuestion } from '@/features/assistant/hooks'
+import { AssistantFooter } from '@/features/assistant/components/AssistantFooter'
 
 export const Route = createFileRoute('/$lang/_app/assistant/')({
   head: () => ({ meta: [{ title: 'Assistant · Genomica' }] }),
-  component: AssistantPlaceholder,
+  component: NewConversation,
 })
 
-/** Temporary landing spot after sign-in; replaced by the chat interface in the next iteration. */
-function AssistantPlaceholder() {
+/** New conversation: the first answer creates it, then the URL moves to its own page. */
+function NewConversation() {
   const { user } = Route.useRouteContext()
   const { lang } = Route.useParams()
   const navigate = useNavigate()
-  const signOut = useSignOut()
+  const ask = useAskQuestion()
+  const [sent, setSent] = useState<{ question: string; panel?: PanelId } | null>(null)
+  const [failed, setFailed] = useState<ApiErrorCode | null>(null)
+
+  async function send(question: string, panel: PanelId | undefined) {
+    setSent({ question, panel })
+    setFailed(null)
+    const result = await ask.mutateAsync({ question, panel }).catch(() => null)
+    if (!result?.ok) {
+      setFailed(result?.code ?? 'internal')
+      return
+    }
+    await navigate({
+      to: '/$lang/assistant/$conversationId',
+      params: { lang, conversationId: result.value.conversationId },
+    })
+  }
+
+  if (!sent) {
+    return (
+      <main className="flex flex-1 flex-col items-center justify-center gap-8 overflow-y-auto px-5 py-10">
+        <EmptyState name={user.fullName} onPick={(question) => send(question, undefined)} />
+        <div className="w-full max-w-[760px]">
+          <Composer onSubmit={send} autoFocus />
+        </div>
+        <AssistantFooter />
+      </main>
+    )
+  }
 
   return (
-    <div className="flex min-h-screen flex-col">
-      <header className="flex items-center gap-3 border-b border-border px-6 py-3">
-        <Logo size={28} />
-        <span className="ml-auto text-sm text-muted-foreground">{user.fullName}</span>
-        <ThemeToggle />
-        <Button
-          variant="outline"
-          size="lg"
-          className="h-11"
-          disabled={signOut.isPending}
-          onClick={() =>
-            signOut.mutate(undefined, { onSuccess: () => navigate({ to: '/$lang/sign-in', params: { lang } }) })
-          }
-        >
-          <LogOut aria-hidden="true" />
-          <Trans>Se déconnecter</Trans>
-        </Button>
-      </header>
-      <main className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
-        <h1 className="text-3xl font-medium tracking-[-0.02em]">
-          <Trans>Quel variant examinons-nous aujourd'hui ?</Trans>
-        </h1>
-        <p className="text-muted-foreground">
-          <Trans>L'interface de l'assistant arrive à la prochaine itération.</Trans>
-        </p>
+    <>
+      <main className="flex-1 overflow-y-auto">
+        <Thread
+          messages={[]}
+          pending={failed ? undefined : sent.question}
+          failed={failed ? { question: sent.question, code: failed } : undefined}
+          onRetry={() => send(sent.question, sent.panel)}
+        />
       </main>
-    </div>
+      <div className="mx-auto w-full max-w-[820px] px-5 pb-4">
+        <Composer onSubmit={send} disabled={ask.isPending} />
+        <AssistantFooter />
+      </div>
+    </>
   )
 }

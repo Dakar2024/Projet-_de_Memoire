@@ -12,7 +12,7 @@ import { emailSchema, signInSchema, signUpSchema } from './schemas'
 
 export type AuthResult = { ok: true } | { ok: false; code: ApiErrorCode }
 
-const MOCK_COOKIE = 'genomica_mock_session'
+export const MOCK_COOKIE = 'genomica_mock_session'
 
 export const getSessionFn = createServerFn({ method: 'GET' }).handler(async (): Promise<User | null> => {
   if (USE_MOCKS) return mockUserForToken(getCookie(MOCK_COOKIE))

@@ -17,7 +17,9 @@ import { Route as LangAuthSignUpRouteImport } from './app/$lang/_auth/sign-up'
 import { Route as LangAuthSignInRouteImport } from './app/$lang/_auth/sign-in'
 import { Route as LangAuthPendingRouteImport } from './app/$lang/_auth/pending'
 import { Route as LangAuthForgotPasswordRouteImport } from './app/$lang/_auth/forgot-password'
+import { Route as LangAppAssistantRouteRouteImport } from './app/$lang/_app/assistant/route'
 import { Route as LangAppAssistantIndexRouteImport } from './app/$lang/_app/assistant/index'
+import { Route as LangAppAssistantConversationIdRouteImport } from './app/$lang/_app/assistant/$conversationId'
 
 const LangRouteRoute = LangRouteRouteImport.update({
   id: '/$lang',
@@ -57,20 +59,33 @@ const LangAuthForgotPasswordRoute = LangAuthForgotPasswordRouteImport.update({
   path: '/forgot-password',
   getParentRoute: () => LangAuthRoute,
 } as any)
-const LangAppAssistantIndexRoute = LangAppAssistantIndexRouteImport.update({
-  id: '/assistant/',
-  path: '/assistant/',
+const LangAppAssistantRouteRoute = LangAppAssistantRouteRouteImport.update({
+  id: '/assistant',
+  path: '/assistant',
   getParentRoute: () => LangAppRoute,
 } as any)
+const LangAppAssistantIndexRoute = LangAppAssistantIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => LangAppAssistantRouteRoute,
+} as any)
+const LangAppAssistantConversationIdRoute =
+  LangAppAssistantConversationIdRouteImport.update({
+    id: '/$conversationId',
+    path: '/$conversationId',
+    getParentRoute: () => LangAppAssistantRouteRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/$lang': typeof LangAuthRouteWithChildren
   '/$lang/': typeof LangIndexRoute
+  '/$lang/assistant': typeof LangAppAssistantRouteRouteWithChildren
   '/$lang/forgot-password': typeof LangAuthForgotPasswordRoute
   '/$lang/pending': typeof LangAuthPendingRoute
   '/$lang/sign-in': typeof LangAuthSignInRoute
   '/$lang/sign-up': typeof LangAuthSignUpRoute
-  '/$lang/assistant': typeof LangAppAssistantIndexRoute
+  '/$lang/assistant/$conversationId': typeof LangAppAssistantConversationIdRoute
+  '/$lang/assistant/': typeof LangAppAssistantIndexRoute
 }
 export interface FileRoutesByTo {
   '/$lang': typeof LangIndexRoute
@@ -78,6 +93,7 @@ export interface FileRoutesByTo {
   '/$lang/pending': typeof LangAuthPendingRoute
   '/$lang/sign-in': typeof LangAuthSignInRoute
   '/$lang/sign-up': typeof LangAuthSignUpRoute
+  '/$lang/assistant/$conversationId': typeof LangAppAssistantConversationIdRoute
   '/$lang/assistant': typeof LangAppAssistantIndexRoute
 }
 export interface FileRoutesById {
@@ -86,10 +102,12 @@ export interface FileRoutesById {
   '/$lang/_app': typeof LangAppRouteWithChildren
   '/$lang/_auth': typeof LangAuthRouteWithChildren
   '/$lang/': typeof LangIndexRoute
+  '/$lang/_app/assistant': typeof LangAppAssistantRouteRouteWithChildren
   '/$lang/_auth/forgot-password': typeof LangAuthForgotPasswordRoute
   '/$lang/_auth/pending': typeof LangAuthPendingRoute
   '/$lang/_auth/sign-in': typeof LangAuthSignInRoute
   '/$lang/_auth/sign-up': typeof LangAuthSignUpRoute
+  '/$lang/_app/assistant/$conversationId': typeof LangAppAssistantConversationIdRoute
   '/$lang/_app/assistant/': typeof LangAppAssistantIndexRoute
 }
 export interface FileRouteTypes {
@@ -97,11 +115,13 @@ export interface FileRouteTypes {
   fullPaths:
     | '/$lang'
     | '/$lang/'
+    | '/$lang/assistant'
     | '/$lang/forgot-password'
     | '/$lang/pending'
     | '/$lang/sign-in'
     | '/$lang/sign-up'
-    | '/$lang/assistant'
+    | '/$lang/assistant/$conversationId'
+    | '/$lang/assistant/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/$lang'
@@ -109,6 +129,7 @@ export interface FileRouteTypes {
     | '/$lang/pending'
     | '/$lang/sign-in'
     | '/$lang/sign-up'
+    | '/$lang/assistant/$conversationId'
     | '/$lang/assistant'
   id:
     | '__root__'
@@ -116,10 +137,12 @@ export interface FileRouteTypes {
     | '/$lang/_app'
     | '/$lang/_auth'
     | '/$lang/'
+    | '/$lang/_app/assistant'
     | '/$lang/_auth/forgot-password'
     | '/$lang/_auth/pending'
     | '/$lang/_auth/sign-in'
     | '/$lang/_auth/sign-up'
+    | '/$lang/_app/assistant/$conversationId'
     | '/$lang/_app/assistant/'
   fileRoutesById: FileRoutesById
 }
@@ -185,22 +208,51 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LangAuthForgotPasswordRouteImport
       parentRoute: typeof LangAuthRoute
     }
-    '/$lang/_app/assistant/': {
-      id: '/$lang/_app/assistant/'
+    '/$lang/_app/assistant': {
+      id: '/$lang/_app/assistant'
       path: '/assistant'
       fullPath: '/$lang/assistant'
-      preLoaderRoute: typeof LangAppAssistantIndexRouteImport
+      preLoaderRoute: typeof LangAppAssistantRouteRouteImport
       parentRoute: typeof LangAppRoute
+    }
+    '/$lang/_app/assistant/': {
+      id: '/$lang/_app/assistant/'
+      path: '/'
+      fullPath: '/$lang/assistant/'
+      preLoaderRoute: typeof LangAppAssistantIndexRouteImport
+      parentRoute: typeof LangAppAssistantRouteRoute
+    }
+    '/$lang/_app/assistant/$conversationId': {
+      id: '/$lang/_app/assistant/$conversationId'
+      path: '/$conversationId'
+      fullPath: '/$lang/assistant/$conversationId'
+      preLoaderRoute: typeof LangAppAssistantConversationIdRouteImport
+      parentRoute: typeof LangAppAssistantRouteRoute
     }
   }
 }
 
-interface LangAppRouteChildren {
+interface LangAppAssistantRouteRouteChildren {
+  LangAppAssistantConversationIdRoute: typeof LangAppAssistantConversationIdRoute
   LangAppAssistantIndexRoute: typeof LangAppAssistantIndexRoute
 }
 
-const LangAppRouteChildren: LangAppRouteChildren = {
+const LangAppAssistantRouteRouteChildren: LangAppAssistantRouteRouteChildren = {
+  LangAppAssistantConversationIdRoute: LangAppAssistantConversationIdRoute,
   LangAppAssistantIndexRoute: LangAppAssistantIndexRoute,
+}
+
+const LangAppAssistantRouteRouteWithChildren =
+  LangAppAssistantRouteRoute._addFileChildren(
+    LangAppAssistantRouteRouteChildren,
+  )
+
+interface LangAppRouteChildren {
+  LangAppAssistantRouteRoute: typeof LangAppAssistantRouteRouteWithChildren
+}
+
+const LangAppRouteChildren: LangAppRouteChildren = {
+  LangAppAssistantRouteRoute: LangAppAssistantRouteRouteWithChildren,
 }
 
 const LangAppRouteWithChildren =

@@ -37,17 +37,34 @@ msgstr "{PASSWORD_MIN_LENGTH} caractères minimum"
 msgid "{PASSWORD_MIN_LENGTH} caractères minimum."
 msgstr "{PASSWORD_MIN_LENGTH} caractères minimum."
 
+#: src/features/assistant/components/SourceCard.tsx:34
+msgid "{stars} étoiles sur 4"
+msgstr "{stars} étoiles sur 4"
+
 #: src/features/landing/components/AnswerPreview.tsx:103
 msgid "1 étoile"
 msgstr "1 étoile"
+
+#: src/features/assistant/components/SourceCard.tsx:34
+msgid "1 étoile sur 4"
+msgstr "1 étoile sur 4"
 
 #: src/features/auth/components/FormBits.tsx:101
 msgid "12 caractères minimum, avec majuscules, chiffres et symboles."
 msgstr "12 caractères minimum, avec majuscules, chiffres et symboles."
 
+#: src/features/assistant/components/AppSidebar.tsx:27
+msgid "7 derniers jours"
+msgstr "7 derniers jours"
+
 #: src/features/landing/components/Features.tsx:33
 msgid "Abstention plutôt qu'invention"
 msgstr "Abstention plutôt qu'invention"
+
+#. placeholder {0}: item.title
+#: src/features/assistant/components/AppSidebar.tsx:112
+msgid "Actions pour « {0} »"
+msgstr "Actions pour « {0} »"
 
 #: src/features/landing/components/StatsBand.tsx:12
 msgid "actualisation des sources"
@@ -97,9 +114,21 @@ msgstr "Aucune donnée patient"
 msgid "Aucune donnée patient requise"
 msgstr "Aucune donnée patient requise"
 
+#: src/features/assistant/components/AnswerBlock.tsx:19
+msgid "Aucune fiche correspondante dans les sources."
+msgstr "Aucune fiche correspondante dans les sources."
+
+#: src/features/assistant/components/AppSidebar.tsx:26
+msgid "Aujourd'hui"
+msgstr "Aujourd'hui"
+
 #: src/features/auth/professions.ts:11
 msgid "Autre"
 msgstr "Autre"
+
+#: src/features/assistant/components/AnswerBlock.tsx:33
+msgid "Autre sujet"
+msgstr "Autre sujet"
 
 #: src/features/auth/professions.ts:8
 msgid "Bioinformaticien"
@@ -112,6 +141,10 @@ msgstr "Biologiste médical"
 #: src/features/auth/components/FormBits.tsx:104
 msgid "Bon"
 msgstr "Bon"
+
+#: src/features/assistant/components/EmptyState.tsx:17
+msgid "Bonjour {name}"
+msgstr "Bonjour {name}"
 
 #. placeholder {0}: i + 1
 #: src/features/landing/components/DnaHelix.tsx:39
@@ -130,6 +163,10 @@ msgstr "Ce compte est suspendu. Contactez un administrateur."
 msgid "Certains champs sont invalides."
 msgstr "Certains champs sont invalides."
 
+#: src/shared/api/errors.ts:27
+msgid "Cette conversation n'existe pas ou a été supprimée."
+msgstr "Cette conversation n'existe pas ou a été supprimée."
+
 #: src/shared/components/NotFound.tsx:12
 msgid "Cette page n'existe pas."
 msgstr "Cette page n'existe pas."
@@ -146,6 +183,15 @@ msgstr "Chaque réponse liste ses fiches ClinVar : Variation ID, statut de revue
 msgid "Chercheur"
 msgstr "Chercheur"
 
+#: src/features/assistant/components/AppSidebar.tsx:184
+msgid "Clair"
+msgstr "Clair"
+
+#: src/features/assistant/components/AnswerBlock.tsx:30
+msgid "Classification ACMG"
+msgstr "Classification ACMG"
+
+#: src/features/assistant/components/EmptyState.tsx:9
 #: src/features/landing/components/AnswerPreview.tsx:17
 msgid "Classification de BRCA1 c.68_69del ?"
 msgstr "Classification de BRCA1 c.68_69del ?"
@@ -161,6 +207,14 @@ msgstr "ClinVar, NCBI Gene, MedGen, HPO et RefSeq, téléchargés chaque mois. L
 #: src/features/landing/components/Method.tsx:6
 msgid "Collecte"
 msgstr "Collecte"
+
+#: src/features/assistant/components/EmptyState.tsx:11
+msgid "Combien de variants pathogènes sur BRCA2 ?"
+msgstr "Combien de variants pathogènes sur BRCA2 ?"
+
+#: src/features/assistant/components/AnswerBlock.tsx:29
+msgid "Comptage ou liste exhaustive"
+msgstr "Comptage ou liste exhaustive"
 
 #: src/features/landing/components/Trust.tsx:84
 msgid "Conditions d'utilisation"
@@ -198,6 +252,10 @@ msgstr "Connexion ou inscription"
 msgid "Connexion…"
 msgstr "Connexion…"
 
+#: src/features/assistant/components/AnswerBlock.tsx:32
+msgid "Conseil clinique"
+msgstr "Conseil clinique"
+
 #: src/features/auth/professions.ts:9
 msgid "Conseiller en génétique"
 msgstr "Conseiller en génétique"
@@ -209,6 +267,14 @@ msgstr "Continuer avec Microsoft"
 #: src/features/landing/components/Method.tsx:20
 msgid "Contrôle qualité"
 msgstr "Contrôle qualité"
+
+#: src/features/assistant/components/AppSidebar.tsx:57
+msgid "Conversations"
+msgstr "Conversations"
+
+#: src/features/assistant/components/AnswerBlock.tsx:113
+msgid "Copier la réponse"
+msgstr "Copier la réponse"
 
 #: src/features/landing/components/Panels.tsx:14
 msgid "Couverture"
@@ -283,6 +349,10 @@ msgstr "En attente de votre clic"
 msgid "Envoi…"
 msgstr "Envoi…"
 
+#: src/features/assistant/components/Composer.tsx:114
+msgid "Envoyer la question"
+msgstr "Envoyer la question"
+
 #: src/features/auth/components/ForgotPasswordForm.tsx:52
 msgid "Envoyer le lien"
 msgstr "Envoyer le lien"
@@ -291,7 +361,7 @@ msgstr "Envoyer le lien"
 msgid "Envoyer ma demande"
 msgstr "Envoyer ma demande"
 
-#: src/shared/api/errors.ts:28
+#: src/shared/api/errors.ts:33
 msgid "Erreur inattendue. Elle a été signalée."
 msgstr "Erreur inattendue. Elle a été signalée."
 
@@ -299,6 +369,7 @@ msgstr "Erreur inattendue. Elle a été signalée."
 msgid "Excellent"
 msgstr "Excellent"
 
+#: src/features/assistant/components/EmptyState.tsx:22
 #: src/features/landing/components/AnswerPreview.tsx:77
 msgid "Exemples de questions"
 msgstr "Exemples de questions"
@@ -306,6 +377,10 @@ msgstr "Exemples de questions"
 #: src/features/landing/components/Features.tsx:23
 msgid "Explorateur analytique"
 msgstr "Explorateur analytique"
+
+#: src/features/assistant/components/AppSidebar.tsx:67
+msgid "Fermer le menu"
+msgstr "Fermer le menu"
 
 #: src/features/landing/components/SiteHeader.tsx:22
 msgid "Fiabilité"
@@ -315,6 +390,14 @@ msgstr "Fiabilité"
 #: src/features/landing/components/SiteHeader.tsx:19
 msgid "Fonctionnalités"
 msgstr "Fonctionnalités"
+
+#: src/features/assistant/components/AnswerBlock.tsx:31
+msgid "Fréquence en population"
+msgstr "Fréquence en population"
+
+#: src/features/assistant/components/AnswerBlock.tsx:34
+msgid "Gène hors panel"
+msgstr "Gène hors panel"
 
 #: src/features/landing/components/StatsBand.tsx:9
 msgid "gènes d'intérêt clinique"
@@ -332,6 +415,10 @@ msgstr "Genomica — aide à la consultation de ClinVar, MedGen, HPO et NCBI Gen
 msgid "Genomica en trois étapes"
 msgstr "Genomica en trois étapes"
 
+#: src/features/assistant/components/AssistantFooter.tsx:6
+msgid "Genomica restitue ClinVar et peut se tromper : vérifiez chaque fiche citée avant toute décision."
+msgstr "Genomica restitue ClinVar et peut se tromper : vérifiez chaque fiche citée avant toute décision."
+
 #: src/features/landing/components/Trust.tsx:26
 msgid "Genomica restitue les classifications déposées ; l'interprétation clinique reste l'acte du biologiste."
 msgstr "Genomica restitue les classifications déposées ; l'interprétation clinique reste l'acte du biologiste."
@@ -341,6 +428,10 @@ msgstr "Genomica restitue les classifications déposées ; l'interprétation cli
 msgid "Genomica, accueil"
 msgstr "Genomica, accueil"
 
+#: src/features/assistant/components/AppSidebar.tsx:84
+msgid "Historique"
+msgstr "Historique"
+
 #: src/features/landing/components/Features.tsx:42
 msgid "Historique des reclassifications"
 msgstr "Historique des reclassifications"
@@ -348,6 +439,10 @@ msgstr "Historique des reclassifications"
 #: src/features/auth/components/AuthArt.tsx:44
 msgid "Identifiant rs, notation HGVS ou phrase libre"
 msgstr "Identifiant rs, notation HGVS ou phrase libre"
+
+#: src/features/assistant/components/Composer.tsx:106
+msgid "Identifiant rs, notation HGVS ou phrase libre · Maj + Entrée pour aller à la ligne"
+msgstr "Identifiant rs, notation HGVS ou phrase libre · Maj + Entrée pour aller à la ligne"
 
 #: src/features/auth/components/ForgotPasswordForm.tsx:45
 msgid "Indiquez votre e-mail : nous vous enverrons un lien pour en choisir un nouveau."
@@ -369,21 +464,29 @@ msgstr "J'accepte les <0>conditions d'utilisation</0> et la <1>politique de conf
 msgid "L'accès est réservé aux professionnels. Chaque demande est examinée par un administrateur."
 msgstr "L'accès est réservé aux professionnels. Chaque demande est examinée par un administrateur."
 
+#: src/shared/api/errors.ts:30
+msgid "L'assistant ne répond pas pour le moment. Votre question n'a pas été décomptée."
+msgstr "L'assistant ne répond pas pour le moment. Votre question n'a pas été décomptée."
+
 #: src/features/landing/components/Features.tsx:59
 msgid "L'assistant répond aux questions ponctuelles ; l'explorateur donne la vue d'ensemble. Les deux lisent les mêmes données, versionnées archive par archive."
 msgstr "L'assistant répond aux questions ponctuelles ; l'explorateur donne la vue d'ensemble. Les deux lisent les mêmes données, versionnées archive par archive."
+
+#: src/shared/api/errors.ts:29
+msgid "L'assistant traite beaucoup de questions. Réessayez dans quelques secondes."
+msgstr "L'assistant traite beaucoup de questions. Réessayez dans quelques secondes."
 
 #: src/features/landing/components/AnswerPreview.tsx:54
 msgid "L'identifiant rs334 correspond à deux allèles distincts dans ClinVar. Le variant <0>HBB c.20A>T (p.Glu7Val)</0>, responsable de l'hémoglobine S, est classé <1>pathogène</1> [1]. L'allèle <2>c.20A>C (p.Glu7Ala)</2> est classé <3>probablement bénin</3> [2]."
 msgstr "L'identifiant rs334 correspond à deux allèles distincts dans ClinVar. Le variant <0>HBB c.20A>T (p.Glu7Val)</0>, responsable de l'hémoglobine S, est classé <1>pathogène</1> [1]. L'allèle <2>c.20A>C (p.Glu7Ala)</2> est classé <3>probablement bénin</3> [2]."
 
-#: src/app/$lang/_app/assistant/index.tsx:45
-msgid "L'interface de l'assistant arrive à la prochaine itération."
-msgstr "L'interface de l'assistant arrive à la prochaine itération."
-
 #: src/features/landing/components/Trust.tsx:12
 msgid "L'outil interroge des bases publiques. Ne saisissez jamais d'information permettant d'identifier une personne."
 msgstr "L'outil interroge des bases publiques. Ne saisissez jamais d'information permettant d'identifier une personne."
+
+#: src/shared/api/errors.ts:31
+msgid "La base de fiches est en cours de construction. Réessayez plus tard."
+msgstr "La base de fiches est en cours de construction. Réessayez plus tard."
 
 #: src/features/auth/components/SsoBlock.tsx:28
 msgid "La connexion Microsoft sera disponible avec le backend. Utilisez votre e-mail en attendant."
@@ -393,6 +496,7 @@ msgstr "La connexion Microsoft sera disponible avec le backend. Utilisez votre e
 msgid "Le lien est peut-être incomplet, ou la page a été déplacée."
 msgstr "Le lien est peut-être incomplet, ou la page a été déplacée."
 
+#: src/features/assistant/components/EmptyState.tsx:8
 #: src/features/landing/components/AnswerPreview.tsx:14
 msgid "Le variant rs334 de HBB est-il pathogène ?"
 msgstr "Le variant rs334 de HBB est-il pathogène ?"
@@ -467,9 +571,27 @@ msgstr "Normalisation"
 msgid "Notation HGVS, identifiant rs, nom de protéine ou question libre : l'assistant reconnaît la forme, retrouve les fiches pertinentes et répond en français, avec un numéro de source sur chaque affirmation."
 msgstr "Notation HGVS, identifiant rs, nom de protéine ou question libre : l'assistant reconnaît la forme, retrouve les fiches pertinentes et répond en français, avec un numéro de source sur chaque affirmation."
 
+#: src/features/assistant/components/AppSidebar.tsx:60
+#: src/features/assistant/components/AppSidebar.tsx:80
+msgid "Nouvelle conversation"
+msgstr "Nouvelle conversation"
+
 #: src/features/auth/components/SsoBlock.tsx:42
 msgid "ou avec votre e-mail professionnel"
 msgstr "ou avec votre e-mail professionnel"
+
+#: src/app/$lang/_app/assistant/route.tsx:33
+msgid "Ouvrir l'historique"
+msgstr "Ouvrir l'historique"
+
+#. placeholder {0}: source.clinvarVariationId ?? ''
+#: src/features/assistant/components/SourceCard.tsx:74
+msgid "Ouvrir la fiche ClinVar {0} dans un nouvel onglet"
+msgstr "Ouvrir la fiche ClinVar {0} dans un nouvel onglet"
+
+#: src/features/assistant/components/Composer.tsx:81
+msgid "Panel interrogé"
+msgstr "Panel interrogé"
 
 #: src/shared/components/ThemeToggle.tsx:25
 msgid "Passer au thème clair"
@@ -491,29 +613,53 @@ msgstr "Pathogène · ClinVar VCV 15333"
 msgid "phénotypes HPO"
 msgstr "phénotypes HPO"
 
+#: src/features/assistant/components/AppSidebar.tsx:28
+msgid "Plus ancien"
+msgstr "Plus ancien"
+
 #: src/features/landing/components/Hero.tsx:29
 msgid "Posez votre question en langage naturel. Genomica cherche dans ClinVar, MedGen, HPO et NCBI Gene, répond en français et relie chaque affirmation à sa fiche d'origine. Quand la donnée n'existe pas, l'assistant le dit plutôt que d'inventer."
 msgstr "Posez votre question en langage naturel. Genomica cherche dans ClinVar, MedGen, HPO et NCBI Gene, répond en français et relie chaque affirmation à sa fiche d'origine. Quand la donnée n'existe pas, l'assistant le dit plutôt que d'inventer."
+
+#: src/features/assistant/components/Composer.tsx:74
+msgid "Posez votre question sur un variant"
+msgstr "Posez votre question sur un variant"
 
 #: src/features/landing/components/AnswerPreview.tsx:64
 msgid "Probablement bénin"
 msgstr "Probablement bénin"
 
-#: src/app/$lang/_app/assistant/index.tsx:42
+#: src/features/assistant/components/EmptyState.tsx:19
 msgid "Quel variant examinons-nous aujourd'hui ?"
 msgstr "Quel variant examinons-nous aujourd'hui ?"
+
+#: src/features/assistant/components/AnswerBlock.tsx:20
+msgid "Question hors du périmètre de l'outil."
+msgstr "Question hors du périmètre de l'outil."
 
 #: src/features/landing/components/Trust.tsx:19
 msgid "Questions non journalisées"
 msgstr "Questions non journalisées"
 
+#: src/shared/api/errors.ts:28
+msgid "Quota de questions atteint pour aujourd'hui. Il sera remis à zéro demain."
+msgstr "Quota de questions atteint pour aujourd'hui. Il sera remis à zéro demain."
+
 #: src/features/auth/components/SignInForm.tsx:61
 msgid "Ravi de vous revoir"
 msgstr "Ravi de vous revoir"
 
+#: src/features/assistant/components/Thread.tsx:88
+msgid "Recherche dans les fiches ClinVar…"
+msgstr "Recherche dans les fiches ClinVar…"
+
 #: src/features/landing/components/Method.tsx:26
 msgid "Recherche sémantique et par identifiant, génération contrainte aux fiches retrouvées, vérifications avant affichage."
 msgstr "Recherche sémantique et par identifiant, génération contrainte aux fiches retrouvées, vérifications avant affichage."
+
+#: src/features/assistant/components/Thread.tsx:60
+msgid "Réessayer"
+msgstr "Réessayer"
 
 #: src/features/landing/components/Trust.tsx:56
 msgid "Rejoignez les équipes qui interrogent ClinVar en langage naturel."
@@ -522,6 +668,18 @@ msgstr "Rejoignez les équipes qui interrogent ClinVar en langage naturel."
 #: src/features/landing/components/Features.tsx:24
 msgid "Répartition des classifications par gène, niveau de revue, maladies et phénotypes associés."
 msgstr "Répartition des classifications par gène, niveau de revue, maladies et phénotypes associés."
+
+#: src/features/assistant/components/AnswerBlock.tsx:113
+msgid "Réponse copiée"
+msgstr "Réponse copiée"
+
+#: src/features/assistant/components/AnswerBlock.tsx:23
+msgid "Réponse non vérifiable : seules les fiches retrouvées sont affichées."
+msgstr "Réponse non vérifiable : seules les fiches retrouvées sont affichées."
+
+#: src/features/assistant/components/AnswerBlock.tsx:16
+msgid "Réponse partielle : les fiches retrouvées ne couvrent qu'une partie de la question."
+msgstr "Réponse partielle : les fiches retrouvées ne couvrent qu'une partie de la question."
 
 #: src/features/landing/components/Method.tsx:24
 msgid "Réponse sourcée"
@@ -557,7 +715,7 @@ msgstr "Saisissez votre mot de passe."
 msgid "Se connecter"
 msgstr "Se connecter"
 
-#: src/app/$lang/_app/assistant/index.tsx:37
+#: src/features/assistant/components/AppSidebar.tsx:199
 msgid "Se déconnecter"
 msgstr "Se déconnecter"
 
@@ -565,7 +723,7 @@ msgstr "Se déconnecter"
 msgid "Séquence codante de <0>HBB</0>, positions c.1 à c.24."
 msgstr "Séquence codante de <0>HBB</0>, positions c.1 à c.24."
 
-#: src/shared/api/errors.ts:27
+#: src/shared/api/errors.ts:32
 msgid "Service momentanément indisponible. Réessayez."
 msgstr "Service momentanément indisponible. Réessayez."
 
@@ -577,6 +735,16 @@ msgstr "Si ClinVar ne documente pas le point demandé, la réponse le dit. Les c
 msgid "Si un compte existe pour cette adresse, un lien de réinitialisation vient d'être envoyé."
 msgstr "Si un compte existe pour cette adresse, un lien de réinitialisation vient d'être envoyé."
 
+#: src/features/assistant/components/AppSidebar.tsx:188
+msgid "Sombre"
+msgstr "Sombre"
+
+#. placeholder {0}: message.sources.length
+#: src/features/assistant/components/AnswerBlock.tsx:83
+msgid "Sources ({0})"
+msgstr "Sources ({0})"
+
+#: src/features/assistant/components/AnswerBlock.tsx:81
 #: src/features/landing/components/Features.tsx:28
 #: src/features/landing/components/Hero.tsx:45
 msgid "Sources citées"
@@ -590,10 +758,27 @@ msgstr "Sources de données"
 msgid "Statut de revue de BRCA1 c.5123C>A ?"
 msgstr "Statut de revue de BRCA1 c.5123C>A ?"
 
+#: src/features/assistant/components/AppSidebar.tsx:129
+msgid "Supprimer"
+msgstr "Supprimer"
+
 #: src/features/landing/components/Hero.tsx:60
 msgid "Survolez l'hélice"
 msgstr "Survolez l'hélice"
 
+#: src/features/assistant/components/AppSidebar.tsx:180
+msgid "Système"
+msgstr "Système"
+
+#: src/features/assistant/components/AppSidebar.tsx:175
+msgid "Thème"
+msgstr "Thème"
+
+#: src/features/assistant/components/Composer.tsx:96
+msgid "Tous les panels"
+msgstr "Tous les panels"
+
+#: src/features/assistant/components/EmptyState.tsx:10
 #: src/features/landing/components/AnswerPreview.tsx:18
 msgid "TP53 p.Arg175His a-t-il été reclassé ?"
 msgstr "TP53 p.Arg175His a-t-il été reclassé ?"
@@ -658,6 +843,10 @@ msgstr "Vérifiez votre messagerie"
 msgid "Voir un exemple de réponse"
 msgstr "Voir un exemple de réponse"
 
+#: src/features/assistant/components/AppSidebar.tsx:87
+msgid "Vos conversations apparaîtront ici."
+msgstr "Vos conversations apparaîtront ici."
+
 #: src/features/auth/components/PendingStatus.tsx:28
 msgid "Votre adresse est confirmée. Vous serez prévenu par e-mail dès que votre accès sera activé."
 msgstr "Votre adresse est confirmée. Vous serez prévenu par e-mail dès que votre accès sera activé."
@@ -673,6 +862,10 @@ msgstr "Votre demande d'accès n'a pas été acceptée."
 #: src/features/auth/components/SignInForm.tsx:82
 msgid "Votre mot de passe"
 msgstr "Votre mot de passe"
+
+#: src/features/assistant/components/Composer.tsx:64
+msgid "Votre question"
+msgstr "Votre question"
 
 #: src/shared/api/errors.ts:18
 msgid "Votre session a expiré. Reconnectez-vous."

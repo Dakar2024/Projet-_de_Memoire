@@ -91,7 +91,7 @@ erDiagram
         uuid conversation_id FK
         varchar role "user|assistant"
         text content
-        varchar status "answered|partial|not_in_sources|out_of_scope|error"
+        varchar status "answered|partial|not_in_sources|out_of_scope|unverifiable|error"
         varchar rag_request_id
         jsonb timings_ms
     }
@@ -271,8 +271,15 @@ Règles :
 Les quatre statuts sont des **réponses**, pas des erreurs [vérifié :
 `STATUSES = ("answered", "partial", "not_in_sources", "out_of_scope")`]. Ils consomment le quota,
 s'affichent chacun avec son encadré (maquette « Assistant », réglage *answerStatus*) et
-`scope_reason` (`counting`, `acmg`, `frequency`, `clinical_advice`, `other`) sert à proposer la
-bonne redirection (par exemple, `counting` → l'explorateur).
+`scope_reason` (`counting`, `acmg`, `frequency`, `clinical_advice`, `other`, plus
+`gene_out_of_panel` posé sans LLM) sert à proposer la bonne redirection (par exemple, `counting` →
+l'explorateur).
+
+Un cinquième statut existe en sortie du RAG : **`unverifiable`**, posé par le RAG lui-même quand le
+texte généré échoue aux contrôles déterministes ; le texte est alors remplacé par un message fixe et
+toutes les fiches retrouvées sont renvoyées [vérifié, `generate_answer` dans
+`RAG/src/generation/answer.py`]. Le backend doit l'accepter et le stocker comme les quatre autres ;
+l'interface l'affiche avec un encadré d'avertissement.
 
 **Pas de mémoire de conversation** : la conversation est un fil d'affichage, chaque question part
 seule au RAG. Ne pas concaténer l'historique dans `question` : cela contournerait les contrôles du
@@ -448,7 +455,7 @@ class SourceOut(BaseModel):
 class AnswerOut(BaseModel):
     message_id: UUID
     conversation_id: UUID
-    status: Literal["answered", "partial", "not_in_sources", "out_of_scope"]
+    status: Literal["answered", "partial", "not_in_sources", "out_of_scope", "unverifiable"]
     scope_reason: str | None
     answer: str
     history: list[str]

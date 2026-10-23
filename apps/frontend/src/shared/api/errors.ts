@@ -24,6 +24,11 @@ const MESSAGES: Record<ApiErrorCode, MessageDescriptor> = {
   email_taken: msg`Une demande existe déjà pour cette adresse.`,
   validation_error: msg`Certains champs sont invalides.`,
   rate_limited: msg`Trop de tentatives. Réessayez dans quelques minutes.`,
+  not_found: msg`Cette conversation n'existe pas ou a été supprimée.`,
+  quota_exceeded: msg`Quota de questions atteint pour aujourd'hui. Il sera remis à zéro demain.`,
+  assistant_busy: msg`L'assistant traite beaucoup de questions. Réessayez dans quelques secondes.`,
+  assistant_unavailable: msg`L'assistant ne répond pas pour le moment. Votre question n'a pas été décomptée.`,
+  index_building: msg`La base de fiches est en cours de construction. Réessayez plus tard.`,
   unavailable: msg`Service momentanément indisponible. Réessayez.`,
   internal: msg`Erreur inattendue. Elle a été signalée.`,
 }
