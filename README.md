@@ -210,13 +210,21 @@ Deux familles de DAGs (pipelines Airflow) :
 | `dag_genomic_pipeline_brca` | Panel cancer du sein : sources NCBI, puis `raw` → `bronze` → `silver` → `gold` | Automatique à la fin de l'acquisition, ou manuel |
 | `dag_genomic_pipeline_sickle` | Panel drépanocytose : idem | idem |
 
-Dans l'interface, activer les DAGs (interrupteur « unpause »), puis ▶ **Trigger**. En ligne de
-commande :
+Dans l'interface, activer les DAGs (interrupteur « unpause »). **Activer suffit pour le mois en
+cours** : Airflow lance aussitôt la dernière échéance passée du 10, et la relance de lui-même au
+redémarrage si la machine était éteinte ce jour-là (un e-mail « Rattrapage » le signale). Le
+bouton ▶ **Trigger** sert à acquérir un autre mois. Un mois déjà publié est sauté
+(`skip_if_already_published`), pour ne pas faire tourner les panels deux fois ; le forcer après une
+correction demande `force`. En ligne de commande :
 
 ```bash
 # Acquisition : la date logique (AAAA-MM-JJ) est obligatoire pour un run manuel
 docker compose exec airflow-scheduler \
   airflow dags trigger dag_acquisition_sources --logical-date 2026-09-01
+
+# Réacquérir un mois déjà publié (après une correction), ce qui relance aussi les panels
+docker compose exec airflow-scheduler \
+  airflow dags trigger dag_acquisition_sources --logical-date 2026-09-01 --conf '{"force": true}'
 
 # Un panel, sur des sources déjà acquises à cette date
 docker compose exec airflow-scheduler \

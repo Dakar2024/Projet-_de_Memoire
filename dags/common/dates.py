@@ -7,6 +7,7 @@ from ingestion.config import LOGICAL_DATE_PATTERN
 from ingestion.errors import ConfigurationError
 
 SOURCES_DATE_KEY = "sources_date"
+FORCE_KEY = "force"
 
 
 def require_logical_date(ds: str | None) -> str:
@@ -31,6 +32,13 @@ def _first_of_month(date: str) -> str:
 def record_sources_date(outlet_events: Any, asset: Any, sources_date: str) -> None:
     """Inscrit la date des sources dans l'événement d'Asset publié par l'acquisition."""
     outlet_events[asset].extra[SOURCES_DATE_KEY] = sources_date
+
+
+def should_acquire(inlet_events: Any, asset: Any, sources_date: str, conf: dict | None) -> bool:
+    """Vrai si ce mois de sources n'a pas encore été publié, ou si le run demande `force` (`true` JSON)."""
+    if (conf or {}).get(FORCE_KEY) is True:
+        return True
+    return all(event.extra.get(SOURCES_DATE_KEY) != sources_date for event in inlet_events[asset])
 
 
 def resolve_sources_date(triggering_events: Any, asset: Any, conf: dict | None) -> str:

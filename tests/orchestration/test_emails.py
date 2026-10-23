@@ -1,6 +1,6 @@
 import datetime as dt
 
-from dags.common.emails import reminder_html, reminder_subject
+from dags.common.emails import catch_up_html, catch_up_subject, reminder_html, reminder_subject
 from dags.common.preflight import Check, Reminder, Status
 
 EARLY = Reminder(run_date=dt.date(2026, 11, 10), days_left=2)
@@ -36,3 +36,18 @@ def test_body_gives_the_start_time_rather_than_a_delay():
     """Un rappel rattrapé en retard ne doit pas annoncer « dans une heure »."""
     assert "(10/11/2026) à 06:00 UTC" in reminder_html(RUN_DAY, [], Status.OK)
     assert "demain" in reminder_html(Reminder(dt.date(2026, 11, 10), 1), [], Status.OK)
+
+
+SCHEDULED = dt.datetime(2026, 11, 10, 6, tzinfo=dt.UTC)
+STARTED = dt.datetime(2026, 11, 15, 9, 12, tzinfo=dt.UTC)
+
+
+def test_catch_up_subject_names_the_missed_run():
+    assert catch_up_subject(SCHEDULED) == "[genomique] Rattrapage : run du 10/11/2026 lancé en retard"
+
+
+def test_catch_up_body_gives_the_missed_and_actual_start_times():
+    html = catch_up_html(SCHEDULED, STARTED)
+
+    assert "10/11/2026 à 06:00 UTC" in html
+    assert "15/11/2026 à 09:12 UTC" in html

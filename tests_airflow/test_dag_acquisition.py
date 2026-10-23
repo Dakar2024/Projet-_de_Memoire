@@ -1,5 +1,8 @@
+import datetime as dt
+from types import SimpleNamespace
+
 import pytest
-from airflow.sdk.exceptions import AirflowFailException
+from airflow.sdk.exceptions import AirflowFailException, AirflowSkipException
 
 from dags.common.panels import HEAVY_CONVERSION_POOL, SOURCES_READY
 from dags.dag_acquisition_sources import dag
@@ -28,14 +31,19 @@ def test_acquisition_dag_has_the_expected_tasks():
         "check_raw_shared",
         "download_clinvar_bulk",
         "download_hpo_files",
+        "notify_catch_up",
         "raw_to_bronze_shared",
         "resolve_logical_date",
+        "skip_if_already_published",
     ]
 
 
 def test_both_downloads_run_in_parallel_then_gate_on_check_raw():
-    assert dag.get_task("download_clinvar_bulk").upstream_task_ids == {"resolve_logical_date"}
-    assert dag.get_task("download_hpo_files").upstream_task_ids == {"resolve_logical_date"}
+    for task_id in ("download_clinvar_bulk", "download_hpo_files"):
+        assert dag.get_task(task_id).upstream_task_ids == {
+            "resolve_logical_date",
+            "skip_if_already_published",
+        }
     assert dag.get_task("check_raw_shared").upstream_task_ids == {
         "download_clinvar_bulk",
         "download_hpo_files",
@@ -79,3 +87,93 @@ def test_a_changed_source_schema_fails_without_consuming_retries(monkeypatch):
 
     with pytest.raises(AirflowFailException, match="GeneSymbol"):
         dag.get_task("raw_to_bronze_shared").python_callable("2026-09-10")
+
+
+UTC = dt.UTC
+SCHEDULED = dt.datetime(2026, 11, 10, 6, tzinfo=UTC)
+
+
+class FakeInletEvents:
+    """Imite `inlet_events` : indexé par Asset, renvoie l'historique de ses événements."""
+
+    def __init__(self, *sources_dates):
+        self._events = [SimpleNamespace(extra={"sources_date": d}) for d in sources_dates]
+
+    def __getitem__(self, asset):
+        assert asset == SOURCES_READY
+        return self._events
+
+
+def _guard(*published, conf=None):
+    context = {"inlet_events": FakeInletEvents(*published), "dag_run": SimpleNamespace(conf=conf)}
+    return dag.get_task("skip_if_already_published").python_callable("2026-10-01", **context)
+
+
+def test_the_guard_runs_before_any_download_and_reads_the_asset_history():
+    guard = dag.get_task("skip_if_already_published")
+
+    assert guard.upstream_task_ids == {"resolve_logical_date"}
+    assert SOURCES_READY in guard.inlets
+    assert guard.ignore_downstream_trigger_rules is True
+
+
+def test_the_guard_lets_an_unpublished_month_through():
+    assert _guard("2026-09-01") is True
+
+
+def test_the_guard_stops_a_second_acquisition_of_the_same_month():
+    """Cas du 21/10 : deux runs d'octobre publiaient deux événements, donc deux runs par panel."""
+    assert _guard("2026-10-01") is False
+
+
+def test_the_guard_lets_a_forced_reacquisition_through():
+    assert _guard("2026-10-01", conf={"force": True}) is True
+
+
+def test_the_catch_up_notice_follows_the_guard_without_blocking_the_downloads():
+    """Un mois déjà publié ne doit pas annoncer de rattrapage ; un échec SMTP ne doit pas bloquer les données."""
+    assert dag.get_task("notify_catch_up").upstream_task_ids == {"skip_if_already_published"}
+    assert dag.get_task("notify_catch_up").downstream_task_ids == set()
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    from dags.common import preflight
+
+    frozen = {}
+    monkeypatch.setattr(preflight, "utcnow", lambda: frozen["now"])
+    return frozen
+
+
+def _notify(clock, now, run_type="scheduled"):
+    clock["now"] = now
+    context = {"logical_date": SCHEDULED, "dag_run": SimpleNamespace(run_type=run_type)}
+    dag.get_task("notify_catch_up").python_callable(**context)
+
+
+def test_a_late_scheduled_run_sends_a_catch_up_notice(smtp_outbox, clock):
+    _notify(clock, dt.datetime(2026, 11, 15, 9, 12, tzinfo=UTC))
+
+    assert smtp_outbox[0]["to"] == ["alerte@example.test"]
+    assert smtp_outbox[0]["subject"] == "[genomique] Rattrapage : run du 10/11/2026 lancé en retard"
+
+
+def test_an_on_time_scheduled_run_sends_nothing(smtp_outbox, clock):
+    with pytest.raises(AirflowSkipException, match="à l'heure"):
+        _notify(clock, SCHEDULED + dt.timedelta(minutes=2))
+    assert smtp_outbox == []
+
+
+def test_a_manual_run_is_never_a_catch_up(smtp_outbox, clock):
+    """Un rejeu manuel porte une date logique passée (--logical-date) : ce n'est pas un retard."""
+    with pytest.raises(AirflowSkipException, match="manuel"):
+        _notify(clock, dt.datetime(2026, 11, 15, tzinfo=UTC), run_type="manual")
+    assert smtp_outbox == []
+
+
+def test_no_recipient_sends_no_catch_up_notice(smtp_outbox, clock, monkeypatch):
+    monkeypatch.setenv("ALERT_EMAIL", "")
+
+    with pytest.raises(AirflowSkipException, match="ALERT_EMAIL"):
+        _notify(clock, dt.datetime(2026, 11, 15, tzinfo=UTC))
+    assert smtp_outbox == []

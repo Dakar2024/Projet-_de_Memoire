@@ -38,30 +38,15 @@ def test_acquisition_runs_on_the_shared_schedule():
 
 
 @pytest.fixture
-def sent(monkeypatch):
+def sent(monkeypatch, smtp_outbox):
     """Remplace les sondes et le SMTP : capture les mails au lieu de les envoyer."""
-    import airflow.providers.smtp.hooks.smtp as smtp_module
-
     from dags.common import preflight
     from ingestion import maintenance, storage
 
-    mails = []
-
-    class FakeSmtpHook:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *exc):
-            return False
-
-        def send_email_smtp(self, **kwargs):
-            mails.append(kwargs)
-
-    monkeypatch.setattr(smtp_module, "SmtpHook", FakeSmtpHook)
     monkeypatch.setattr(preflight, "probe_clinvar_archive", lambda version: 404)
     monkeypatch.setattr(maintenance, "free_bytes", lambda path: 50 * 1024**3)
     monkeypatch.setattr(storage, "layer_reachable", lambda layer: True)
-    return mails
+    return smtp_outbox
 
 
 @pytest.fixture

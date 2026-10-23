@@ -6,7 +6,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from dags.common.dates import record_sources_date, require_logical_date, resolve_sources_date
+from dags.common.dates import (
+    record_sources_date,
+    require_logical_date,
+    resolve_sources_date,
+    should_acquire,
+)
 from ingestion.errors import ConfigurationError
 
 ASSET = "s3://bronze/_sources_pretes"
@@ -97,3 +102,36 @@ def test_resolve_sources_date_normalises_a_manual_date_to_the_month():
 def test_resolve_sources_date_explains_how_to_trigger_manually(conf):
     with pytest.raises(ConfigurationError, match="--conf"):
         resolve_sources_date(FakeEvents([]), ASSET, conf)
+
+
+def test_should_acquire_a_month_never_published():
+    assert should_acquire(FakeEvents([]), ASSET, "2026-10-01", conf=None) is True
+
+
+def test_should_acquire_a_month_other_than_the_published_ones():
+    """Le run du 10/11 suit celui d'octobre : un mois déjà publié ne bloque que lui-même."""
+    events = FakeEvents([_event("2026-10-01", 1)])
+
+    assert should_acquire(events, ASSET, "2026-11-01", conf=None) is True
+
+
+def test_should_not_acquire_a_month_already_published():
+    """Cas du 21/10 : la sortie de pause avait déjà publié octobre, le Trigger manuel l'a republié."""
+    events = FakeEvents([_event("2026-09-01", 1), _event("2026-10-01", 2)])
+
+    assert should_acquire(events, ASSET, "2026-10-01", conf=None) is False
+
+
+def test_should_acquire_a_published_month_again_when_forced():
+    """Réacquérir un mois après une correction reste possible, mais seulement sur demande explicite."""
+    events = FakeEvents([_event("2026-10-01", 1)])
+
+    assert should_acquire(events, ASSET, "2026-10-01", conf={"force": True}) is True
+
+
+@pytest.mark.parametrize("conf", [{"force": "true"}, {"force": 1}, {"force": False}])
+def test_only_a_boolean_true_forces_the_acquisition(conf):
+    """`--conf '{"force": "false"}'` ne doit pas forcer par simple vérité de la chaîne."""
+    events = FakeEvents([_event("2026-10-01", 1)])
+
+    assert should_acquire(events, ASSET, "2026-10-01", conf) is False

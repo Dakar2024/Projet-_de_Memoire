@@ -41,8 +41,6 @@ Ce qui n'est pas encore fait. Les audits complets sont dans `reference/audit_sec
       base vectorielle (14/10) puis base Airflow et lac (16/10, `verifier_restauration_lac_airflow.sh`).
 - [ ] **Design des e-mails** (alerte d'échec, rappels J-2 et jour J) une fois le design de l'application
       validé : tout est dans `dags/common/emails.py`.
-- [ ] **Double déclenchement des panels** : l'acquisition du 21/10 a émis deux événements d'Asset
-      (02:49:47 et 02:50:12), donc deux runs par panel ; le second n'a rien réindexé. Trouver l'origine.
 - [ ] **Monitoring** : relire en entier la spec
       `docs/superpowers/specs/2026-09-29-monitoring-prometheus-grafana-design.md`, puis décider.
 
@@ -50,10 +48,9 @@ Ce qui n'est pas encore fait. Les audits complets sont dans `reference/audit_sec
 
 Références : `reference/audit_production.md`.
 
-- [ ] **Rattraper ou signaler un mois manqué** (P4) : `catchup=False`, une machine éteinte le 10 saute
-      le mois sans bruit.
-- [ ] **Procédure de reprise** (P17) : écrire le rattrapage d'un mois manquant et la restauration
-      après perte du lac.
+- [ ] **Procédure de reprise** (P17) : écrire la reprise d'une panne de plus d'un mois (Airflow ne
+      relance que la dernière échéance, les mois intermédiaires se rejouent à la main) et la
+      restauration après perte du lac.
 
 ## 6. Sécurité
 

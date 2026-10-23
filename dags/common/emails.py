@@ -1,6 +1,7 @@
 """Gabarits des e-mails du pipeline, réunis ici pour en reprendre le design en un seul endroit."""
 from __future__ import annotations
 
+import datetime as dt
 from html import escape
 
 from dags.common.preflight import Check, Reminder, Status
@@ -49,3 +50,18 @@ def reminder_html(reminder: Reminder, checks: list[Check], status: Status) -> st
         else "<p>Corriger les points ci-dessus avant le run.</p>"
     )
     return f"<p>{escape(intro)}</p><table>{rows}</table>{action}"
+
+
+def catch_up_subject(scheduled: dt.datetime) -> str:
+    """Sujet du rattrapage : le run manqué, reconnaissable à côté des rappels du même mois."""
+    return f"{SUBJECT_PREFIX} Rattrapage : run du {scheduled:%d/%m/%Y} lancé en retard"
+
+
+def catch_up_html(scheduled: dt.datetime, started: dt.datetime) -> str:
+    """Corps du rattrapage : l'échéance manquée, le départ réel, et quand s'inquiéter."""
+    return (
+        f"<p>Le run mensuel d'acquisition prévu le {scheduled:%d/%m/%Y à %H:%M} UTC n'a pas pu partir "
+        "à l'heure : la machine ou la pile était arrêtée.</p>"
+        f"<p>Airflow le rattrape automatiquement : il a démarré le {started:%d/%m/%Y à %H:%M} UTC.</p>"
+        "<p>Rien à faire. Un e-mail suivra si une tâche échoue.</p>"
+    )

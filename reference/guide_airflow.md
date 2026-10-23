@@ -92,8 +92,15 @@ docker compose exec airflow-scheduler \
 Bouton ▶ sur la ligne du DAG. Pense à l'activer d'abord (l'interrupteur à gauche du nom) : un
 DAG en pause ne se déclenche jamais, même par signal.
 
-> **Piège vécu :** activer `dag_acquisition_sources` déclenche aussi, immédiatement, le run
-> planifié du mois en cours s'il est déjà passé. C'est normal, mais surprenant la première fois.
+> **Piège vécu (21/10) :** activer `dag_acquisition_sources` déclenche aussi, immédiatement, le run
+> planifié du mois en cours s'il est déjà passé. Un ▶ Trigger juste après acquérait le même mois une
+> seconde fois et faisait tourner chaque panel deux fois. Depuis le 23/10, la tâche
+> `skip_if_already_published` saute un mois déjà publié ; pour le réacquérir quand même, ajouter
+> `--conf '{"force": true}'`.
+>
+> Le même mécanisme rattrape une machine éteinte le 10 : au redémarrage, Airflow lance la dernière
+> échéance passée et `notify_catch_up` l'annonce par e-mail. Seule la **dernière** échéance est
+> rattrapée : après plus d'un mois d'arrêt, les mois intermédiaires se rejouent à la main.
 
 ---
 

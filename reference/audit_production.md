@@ -69,7 +69,7 @@ Dix-neuf constats, dont cinq retenus comme prioritaires.
 
 | Réf. | Constat | Probabilité | Impact |
 |---|---|---|---|
-| P4 | `catchup=False` : si la machine est éteinte le 10 à 6 h UTC, le run mensuel **n'est jamais rattrapé automatiquement**. Le rattrapage manuel est documenté, encore faut-il savoir qu'il est nécessaire — ce que P1 empêche. | Élevée sur poste de travail | Élevé |
+| P4 | `catchup=False` : si la machine est éteinte le 10 à 6 h UTC, le run mensuel **n'est jamais rattrapé automatiquement**. Le rattrapage manuel est documenté, encore faut-il savoir qu'il est nécessaire — ce que P1 empêche. **✅ 23/10/2026 — constat inexact** : même avec `catchup=False`, Airflow 3.3.1 lance au redémarrage la dernière échéance passée (essai réel : scheduler arrêté 3 min 30, seule la dernière échéance manquée a tourné, 10 s après le redémarrage). Un arrêt de plus d'un mois saute les mois intermédiaires (voir P17). La tâche `notify_catch_up` prévient désormais par e-mail qu'un run part en rattrapage. | Élevée sur poste de travail | Faible |
 | P5 | Aucun `max_active_runs` sur les DAGs de panel : deux événements d'Asset (un rattrapage manuel pendant un run planifié) déclenchent deux exécutions simultanées du même panel. Les pools à un créneau protègent les écritures Silver et Gold, **mais pas les ingestions vers `raw`** : deux écrivains sur la même partition. Le marqueur de complétude limite les dégâts sans les exclure. | Faible | Moyen |
 | P6 | Les pools à un créneau sérialisent correctement les écritures partagées, mais constituent un point de contention : une tâche lente occupe le seul créneau et retarde l'autre panel, jusqu'à la limite de trois heures fixée par `execution_timeout`. | Moyenne | Faible |
 
@@ -140,7 +140,8 @@ inconfort.
 Par ordre d'intérêt décroissant, si le pipeline devait tourner durablement sans surveillance.
 
 1. **Limiter à une exécution simultanée par DAG de panel** (P5) : une ligne de configuration.
-2. **Rattraper automatiquement un mois manqué**, ou à tout le moins alerter sur son absence (P4).
+2. ~~**Rattraper automatiquement un mois manqué**, ou à tout le moins alerter sur son absence (P4).~~
+   Fait nativement par Airflow ; avis de rattrapage par e-mail depuis le 23/10/2026.
 3. **Découpler les conversions lourdes** de la limite mémoire du conteneur, en les sérialisant
    par un pool dédié plutôt qu'en comptant sur l'ordre du graphe (P7).
 4. **Définir une rétention Delta** et une règle de cycle de vie MinIO (P11, P9).
