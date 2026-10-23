@@ -1,0 +1,75 @@
+# Pile isolée de l'évaluation E3b, à côté de la pile principale (spec E3b § 3) :
+#   docker compose -p genomique-e3b -f docker-compose.yml -f docker/e3b/docker-compose.e3b.yml --env-file .env up -d <services>
+# Le préfixe du projet isole volumes et réseaux ; ce fichier isole le reste : noms de conteneurs,
+# ports publiés, sous-réseaux fixes et dossier de données. Les images sont celles de la pile principale.
+
+# Compose fusionne les montages par chemin cible : seul celui des données est remplacé.
+x-e3b-airflow-volumes: &e3b-airflow-volumes
+  - ./data/e3b:/opt/projet/data
+
+services:
+  postgres:
+    container_name: genomique-e3b-postgres
+  minio-server:
+    container_name: genomique-e3b-minio
+  minio:
+    container_name: genomique-e3b-minio-proxy
+    ports: !reset []
+  minio-init:
+    container_name: genomique-e3b-minio-init
+
+  # Image existante de chaque service : sans `image:`, Compose reconstruirait sous le nom du projet.
+  airflow-init:
+    image: genomique-airflow-init:latest
+    container_name: genomique-e3b-airflow-init
+    volumes: *e3b-airflow-volumes
+  airflow-apiserver:
+    image: genomique-airflow-apiserver:latest
+    container_name: genomique-e3b-airflow-apiserver
+    volumes: *e3b-airflow-volumes
+    # Seul port publié de la pile isolée : son interface, à côté de celle de la principale (8080).
+    ports: !override
+      - "127.0.0.1:8081:8080"
+  airflow-scheduler:
+    image: genomique-airflow-scheduler:latest
+    container_name: genomique-e3b-airflow-scheduler
+    volumes: *e3b-airflow-volumes
+  airflow-dag-processor:
+    image: genomique-airflow-dag-processor:latest
+    container_name: genomique-e3b-airflow-dag-processor
+    volumes: *e3b-airflow-volumes
+  airflow-triggerer:
+    image: genomique-airflow-triggerer:latest
+    container_name: genomique-e3b-airflow-triggerer
+    volumes: *e3b-airflow-volumes
+
+  rag-postgres:
+    container_name: genomique-e3b-rag-postgres
+  rag-postgres-init:
+    container_name: genomique-e3b-rag-postgres-init
+  rag-embeddings:
+    container_name: genomique-e3b-rag-embeddings
+  rag-embeddings-gpu:
+    container_name: genomique-e3b-rag-embeddings-gpu
+
+  # Inutiles au pipeline et jamais démarrés ici ; renommés quand même, pour qu'un `up` sans liste
+  # de services ne puisse ni entrer en conflit avec la pile principale ni publier ses ports.
+  rag-proxy:
+    container_name: genomique-e3b-rag-proxy
+  rag-api:
+    image: genomique-rag-api:latest
+    container_name: genomique-e3b-rag-api
+  rag-gateway:
+    container_name: genomique-e3b-rag-gateway
+    ports: !reset []
+
+# Sous-réseaux fixés dans le fichier principal : ceux de la pile principale sont déjà pris.
+networks:
+  minio-backend:
+    ipam: !override
+      config:
+        - subnet: 172.31.252.0/24
+  rag-proxy-net:
+    ipam: !override
+      config:
+        - subnet: 172.31.253.0/24

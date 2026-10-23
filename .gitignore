@@ -24,6 +24,8 @@ data/models/*
 !data/models/.gitkeep
 # Résultats intermédiaires des expériences (vecteurs, rapports bruts)
 data/experiments/*
+# Données de la pile isolée E3b (docker/e3b/), supprimées au démontage.
+data/e3b/
 !data/experiments/.gitkeep
 
 # Réglages d’éditeur personnels (les racines des sources sont dans pyproject.toml)
