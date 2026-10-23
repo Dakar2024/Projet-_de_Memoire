@@ -118,12 +118,20 @@ def build_dimensions(
             .alias("modes_inheritance")
         )
     )
-    # Une ligne par CUI (libellé : le premier par ordre alphabétique, stable d'un run à l'autre).
+    # Une ligne par CUI : le premier libellé non nul par ordre alphabétique, et les identifiants
+    # réunis entre les seules lignes de ce libellé (jamais ceux d'une autre maladie). Agréger plutôt
+    # que garder une ligne : entre lignes de même nom, le choix dépendait de l'ordre (défaut D-E3b-1).
+    retained_name = pl.col("disease_name").min().over("medgen_cui", "panel")
     dim_disease = (
         variant_disease.filter(pl.col("medgen_cui").is_not_null())
+        .filter(pl.col("disease_name").eq_missing(retained_name))
+        .group_by("medgen_cui", "panel")
+        .agg(
+            pl.col("disease_name").first(),
+            *[pl.col(column).drop_nulls().min() for column in ("omim_id", "orpha_id", "mondo_id")],
+        )
         .select("medgen_cui", "disease_name", "omim_id", "orpha_id", "mondo_id", "panel")
-        .sort("disease_name", maintain_order=True)
-        .unique(subset=["medgen_cui", "panel"], keep="first", maintain_order=True)
+        .sort("medgen_cui", "panel")
         .join(inheritance_by_cui, left_on=["medgen_cui", "panel"], right_on=["cui", "panel"],
               how="left")
         .join(concepts.select("cui", "clinical_summary", "panel"),

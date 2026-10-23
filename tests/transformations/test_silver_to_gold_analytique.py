@@ -432,3 +432,88 @@ def test_write_gold_snapshot_clears_a_panel_that_becomes_empty(tmp_path):
     fact = pl.read_delta(gold_table_uri("fact_reclassification", lake))
     assert fact.filter(pl.col("panel") == "brca").height == 0
     assert fact.filter(pl.col("panel") == "sickle")["alleleid"].to_list() == ["99"]
+
+
+def _dim_disease(variant_disease: pl.DataFrame) -> pl.DataFrame:
+    genes, _, inheritance, concepts, hpo_term, gene_phenotype = _minimal_dimension_inputs()
+    fact_variant = pl.DataFrame([
+        {"alleleid": "1", "gene_symbol": "BRCA1", "clinical_significance": "Pathogenic",
+         "clinsig_simple": "1", "review_status": "criteria provided", "chromosome": "17",
+         "variant_type": "SNV", "panel": "brca", "month": "2026-10"},
+    ])
+    dims = build_dimensions(
+        genes, variant_disease, inheritance, concepts, hpo_term, gene_phenotype,
+        fact_variant, _empty_fact_reclassification(), "2026-10",
+    )
+    return dims["dim_disease"].sort("medgen_cui", "panel")
+
+
+# Cas réel du rejeu E3b (défaut D-E3b-1) : même CUI, même nom, une ligne avec ses identifiants, une sans.
+GASTRIC_CANCER = [
+    {"medgen_cui": "C0024623", "disease_name": "Gastric cancer", "omim_id": "613659",
+     "orpha_id": None, "mondo_id": "MONDO:0001056", "panel": "brca"},
+    {"medgen_cui": "C0024623", "disease_name": "Gastric cancer", "omim_id": None,
+     "orpha_id": None, "mondo_id": None, "panel": "brca"},
+]
+
+
+def test_dim_disease_keeps_the_ids_of_a_same_name_row_whatever_the_row_order():
+    """Le rejeu d'octobre a perdu OMIM et MONDO de 13 maladies : entre deux lignes de même nom,
+    la première gardée dépendait d'un ordre que rien ne garantit."""
+    for rows in (GASTRIC_CANCER, GASTRIC_CANCER[::-1]):
+        row = _dim_disease(pl.DataFrame(rows)).row(0, named=True)
+
+        assert (row["disease_name"], row["omim_id"], row["mondo_id"]) == (
+            "Gastric cancer", "613659", "MONDO:0001056",
+        )
+
+
+def test_dim_disease_is_identical_for_every_order_of_its_input_rows():
+    rows = GASTRIC_CANCER + [
+        {"medgen_cui": "C1", "disease_name": "Hereditary cancer", "omim_id": "1",
+         "orpha_id": "10", "mondo_id": None, "panel": "brca"},
+        {"medgen_cui": "C1", "disease_name": "Breast neoplasm", "omim_id": "2",
+         "orpha_id": None, "mondo_id": None, "panel": "brca"},
+        {"medgen_cui": "C1", "disease_name": "Breast neoplasm", "omim_id": None,
+         "orpha_id": None, "mondo_id": "MONDO:3", "panel": "brca"},
+    ]
+    attendu = _dim_disease(pl.DataFrame(rows))
+
+    for graine in range(20):
+        assert _dim_disease(pl.DataFrame(rows).sample(fraction=1.0, shuffle=True, seed=graine)).equals(attendu)
+
+
+def test_dim_disease_never_pairs_a_name_with_the_ids_of_another_name():
+    """Les identifiants ne sont réunis qu'entre lignes du nom retenu : OMIM 1 appartient à
+    « Hereditary cancer », pas au nom retenu « Breast neoplasm »."""
+    row = _dim_disease(pl.DataFrame([
+        {"medgen_cui": "C1", "disease_name": "Hereditary cancer", "omim_id": "1",
+         "orpha_id": "10", "mondo_id": None, "panel": "brca"},
+        {"medgen_cui": "C1", "disease_name": "Breast neoplasm", "omim_id": None,
+         "orpha_id": None, "mondo_id": "MONDO:3", "panel": "brca"},
+    ])).row(0, named=True)
+
+    assert (row["disease_name"], row["omim_id"], row["orpha_id"], row["mondo_id"]) == (
+        "Breast neoplasm", None, None, "MONDO:3",
+    )
+
+
+def test_dim_disease_prefers_a_real_name_to_a_null_one():
+    """Un nom nul (groupe ClinVar désaligné) passait devant au tri : la dimension perdait son libellé."""
+    row = _dim_disease(pl.DataFrame([
+        {"medgen_cui": "C1", "disease_name": None, "omim_id": "1",
+         "orpha_id": None, "mondo_id": None, "panel": "brca"},
+        {"medgen_cui": "C1", "disease_name": "Breast neoplasm", "omim_id": "2",
+         "orpha_id": None, "mondo_id": None, "panel": "brca"},
+    ])).row(0, named=True)
+
+    assert (row["disease_name"], row["omim_id"]) == ("Breast neoplasm", "2")
+
+
+def test_dim_disease_keeps_a_cui_whose_names_are_all_null():
+    rows = _dim_disease(pl.DataFrame([
+        {"medgen_cui": "C1", "disease_name": None, "omim_id": "1",
+         "orpha_id": None, "mondo_id": None, "panel": "brca"},
+    ], schema_overrides={"disease_name": pl.Utf8}))
+
+    assert rows.select("medgen_cui", "disease_name", "omim_id").rows() == [("C1", None, "1")]
