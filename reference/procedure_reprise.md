@@ -140,40 +140,32 @@ restaurer la sauvegarde (§ 5.3).
 
 ### 5.3 Perte du lac ou de la base Airflow
 
-Volume MinIO ou PostgreSQL perdu, disque remplacé, `docker compose down -v`. Toutes ces commandes
-sont **vérifiées en conteneurs jetables** par `./scripts/verifier_restauration_lac_airflow.sh`
-(mêmes `pg_restore` et `mc mirror`, cible différente), jamais sur la vraie pile.
+Volume MinIO ou PostgreSQL perdu, disque remplacé, `docker compose down -v`. Un seul script
+restaure les trois bases depuis la **même** copie, pour qu'elles restent alignées : base Airflow,
+lac, base vectorielle.
 
 ```bash
-COPIE=~/sauvegardes-genomique/<date>        # la plus récente, sauf § 2
-
-# 1. Plus aucune écriture dans le lac ni dans la base Airflow
-docker compose --env-file .env stop airflow-scheduler airflow-dag-processor airflow-triggerer airflow-apiserver
-
-# 2. Base Airflow (historique des runs et des événements d'Asset)
-docker compose --env-file .env up -d postgres
-docker exec -i genomique-postgres pg_restore -U airflow -d airflow \
-  --clean --if-exists --exit-on-error < "${COPIE}/airflow.dump"
-
-# 3. Lac : MinIO et ses buckets (versionnage et cycle de vie posés par minio-init)
-docker compose --env-file .env up -d minio minio-init
-set -a; . <(tr -d '\r' < .env); set +a
-docker run --rm --network genomique_genomique-network --user "$(id -u):$(id -g)" \
-  --security-opt no-new-privileges:true --entrypoint sh \
-  -e MC_HOST_lac="http://${MINIO_ROOT_USER}:${MINIO_ROOT_PASSWORD}@minio:9000" \
-  -v "${COPIE}:/sauvegarde:ro" genomique/minio-mc:RELEASE.2025-08-13T08-35-41Z \
-  -c 'for b in raw bronze silver gold; do mc --config-dir /tmp/mc mirror --quiet --overwrite --remove "/sauvegarde/$b" "lac/$b" > /dev/null || exit 1; done'
-
-# 4. Toute la pile
-docker compose --env-file .env up -d
+./scripts/restaurer.sh --pile genomique --pile-principale ~/sauvegardes-genomique/<date>
 ```
 
-- `--remove` est indispensable si le lac n'est pas vide : sans lui, les journaux Delta postérieurs
-  à la copie resteraient en place, et chaque table lirait des versions dont les fichiers n'existent
-  plus. Les objets supprimés restent récupérables grâce au versionnage des buckets : 30 jours,
-  sans limite dans `raw`.
-- La base vectorielle se restaure depuis la **même** copie : README, « Restaurer la base
-  vectorielle ». Elle reste ainsi alignée sur le Gold restauré.
+La plus récente copie, sauf au § 2. Sans `--pile-principale`, le script refuse : il écrase les
+trois bases de la pile visée. Il refuse aussi une copie incomplète, avant toute modification.
+
+**Vérifié le 23/10/2026** sur la pile isolée de l'évaluation E3b (`--pile genomique-e3b`, copie
+`2026-10-23-1501`, 2 min 16) : runs, événements d'Asset, documents RAG et objets des quatre
+buckets identiques à la pile principale. Jamais lancé sur la pile principale elle-même.
+
+Ce que fait le script, dans l'ordre :
+1. arrêt de ce qui écrit (services Airflow, API RAG) ;
+2. base Airflow : `pg_restore --clean` ;
+3. lac : `minio-init` (buckets, versionnage, cycle de vie), puis `mc mirror --overwrite --remove`
+   de chaque bucket. `--remove` est indispensable si le lac n'est pas vide : sans lui, les
+   journaux Delta postérieurs à la copie resteraient en place, et chaque table lirait des versions
+   dont les fichiers n'existent plus. Les objets retirés restent récupérables grâce au versionnage
+   des buckets : 30 jours, sans limite dans `raw` ;
+4. base RAG : `rag-postgres-init` (schéma et comptes ; les mots de passe ne sont pas dans le dump),
+   puis `pg_restore --clean` ;
+5. redémarrage de la pile.
 
 **Vérification** : `docker compose exec airflow-scheduler airflow dags list-runs dag_acquisition_sources`
 redonne l'historique d'avant la copie ; l'interface MinIO montre les quatre buckets.
@@ -193,7 +185,7 @@ ClinVar mensuelles depuis 2023 restent téléchargeables ; les plus anciennes no
 
 ### 5.5 Perte de la base vectorielle seule
 
-README, « Restaurer la base vectorielle en production ». Vérifiée en conteneur jetable le
+README, « Restaurer la base vectorielle en production » (l'équivalent de la seule étape 4 du § 5.3). Vérifiée en conteneur jetable le
 23/10/2026 (97 210 documents, empreintes identiques). À défaut de copie, la prochaine indexation
 d'un run de panel la reconstruit depuis le Gold, en environ 4 h sur CPU.
 

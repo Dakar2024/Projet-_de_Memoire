@@ -314,13 +314,16 @@ faire (E3b).
 
 ```bash
 docker compose --env-file .env stop rag-api                        # plus aucune lecture
-docker compose --env-file .env up -d rag-postgres rag-postgres-init # base, schéma, comptes
+docker compose --env-file .env up -d --wait rag-postgres           # base
+docker compose --env-file .env run --rm rag-postgres-init          # schéma et comptes, attend la fin
 docker exec -i genomique-rag-postgres pg_restore -U rag_owner -d rag \
   --clean --if-exists --exit-on-error < ~/sauvegardes-genomique/<date>/rag.dump
 docker compose --env-file .env up -d rag-gateway                   # relance rag-api
 ```
 
 Les mots de passe des comptes ne sont pas dans le dump : `rag-postgres-init` les pose depuis `.env`.
+`run` et non `up -d` : `up -d` rend la main avant la fin du schéma, et le `pg_restore` qui suit
+pourrait partir trop tôt. Pour tout restaurer d'un coup (Airflow, lac, RAG) : `scripts/restaurer.sh`.
 Si le Gold a changé depuis la sauvegarde, la prochaine indexation du DAG rattrape l'écart.
 
 **Planification** : `scripts/sauvegarde_si_necessaire.sh` tourne chaque heure et ne lance
