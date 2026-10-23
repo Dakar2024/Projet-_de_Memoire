@@ -48,8 +48,6 @@ Ce qui n'est pas encore fait. Les audits complets sont dans `reference/audit_sec
 
 Références : `reference/audit_production.md` ; reprise : `reference/procedure_reprise.md` (23/10).
 
-- [ ] **Installer la crontab de sauvegarde** (`scripts/sauvegarde_si_necessaire.sh`, chaque heure,
-      ligne dans le README) : la précédente a disparu avec WSL ; dernière copie le 23/10.
 - [ ] **Seconde copie hors du disque** (`DESTINATION_SAUVEGARDE` : disque externe ou dossier cloud
       privé) : une copie sur le même SSD ne protège pas d'une panne de ce disque.
 
