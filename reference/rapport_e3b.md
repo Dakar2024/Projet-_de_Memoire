@@ -5,7 +5,7 @@ Critères fixés **avant** les mesures. Pile isolée `genomique-e3b` (spec § 3)
 
 | Niveau | État |
 |---|---|
-| 6 — Restauration | ✅ conforme, **un défaut du pipeline trouvé** (D-E3b-1) |
+| 6 — Restauration | ✅ conforme ; un défaut du pipeline trouvé (D-E3b-1), **corrigé et revérifié** |
 | 5 — Comportement en panne | à faire |
 | 7a — Onze fiches (utilisateur) | à faire |
 | 7b — 400 variants contre l'API ClinVar | à faire |
@@ -34,7 +34,7 @@ Critères fixés **avant** les mesures. Pile isolée `genomique-e3b` (spec § 3)
 | R2 | Le pipeline tourne sur la pile restaurée | Acquisition 2 min 15, brca 5 min 50, sickle 8 min 09 ; toutes les tâches au premier essai ; aucun e-mail d'échec | ✅ |
 | R3 | Le rejeu est vu comme un rejeu | Un seul événement d'Asset nouveau (n° 3, 19:08:44) ; `skip_if_already_published` laisse passer grâce à `force` ; `notify_catch_up` sauté (run manuel) | ✅ |
 | R4 | Sources versionnées identiques | Bronze `clinvar` (9,2 M lignes) et `hpo` identiques hors colonnes techniques ; `silver/clinvar_variant` **v1 → v1**, aucune nouvelle version | ✅ |
-| R5 | Écarts des sources non versionnées, expliqués | Seul MedGen bouge (bronze brca 45 lignes, sickle 17 ; Silver `medgen_concept` 62 = 45 + 17, colonne `conceptmeta_xml` seule : la notice servie par NCBI le jour de l'appel). NCBI Gene et RefSeq identiques. **Mais** `gold/analytique/dim_disease` change de 13 lignes **sans lien avec MedGen** : défaut D-E3b-1 | ⚠️ |
+| R5 | Écarts des sources non versionnées, expliqués | Seul MedGen bouge (bronze brca 45 lignes, sickle 17 ; Silver `medgen_concept` 62 = 45 + 17, colonne `conceptmeta_xml` seule : la notice servie par NCBI le jour de l'appel). NCBI Gene et RefSeq identiques. **Mais** `gold/analytique/dim_disease` change de 13 lignes **sans lien avec MedGen** : défaut D-E3b-1 | ✅ après correction de D-E3b-1 |
 | R6 | Gold et index suivent | `gold/rag/documents` **v1 → v1** (aucune écriture) ; indexation : 0 à vectoriser, 0 à supprimer, 93 627 + 3 583 inchangés, canari 1,000000 | ✅ |
 | R7 | Volumes (< 5 % de la référence d'octobre) | `clinvar_variant` 97 192 (93 615 brca, 3 577 sickle) : 0 % ; `clinvar_variant_disease` 171 141 ; `gold/rag/documents` 97 210 | ✅ |
 | R8 | Ressources | Pic mémoire du scheduler **1 022 Mio** (114 relevés à 5 s, pic à 19:08:35, pendant `raw_to_bronze_shared`), seuil 2,5 Gio ; durées dans les références du protocole (§ 9) | ✅ |
@@ -73,11 +73,26 @@ sans `maintain_order`). Le commentaire du code (« stable d'un run à l'autre »
 erreur ni contrôle qui le signale ; deux runs sur les mêmes données ne donnent pas le même Gold
 analytique. Le Gold RAG n'est pas touché (`documents` identique).
 
-**Correction proposée** (non appliquée : la spec interdit de modifier le pipeline pendant E3b sans
-accord) : agréger par (CUI, panel) au lieu de choisir une ligne, avec pour chaque identifiant la
-plus petite valeur non nulle, et pour le nom la plus petite par ordre alphabétique. Résultat
-déterministe, et aucune perte quand une seule ligne porte l'identifiant. Test d'abord : deux lignes
-de même nom, l'une avec identifiants, l'autre sans, dans les deux ordres → même dimension.
-Scénario rejoué après correction (R5 sur `dim_disease`).
+**Correction** (23/10/2026, avec l'accord de l'utilisateur) : `dim_disease` agrège par (CUI, panel)
+au lieu de garder une ligne. Le nom retenu est le premier non nul par ordre alphabétique (un nom nul
+passait devant au tri) ; les identifiants sont réunis **entre les seules lignes de ce nom**, plus
+petite valeur non nulle : jamais l'identifiant d'une maladie sous le nom d'une autre.
+
+Tests d'abord, rouges sur l'ancien code : le cas « Gastric cancer » dans les deux ordres ; vingt
+permutations des lignes d'entrée donnent la même dimension ; pas de mélange de noms ; nom réel
+préféré à un nom nul ; CUI aux noms tous nuls conservé.
+
+**Revérifié sur les données réelles** (Silver rejoué de la pile isolée, `silver_to_gold_analytique`
+lancé deux fois sur les deux panels) :
+
+| Contrôle | Résultat |
+|---|---|
+| Deux passes successives | `dim_disease` identique |
+| Contre la copie d'avant le rejeu (ancien code, run du 21/10) | 442 CUI, aucun disparu, aucun nom changé |
+| Identifiants perdus ou modifiés | 0 |
+| Identifiants **récupérés** (déjà perdus par le run du 21/10) | OMIM 8, Orphanet 7, MONDO 18 |
+| `C0024623` « Gastric cancer » | OMIM 613659, MONDO:0001056, dans les deux panels |
+
+Le Gold analytique de la pile principale garde l'ancienne dimension jusqu'au prochain run de panel.
 
 Sorties : `data/experiments/e3b/ecarts_rejeu.txt`, `data/experiments/e3b/memoire.csv`.
