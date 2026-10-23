@@ -20,6 +20,8 @@ if [ ! -f RAG/sql/001_schema.sql ]; then
   echo "erreur : lancer depuis la racine du dépôt (RAG/sql/001_schema.sql introuvable)" >&2
   exit 1
 fi
+# shellcheck source=scripts/lib/empreintes.sh
+. scripts/lib/empreintes.sh
 
 IMAGE="$(docker inspect "${EN_SERVICE}" --format '{{.Config.Image}}')"
 aleatoire() { head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
@@ -50,41 +52,10 @@ debut=$(date +%s)
 docker exec -i "${JETABLE}" pg_restore -U rag_owner -d rag --clean --if-exists --exit-on-error < "${DUMP}"
 echo "   $(( $(date +%s) - debut )) s"
 
-# Requêtes de comparaison, exécutées à l'identique sur les deux bases.
-requete() {  # conteneur sql
-  docker exec "$1" psql -U rag_owner -d rag -At -c "$2"
-}
-declare -a NOMS=(
-  "documents et modèles d'embedding"
-  "empreinte des identifiants (doc_id, chunk_id)"
-  "empreinte des vecteurs"
-  "index"
-  "droits de rag_reader et rag_indexer"
-  "10 plus proches voisins (recherche exacte)"
-)
-declare -a SQL=(
-  "SELECT count(*) || ' documents, ' || count(DISTINCT embedding_model) || ' modèle(s) : ' || string_agg(DISTINCT embedding_model, ', ') FROM rag_documents"
-  "SELECT md5(string_agg(doc_id || ':' || chunk_id, ',' ORDER BY doc_id)) FROM rag_documents"
-  "SELECT md5(string_agg(md5(embedding::text), '' ORDER BY doc_id)) FROM rag_documents"
-  "SELECT string_agg(indexname, ', ' ORDER BY indexname) FROM pg_indexes WHERE tablename = 'rag_documents'"
-  "SELECT 'lecteur lit=' || has_table_privilege('rag_reader', 'rag_documents', 'SELECT') || ' écrit=' || has_table_privilege('rag_reader', 'rag_documents', 'INSERT') || ' ; indexeur écrit=' || has_table_privilege('rag_indexer', 'rag_documents', 'INSERT')"
-  "SET enable_indexscan = off; SELECT string_agg(doc_id, ',') FROM (SELECT doc_id FROM rag_documents ORDER BY embedding <=> (SELECT embedding FROM rag_documents ORDER BY doc_id LIMIT 1), doc_id LIMIT 10) t"
-)
-
 echo "== comparaison avec la base en service"
 ecarts=0
-for i in "${!SQL[@]}"; do
-  service="$(requete "${EN_SERVICE}" "${SQL[$i]}" | tail -n 1)"
-  restauree="$(requete "${JETABLE}" "${SQL[$i]}" | tail -n 1)"
-  if [ "${service}" = "${restauree}" ]; then
-    echo "   OK     ${NOMS[$i]} : ${restauree:0:90}"
-  else
-    echo "   ÉCART  ${NOMS[$i]}"
-    echo "          en service : ${service:0:90}"
-    echo "          restaurée  : ${restauree:0:90}"
-    ecarts=$((ecarts + 1))
-  fi
-done
+empreintes_rag
+comparer_requetes rag_owner rag "${EN_SERVICE}" "${JETABLE}" "en service" "restaurée "
 
 if [ "${ecarts}" -ne 0 ]; then
   echo "restauration NON conforme : ${ecarts} écart(s)" >&2

@@ -32,6 +32,8 @@ if [ ! -f scripts/verifier_restauration_lac.py ]; then
   echo "erreur : lancer depuis la racine du dépôt (scripts/verifier_restauration_lac.py introuvable)" >&2
   exit 1
 fi
+# shellcheck source=scripts/lib/empreintes.sh
+. scripts/lib/empreintes.sh
 
 aleatoire() { head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
 RETOUR=""
@@ -68,31 +70,8 @@ echo "   restaurée en $(( $(date +%s) - debut )) s"
 CREE_LE="$(docker exec -i "${PG_JETABLE}" pg_restore --list < "${SAUVEGARDE}/airflow.dump" \
   | sed -n 's/^; Archive created at //p')"
 echo "   dump créé le ${CREE_LE}"
-declare -a NOMS=(
-  "version du schéma Airflow"
-  "runs terminés avant le dump"
-  "tâches terminées avant le dump"
-)
-declare -a SQL=(
-  "SELECT version_num FROM alembic_version"
-  "SELECT count(*) || ' runs, empreinte ' || coalesce(md5(string_agg(dag_id || '/' || run_id || '=' || state, ',' ORDER BY dag_id, run_id)), '-') FROM dag_run WHERE end_date < '${CREE_LE}'"
-  "SELECT count(*) || ' tâches, empreinte ' || coalesce(md5(string_agg(dag_id || '/' || run_id || '/' || task_id || '/' || map_index || '/' || try_number || '=' || coalesce(state, ''), ',' ORDER BY dag_id, run_id, task_id, map_index)), '-') FROM task_instance WHERE end_date < '${CREE_LE}'"
-)
-requete() {  # conteneur sql
-  docker exec "$1" psql -U airflow -d airflow -At -c "$2"
-}
-for i in "${!SQL[@]}"; do
-  service="$(requete "${PG_EN_SERVICE}" "${SQL[$i]}" | tail -n 1)"
-  restauree="$(requete "${PG_JETABLE}" "${SQL[$i]}" | tail -n 1)"
-  if [ "${service}" = "${restauree}" ]; then
-    echo "   OK     ${NOMS[$i]} : ${restauree:0:90}"
-  else
-    echo "   ÉCART  ${NOMS[$i]}"
-    echo "          en service : ${service:0:90}"
-    echo "          restaurée  : ${restauree:0:90}"
-    ecarts=$((ecarts + 1))
-  fi
-done
+empreintes_airflow "${CREE_LE}"
+comparer_requetes airflow airflow "${PG_EN_SERVICE}" "${PG_JETABLE}" "en service" "restaurée "
 
 # ---------------------------------------------------------------- buckets MinIO
 echo "== buckets : chargement dans un MinIO jetable, sur un réseau interne sans sortie"
@@ -119,17 +98,15 @@ docker run --rm --network "${RESEAU}" --user "$(id -u):$(id -g)" --security-opt 
     done"
 echo "   aller-retour en $(( $(date +%s) - debut )) s"
 
-empreintes() {  # dossier : une ligne « sha256  chemin » par fichier, triée
-  (cd "$1" && find ${BUCKETS} -type f -print0 | sort -z | xargs -0 sha256sum)
-}
-attendu="$(empreintes "${SAUVEGARDE}")"
-obtenu="$(empreintes "${RETOUR}")"
+attendu="$(empreintes_fichiers "${SAUVEGARDE}")"
+obtenu="$(empreintes_fichiers "${RETOUR}")"
 objets="$(printf '%s\n' "${attendu}" | wc -l)"
 if [ "${attendu}" = "${obtenu}" ]; then
   echo "   OK     ${objets} objets identiques octet pour octet ($(du -sh "${SAUVEGARDE}" --exclude='*.dump' | cut -f1))"
 else
   echo "   ÉCART  objets différents entre la sauvegarde et le MinIO restauré :"
-  diff <(printf '%s\n' "${attendu}") <(printf '%s\n' "${obtenu}") | head -n 10 | sed 's/^/          /'
+  # `|| true` : diff renvoie 1 quand il trouve un écart, ce qui arrêterait le script (pipefail).
+  { diff <(printf '%s\n' "${attendu}") <(printf '%s\n' "${obtenu}") || true; } | head -n 10 | sed 's/^/          /'
   ecarts=$((ecarts + 1))
 fi
 
