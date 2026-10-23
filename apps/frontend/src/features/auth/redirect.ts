@@ -16,6 +16,7 @@ export function safeRedirect(target: unknown, fallback: string): string {
   }
   if (url.origin !== PROBE_ORIGIN) return fallback
   // Never bounce back to an auth page (would loop once signed in).
-  if (/^\/[a-z]{2}\/(sign-in|sign-up|pending|forgot-password)(\/|$)/.test(url.pathname)) return fallback
+  if (/^\/[a-z]{2}\/(sign-in|sign-up|pending|forgot-password|reset-password|verify-email|onboarding)(\/|$)/.test(url.pathname))
+    return fallback
   return url.pathname + url.search + url.hash
 }

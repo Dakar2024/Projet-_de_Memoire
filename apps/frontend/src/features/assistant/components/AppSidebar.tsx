@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Trans, useLingui } from '@lingui/react/macro'
 import { msg } from '@lingui/core/macro'
 import type { MessageDescriptor } from '@lingui/core'
-import { LogOut, Monitor, Moon, MoreHorizontal, SquarePen, Sun, Trash2, X } from 'lucide-react'
+import { LogOut, Monitor, Moon, MoreHorizontal, ShieldCheck, SquarePen, Sun, Trash2, X } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import type { User } from '@/shared/api/contracts'
 import { useSignOut } from '@/features/auth/hooks'
@@ -189,6 +189,12 @@ function AccountMenu({ user, lang }: { user: User; lang: string }) {
             </DropdownMenuRadioItem>
           </DropdownMenuRadioGroup>
           <DropdownMenuSeparator />
+          {user.role === 'admin' && (
+            <DropdownMenuItem onSelect={() => navigate({ to: '/$lang/admin/requests', params: { lang } })}>
+              <ShieldCheck aria-hidden="true" />
+              {t`Demandes d'accès`}
+            </DropdownMenuItem>
+          )}
           <DropdownMenuItem
             disabled={signOut.isPending}
             onSelect={() =>

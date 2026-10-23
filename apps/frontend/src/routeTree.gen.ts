@@ -13,13 +13,17 @@ import { Route as LangRouteRouteImport } from './app/$lang/route'
 import { Route as LangIndexRouteImport } from './app/$lang/index'
 import { Route as LangAuthRouteImport } from './app/$lang/_auth'
 import { Route as LangAppRouteImport } from './app/$lang/_app'
+import { Route as LangAuthVerifyEmailRouteImport } from './app/$lang/_auth/verify-email'
 import { Route as LangAuthSignUpRouteImport } from './app/$lang/_auth/sign-up'
 import { Route as LangAuthSignInRouteImport } from './app/$lang/_auth/sign-in'
+import { Route as LangAuthResetPasswordRouteImport } from './app/$lang/_auth/reset-password'
 import { Route as LangAuthPendingRouteImport } from './app/$lang/_auth/pending'
+import { Route as LangAuthOnboardingRouteImport } from './app/$lang/_auth/onboarding'
 import { Route as LangAuthForgotPasswordRouteImport } from './app/$lang/_auth/forgot-password'
 import { Route as LangAppAssistantRouteRouteImport } from './app/$lang/_app/assistant/route'
 import { Route as LangAppAssistantIndexRouteImport } from './app/$lang/_app/assistant/index'
 import { Route as LangAppAssistantConversationIdRouteImport } from './app/$lang/_app/assistant/$conversationId'
+import { Route as LangAppAdminRequestsRouteImport } from './app/$lang/_app/admin/requests'
 
 const LangRouteRoute = LangRouteRouteImport.update({
   id: '/$lang',
@@ -39,6 +43,11 @@ const LangAppRoute = LangAppRouteImport.update({
   id: '/_app',
   getParentRoute: () => LangRouteRoute,
 } as any)
+const LangAuthVerifyEmailRoute = LangAuthVerifyEmailRouteImport.update({
+  id: '/verify-email',
+  path: '/verify-email',
+  getParentRoute: () => LangAuthRoute,
+} as any)
 const LangAuthSignUpRoute = LangAuthSignUpRouteImport.update({
   id: '/sign-up',
   path: '/sign-up',
@@ -49,9 +58,19 @@ const LangAuthSignInRoute = LangAuthSignInRouteImport.update({
   path: '/sign-in',
   getParentRoute: () => LangAuthRoute,
 } as any)
+const LangAuthResetPasswordRoute = LangAuthResetPasswordRouteImport.update({
+  id: '/reset-password',
+  path: '/reset-password',
+  getParentRoute: () => LangAuthRoute,
+} as any)
 const LangAuthPendingRoute = LangAuthPendingRouteImport.update({
   id: '/pending',
   path: '/pending',
+  getParentRoute: () => LangAuthRoute,
+} as any)
+const LangAuthOnboardingRoute = LangAuthOnboardingRouteImport.update({
+  id: '/onboarding',
+  path: '/onboarding',
   getParentRoute: () => LangAuthRoute,
 } as any)
 const LangAuthForgotPasswordRoute = LangAuthForgotPasswordRouteImport.update({
@@ -75,24 +94,37 @@ const LangAppAssistantConversationIdRoute =
     path: '/$conversationId',
     getParentRoute: () => LangAppAssistantRouteRoute,
   } as any)
+const LangAppAdminRequestsRoute = LangAppAdminRequestsRouteImport.update({
+  id: '/admin/requests',
+  path: '/admin/requests',
+  getParentRoute: () => LangAppRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/$lang': typeof LangAuthRouteWithChildren
   '/$lang/': typeof LangIndexRoute
   '/$lang/assistant': typeof LangAppAssistantRouteRouteWithChildren
   '/$lang/forgot-password': typeof LangAuthForgotPasswordRoute
+  '/$lang/onboarding': typeof LangAuthOnboardingRoute
   '/$lang/pending': typeof LangAuthPendingRoute
+  '/$lang/reset-password': typeof LangAuthResetPasswordRoute
   '/$lang/sign-in': typeof LangAuthSignInRoute
   '/$lang/sign-up': typeof LangAuthSignUpRoute
+  '/$lang/verify-email': typeof LangAuthVerifyEmailRoute
+  '/$lang/admin/requests': typeof LangAppAdminRequestsRoute
   '/$lang/assistant/$conversationId': typeof LangAppAssistantConversationIdRoute
   '/$lang/assistant/': typeof LangAppAssistantIndexRoute
 }
 export interface FileRoutesByTo {
   '/$lang': typeof LangIndexRoute
   '/$lang/forgot-password': typeof LangAuthForgotPasswordRoute
+  '/$lang/onboarding': typeof LangAuthOnboardingRoute
   '/$lang/pending': typeof LangAuthPendingRoute
+  '/$lang/reset-password': typeof LangAuthResetPasswordRoute
   '/$lang/sign-in': typeof LangAuthSignInRoute
   '/$lang/sign-up': typeof LangAuthSignUpRoute
+  '/$lang/verify-email': typeof LangAuthVerifyEmailRoute
+  '/$lang/admin/requests': typeof LangAppAdminRequestsRoute
   '/$lang/assistant/$conversationId': typeof LangAppAssistantConversationIdRoute
   '/$lang/assistant': typeof LangAppAssistantIndexRoute
 }
@@ -104,9 +136,13 @@ export interface FileRoutesById {
   '/$lang/': typeof LangIndexRoute
   '/$lang/_app/assistant': typeof LangAppAssistantRouteRouteWithChildren
   '/$lang/_auth/forgot-password': typeof LangAuthForgotPasswordRoute
+  '/$lang/_auth/onboarding': typeof LangAuthOnboardingRoute
   '/$lang/_auth/pending': typeof LangAuthPendingRoute
+  '/$lang/_auth/reset-password': typeof LangAuthResetPasswordRoute
   '/$lang/_auth/sign-in': typeof LangAuthSignInRoute
   '/$lang/_auth/sign-up': typeof LangAuthSignUpRoute
+  '/$lang/_auth/verify-email': typeof LangAuthVerifyEmailRoute
+  '/$lang/_app/admin/requests': typeof LangAppAdminRequestsRoute
   '/$lang/_app/assistant/$conversationId': typeof LangAppAssistantConversationIdRoute
   '/$lang/_app/assistant/': typeof LangAppAssistantIndexRoute
 }
@@ -117,18 +153,26 @@ export interface FileRouteTypes {
     | '/$lang/'
     | '/$lang/assistant'
     | '/$lang/forgot-password'
+    | '/$lang/onboarding'
     | '/$lang/pending'
+    | '/$lang/reset-password'
     | '/$lang/sign-in'
     | '/$lang/sign-up'
+    | '/$lang/verify-email'
+    | '/$lang/admin/requests'
     | '/$lang/assistant/$conversationId'
     | '/$lang/assistant/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/$lang'
     | '/$lang/forgot-password'
+    | '/$lang/onboarding'
     | '/$lang/pending'
+    | '/$lang/reset-password'
     | '/$lang/sign-in'
     | '/$lang/sign-up'
+    | '/$lang/verify-email'
+    | '/$lang/admin/requests'
     | '/$lang/assistant/$conversationId'
     | '/$lang/assistant'
   id:
@@ -139,9 +183,13 @@ export interface FileRouteTypes {
     | '/$lang/'
     | '/$lang/_app/assistant'
     | '/$lang/_auth/forgot-password'
+    | '/$lang/_auth/onboarding'
     | '/$lang/_auth/pending'
+    | '/$lang/_auth/reset-password'
     | '/$lang/_auth/sign-in'
     | '/$lang/_auth/sign-up'
+    | '/$lang/_auth/verify-email'
+    | '/$lang/_app/admin/requests'
     | '/$lang/_app/assistant/$conversationId'
     | '/$lang/_app/assistant/'
   fileRoutesById: FileRoutesById
@@ -180,6 +228,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LangAppRouteImport
       parentRoute: typeof LangRouteRoute
     }
+    '/$lang/_auth/verify-email': {
+      id: '/$lang/_auth/verify-email'
+      path: '/verify-email'
+      fullPath: '/$lang/verify-email'
+      preLoaderRoute: typeof LangAuthVerifyEmailRouteImport
+      parentRoute: typeof LangAuthRoute
+    }
     '/$lang/_auth/sign-up': {
       id: '/$lang/_auth/sign-up'
       path: '/sign-up'
@@ -194,11 +249,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LangAuthSignInRouteImport
       parentRoute: typeof LangAuthRoute
     }
+    '/$lang/_auth/reset-password': {
+      id: '/$lang/_auth/reset-password'
+      path: '/reset-password'
+      fullPath: '/$lang/reset-password'
+      preLoaderRoute: typeof LangAuthResetPasswordRouteImport
+      parentRoute: typeof LangAuthRoute
+    }
     '/$lang/_auth/pending': {
       id: '/$lang/_auth/pending'
       path: '/pending'
       fullPath: '/$lang/pending'
       preLoaderRoute: typeof LangAuthPendingRouteImport
+      parentRoute: typeof LangAuthRoute
+    }
+    '/$lang/_auth/onboarding': {
+      id: '/$lang/_auth/onboarding'
+      path: '/onboarding'
+      fullPath: '/$lang/onboarding'
+      preLoaderRoute: typeof LangAuthOnboardingRouteImport
       parentRoute: typeof LangAuthRoute
     }
     '/$lang/_auth/forgot-password': {
@@ -229,6 +298,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LangAppAssistantConversationIdRouteImport
       parentRoute: typeof LangAppAssistantRouteRoute
     }
+    '/$lang/_app/admin/requests': {
+      id: '/$lang/_app/admin/requests'
+      path: '/admin/requests'
+      fullPath: '/$lang/admin/requests'
+      preLoaderRoute: typeof LangAppAdminRequestsRouteImport
+      parentRoute: typeof LangAppRoute
+    }
   }
 }
 
@@ -249,10 +325,12 @@ const LangAppAssistantRouteRouteWithChildren =
 
 interface LangAppRouteChildren {
   LangAppAssistantRouteRoute: typeof LangAppAssistantRouteRouteWithChildren
+  LangAppAdminRequestsRoute: typeof LangAppAdminRequestsRoute
 }
 
 const LangAppRouteChildren: LangAppRouteChildren = {
   LangAppAssistantRouteRoute: LangAppAssistantRouteRouteWithChildren,
+  LangAppAdminRequestsRoute: LangAppAdminRequestsRoute,
 }
 
 const LangAppRouteWithChildren =
@@ -260,16 +338,22 @@ const LangAppRouteWithChildren =
 
 interface LangAuthRouteChildren {
   LangAuthForgotPasswordRoute: typeof LangAuthForgotPasswordRoute
+  LangAuthOnboardingRoute: typeof LangAuthOnboardingRoute
   LangAuthPendingRoute: typeof LangAuthPendingRoute
+  LangAuthResetPasswordRoute: typeof LangAuthResetPasswordRoute
   LangAuthSignInRoute: typeof LangAuthSignInRoute
   LangAuthSignUpRoute: typeof LangAuthSignUpRoute
+  LangAuthVerifyEmailRoute: typeof LangAuthVerifyEmailRoute
 }
 
 const LangAuthRouteChildren: LangAuthRouteChildren = {
   LangAuthForgotPasswordRoute: LangAuthForgotPasswordRoute,
+  LangAuthOnboardingRoute: LangAuthOnboardingRoute,
   LangAuthPendingRoute: LangAuthPendingRoute,
+  LangAuthResetPasswordRoute: LangAuthResetPasswordRoute,
   LangAuthSignInRoute: LangAuthSignInRoute,
   LangAuthSignUpRoute: LangAuthSignUpRoute,
+  LangAuthVerifyEmailRoute: LangAuthVerifyEmailRoute,
 }
 
 const LangAuthRouteWithChildren = LangAuthRoute._addFileChildren(

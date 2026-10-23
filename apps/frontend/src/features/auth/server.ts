@@ -2,8 +2,18 @@ import { createServerFn } from '@tanstack/react-start'
 import { deleteCookie, getCookie, setCookie } from '@tanstack/react-start/server'
 import type { ApiErrorCode, User } from '@/shared/api/contracts'
 import { USE_MOCKS, backendFetch, errorCode } from '@/shared/api/backend'
-import { mockSignIn, mockSignOut, mockSignUp, mockUserForToken } from '@/shared/mocks/auth-store'
-import { emailSchema, signInSchema, signUpSchema } from './schemas'
+import {
+  mockCompleteOnboarding,
+  mockForgotPassword,
+  mockResendVerification,
+  mockResetPassword,
+  mockSignIn,
+  mockSignOut,
+  mockSignUp,
+  mockUserForToken,
+  mockVerifyEmail,
+} from '@/shared/mocks/auth-store'
+import { emailSchema, onboardingSchema, resetPasswordSchema, signInSchema, signUpSchema, tokenSchema } from './schemas'
 
 /**
  * Auth goes through server functions rather than browser calls: the route guard runs during SSR
@@ -65,6 +75,62 @@ export const forgotPasswordFn = createServerFn({ method: 'POST' })
   .inputValidator(emailSchema)
   .handler(async ({ data }): Promise<AuthResult> => {
     // Neutral answer in both modes: never reveal whether an account exists.
-    if (!USE_MOCKS) await backendFetch('/api/auth/forgot-password', { method: 'POST', json: data })
+    if (USE_MOCKS) mockForgotPassword(data.email)
+    else await backendFetch('/api/auth/forgot-password', { method: 'POST', json: data })
     return { ok: true }
+  })
+
+export const resendVerificationFn = createServerFn({ method: 'POST' })
+  .inputValidator(emailSchema)
+  .handler(async ({ data }): Promise<AuthResult> => {
+    if (USE_MOCKS) {
+      mockResendVerification(data.email)
+      return { ok: true }
+    }
+    const response = await backendFetch('/api/auth/resend-verification', { method: 'POST', json: data })
+    // Neutral, except a rate limit: the user should know to wait.
+    return response.status === 429 ? { ok: false, code: 'rate_limited' } : { ok: true }
+  })
+
+/** Consumes the link from the verification e-mail; the account then signs in to complete its profile. */
+export const verifyEmailFn = createServerFn({ method: 'POST' })
+  .inputValidator(tokenSchema)
+  .handler(async ({ data }): Promise<AuthResult> => {
+    if (USE_MOCKS) {
+      const result = mockVerifyEmail(data.token)
+      return result.ok ? { ok: true } : result
+    }
+    const response = await backendFetch('/api/auth/verify-email', { method: 'POST', json: data })
+    return response.ok ? { ok: true } : { ok: false, code: await errorCode(response) }
+  })
+
+export const resetPasswordFn = createServerFn({ method: 'POST' })
+  .inputValidator(resetPasswordSchema)
+  .handler(async ({ data }): Promise<AuthResult> => {
+    if (USE_MOCKS) {
+      const result = mockResetPassword(data.token, data.password)
+      return result.ok ? { ok: true } : result
+    }
+    const response = await backendFetch('/api/auth/reset-password', { method: 'POST', json: data })
+    return response.ok ? { ok: true } : { ok: false, code: await errorCode(response) }
+  })
+
+export type OnboardingResult = { ok: true; user: User } | { ok: false; code: ApiErrorCode }
+
+/**
+ * Profile completed after the e-mail check. The account becomes `pending_review` (the backend ends
+ * the session) or, when the admin opened the domain, `active` straight away.
+ */
+export const completeOnboardingFn = createServerFn({ method: 'POST' })
+  .inputValidator(onboardingSchema)
+  .handler(async ({ data }): Promise<OnboardingResult> => {
+    if (USE_MOCKS) {
+      const result = mockCompleteOnboarding(getCookie(MOCK_COOKIE), data)
+      if (!result.ok) return result
+      if (result.value.status !== 'active') deleteCookie(MOCK_COOKIE, { path: '/' })
+      return { ok: true, user: result.value }
+    }
+    const response = await backendFetch('/api/me/onboarding', { method: 'PUT', json: data })
+    if (!response.ok) return { ok: false, code: await errorCode(response) }
+    return { ok: true, user: (await response.json()) as User }
   })

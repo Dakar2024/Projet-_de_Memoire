@@ -4,6 +4,7 @@ import type { ReactNode } from 'react'
 import { LocalizedLink } from '@/shared/components/LocalizedLink'
 import { buttonVariants } from '@/shared/components/ui/button'
 import { cn } from '@/lib/utils'
+import { ResendVerification } from './ResendVerification'
 
 type StepState = 'done' | 'current' | 'todo'
 
@@ -49,6 +50,7 @@ export function PendingStatus({ reason }: { reason: 'pending_email' | 'pending_r
           detail={<Trans>Vous recevrez un e-mail</Trans>}
         />
       </ol>
+      {!emailDone && <ResendVerification />}
       <div className="flex flex-wrap gap-2.5">
         <LocalizedLink to="/" className={cn(buttonVariants({ variant: 'outline', size: 'lg' }), 'h-[46px] flex-1')}>
           <Trans>Retour à l'accueil</Trans>

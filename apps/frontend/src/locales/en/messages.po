@@ -29,10 +29,12 @@ msgstr ""
 msgid "{0} variants · {geneCount} gènes · archive {1}"
 msgstr ""
 
+#: src/features/auth/components/ResetPasswordForm.tsx:90
 #: src/features/auth/components/SignUpForm.tsx:100
 msgid "{PASSWORD_MIN_LENGTH} caractères minimum"
 msgstr ""
 
+#: src/features/auth/components/ResetPasswordForm.tsx:32
 #: src/features/auth/components/SignUpForm.tsx:49
 msgid "{PASSWORD_MIN_LENGTH} caractères minimum."
 msgstr ""
@@ -53,12 +55,20 @@ msgstr ""
 msgid "12 caractères minimum, avec majuscules, chiffres et symboles."
 msgstr ""
 
+#: src/features/auth/components/OnboardingForm.tsx:43
+msgid "2 000 caractères maximum."
+msgstr ""
+
 #: src/features/assistant/components/AppSidebar.tsx:27
 msgid "7 derniers jours"
 msgstr ""
 
 #: src/features/landing/components/Features.tsx:33
 msgid "Abstention plutôt qu'invention"
+msgstr ""
+
+#: src/features/admin/components/AccessRequests.tsx:57
+msgid "Accès accordé à {name}."
 msgstr ""
 
 #. placeholder {0}: item.title
@@ -70,8 +80,13 @@ msgstr ""
 msgid "actualisation des sources"
 msgstr ""
 
-#: src/features/auth/components/PendingStatus.tsx:43
+#: src/features/auth/components/PendingStatus.tsx:44
+#: src/features/auth/components/VerifyEmailStatus.tsx:56
 msgid "Adresse confirmée"
+msgstr ""
+
+#: src/features/auth/components/OnboardingForm.tsx:67
+msgid "Adresse confirmée : <0>{email}</0>"
 msgstr ""
 
 #: src/features/auth/components/SignUpForm.tsx:80
@@ -82,7 +97,7 @@ msgstr ""
 msgid "Afficher le mot de passe"
 msgstr ""
 
-#: src/app/$lang/_auth.tsx:47
+#: src/app/$lang/_auth.tsx:54
 msgid "Aide à la consultation de bases publiques. Ne remplace pas l'interprétation clinique d'un biologiste."
 msgstr ""
 
@@ -98,12 +113,24 @@ msgstr ""
 msgid "Ajouter une pathologie revient à déclarer un nouveau panel : la chaîne de traitement est la même."
 msgstr ""
 
+#: src/features/admin/components/AccessRequests.tsx:108
+msgid "Annuler"
+msgstr ""
+
 #: src/features/landing/components/AnswerPreview.tsx:27
 msgid "Aperçu"
 msgstr ""
 
+#: src/features/admin/components/AccessRequests.tsx:116
+msgid "Approuver"
+msgstr ""
+
 #: src/features/landing/components/Features.tsx:13
 msgid "Assistant en langage naturel"
+msgstr ""
+
+#: src/features/admin/components/AccessRequests.tsx:31
+msgid "Aucune demande en attente."
 msgstr ""
 
 #: src/features/landing/components/Trust.tsx:10
@@ -155,16 +182,24 @@ msgstr ""
 msgid "Cancer du sein héréditaire"
 msgstr ""
 
-#: src/shared/api/errors.ts:23
+#: src/shared/api/errors.ts:25
 msgid "Ce compte est suspendu. Contactez un administrateur."
 msgstr ""
 
-#: src/shared/api/errors.ts:25
+#: src/shared/api/errors.ts:28
+msgid "Ce lien n'est plus valable : il a expiré ou a déjà servi."
+msgstr ""
+
+#: src/shared/api/errors.ts:31
 msgid "Certains champs sont invalides."
 msgstr ""
 
-#: src/shared/api/errors.ts:27
+#: src/shared/api/errors.ts:33
 msgid "Cette conversation n'existe pas ou a été supprimée."
+msgstr ""
+
+#: src/shared/api/errors.ts:29
+msgid "Cette demande a déjà été traitée."
 msgstr ""
 
 #: src/shared/components/NotFound.tsx:12
@@ -181,6 +216,22 @@ msgstr ""
 
 #: src/features/auth/professions.ts:10
 msgid "Chercheur"
+msgstr ""
+
+#: src/features/auth/components/OnboardingForm.tsx:78
+msgid "Choisir…"
+msgstr ""
+
+#: src/features/auth/components/ResetPasswordForm.tsx:72
+msgid "Choisissez un mot de passe que vous n'utilisez pas ailleurs."
+msgstr ""
+
+#: src/features/auth/components/OnboardingForm.tsx:41
+msgid "Choisissez votre fonction."
+msgstr ""
+
+#: src/features/auth/components/OnboardingForm.tsx:94
+msgid "CHU, laboratoire, institut…"
 msgstr ""
 
 #: src/features/assistant/components/AppSidebar.tsx:184
@@ -224,16 +275,25 @@ msgstr ""
 msgid "Confidentialité"
 msgstr ""
 
+#: src/features/auth/components/ResetPasswordForm.tsx:98
 #: src/features/auth/components/SignUpForm.tsx:108
 msgid "Confirmer le mot de passe"
 msgstr ""
 
-#: src/shared/api/errors.ts:20
+#: src/features/admin/components/AccessRequests.tsx:105
+msgid "Confirmer le refus"
+msgstr ""
+
+#: src/shared/api/errors.ts:22
 msgid "Confirmez d'abord votre adresse avec le lien reçu par e-mail."
 msgstr ""
 
-#: src/features/auth/components/PendingStatus.tsx:30
+#: src/features/auth/components/PendingStatus.tsx:31
 msgid "Confirmez d'abord votre adresse avec le lien reçu par e-mail. Vous serez prévenu dès que votre accès sera activé."
+msgstr ""
+
+#: src/features/auth/components/VerifyEmailStatus.tsx:59
+msgid "Connectez-vous pour compléter votre profil : un administrateur examinera ensuite votre demande."
 msgstr ""
 
 #: src/features/auth/components/SignInForm.tsx:62
@@ -288,15 +348,23 @@ msgstr ""
 msgid "De la base publique à la réponse, chaque étape est tracée."
 msgstr ""
 
-#: src/features/auth/components/PendingStatus.tsx:24
+#: src/features/admin/components/AccessRequests.tsx:57
+msgid "Demande de {name} refusée."
+msgstr ""
+
+#: src/features/admin/components/AccessRequests.tsx:86
+msgid "Demande du"
+msgstr ""
+
+#: src/features/auth/components/PendingStatus.tsx:25
 msgid "Demande en cours d'examen"
 msgstr ""
 
-#: src/features/auth/components/PendingStatus.tsx:24
+#: src/features/auth/components/PendingStatus.tsx:25
 msgid "Demande envoyée"
 msgstr ""
 
-#: src/features/auth/components/PendingStatus.tsx:38
+#: src/features/auth/components/PendingStatus.tsx:39
 msgid "Demande reçue"
 msgstr ""
 
@@ -305,6 +373,19 @@ msgstr ""
 #: src/features/landing/components/SiteHeader.tsx:52
 #: src/features/landing/components/Trust.tsx:62
 msgid "Demander un accès"
+msgstr ""
+
+#: src/features/auth/components/ResetPasswordForm.tsx:79
+msgid "Demander un nouveau lien"
+msgstr ""
+
+#: src/features/admin/components/AccessRequests.tsx:22
+#: src/features/assistant/components/AppSidebar.tsx:195
+msgid "Demandes d'accès"
+msgstr ""
+
+#: src/features/auth/components/OnboardingForm.tsx:62
+msgid "Dernière étape : ces informations permettent à un administrateur d'examiner votre demande."
 msgstr ""
 
 #: src/features/auth/components/AuthArt.tsx:51
@@ -331,7 +412,7 @@ msgstr ""
 msgid "Drépanocytose et modificateurs"
 msgstr ""
 
-#: src/shared/api/errors.ts:19
+#: src/shared/api/errors.ts:20
 msgid "E-mail ou mot de passe incorrect."
 msgstr ""
 
@@ -341,10 +422,19 @@ msgstr ""
 msgid "E-mail professionnel"
 msgstr ""
 
-#: src/features/auth/components/PendingStatus.tsx:43
+#: src/features/auth/components/PendingStatus.tsx:44
 msgid "En attente de votre clic"
 msgstr ""
 
+#: src/features/auth/components/ResetPasswordForm.tsx:102
+msgid "Enregistrement…"
+msgstr ""
+
+#: src/features/auth/components/ResetPasswordForm.tsx:102
+msgid "Enregistrer"
+msgstr ""
+
+#: src/features/auth/components/OnboardingForm.tsx:115
 #: src/features/auth/components/SignUpForm.tsx:140
 msgid "Envoi…"
 msgstr ""
@@ -357,12 +447,21 @@ msgstr ""
 msgid "Envoyer le lien"
 msgstr ""
 
+#: src/features/auth/components/OnboardingForm.tsx:115
 #: src/features/auth/components/SignUpForm.tsx:140
 msgid "Envoyer ma demande"
 msgstr ""
 
-#: src/shared/api/errors.ts:33
+#: src/shared/api/errors.ts:41
 msgid "Erreur inattendue. Elle a été signalée."
+msgstr ""
+
+#: src/features/admin/components/AccessRequests.tsx:78
+msgid "Établissement"
+msgstr ""
+
+#: src/features/auth/components/OnboardingForm.tsx:88
+msgid "Établissement ou laboratoire"
 msgstr ""
 
 #: src/features/auth/components/FormBits.tsx:105
@@ -378,12 +477,21 @@ msgstr ""
 msgid "Explorateur analytique"
 msgstr ""
 
+#: src/features/auth/components/OnboardingForm.tsx:102
+msgid "Facultatif. Par exemple : interprétation de variants BRCA en consultation d'oncogénétique."
+msgstr ""
+
 #: src/features/assistant/components/AppSidebar.tsx:67
 msgid "Fermer le menu"
 msgstr ""
 
 #: src/features/landing/components/SiteHeader.tsx:22
 msgid "Fiabilité"
+msgstr ""
+
+#: src/features/admin/components/AccessRequests.tsx:74
+#: src/features/auth/components/OnboardingForm.tsx:74
+msgid "Fonction"
 msgstr ""
 
 #: src/features/landing/components/Features.tsx:56
@@ -423,7 +531,7 @@ msgstr ""
 msgid "Genomica restitue les classifications déposées ; l'interprétation clinique reste l'acte du biologiste."
 msgstr ""
 
-#: src/app/$lang/_auth.tsx:37
+#: src/app/$lang/_auth.tsx:44
 #: src/features/landing/components/SiteHeader.tsx:31
 msgid "Genomica, accueil"
 msgstr ""
@@ -444,8 +552,20 @@ msgstr ""
 msgid "Identifiant rs, notation HGVS ou phrase libre · Maj + Entrée pour aller à la ligne"
 msgstr ""
 
+#: src/shared/api/errors.ts:30
+msgid "Impossible : c'est le dernier administrateur actif."
+msgstr ""
+
 #: src/features/auth/components/ForgotPasswordForm.tsx:45
 msgid "Indiquez votre e-mail : nous vous enverrons un lien pour en choisir un nouveau."
+msgstr ""
+
+#: src/features/auth/components/OnboardingForm.tsx:42
+msgid "Indiquez votre établissement."
+msgstr ""
+
+#: src/features/auth/components/OnboardingForm.tsx:40
+msgid "Indiquez votre nom."
 msgstr ""
 
 #: src/features/auth/components/FormBits.tsx:26
@@ -464,7 +584,11 @@ msgstr ""
 msgid "L'accès est réservé aux professionnels. Chaque demande est examinée par un administrateur."
 msgstr ""
 
-#: src/shared/api/errors.ts:30
+#: src/shared/api/errors.ts:35
+msgid "L'assistant a atteint son budget du mois. Il sera de nouveau disponible le mois prochain."
+msgstr ""
+
+#: src/shared/api/errors.ts:38
 msgid "L'assistant ne répond pas pour le moment. Votre question n'a pas été décomptée."
 msgstr ""
 
@@ -472,7 +596,7 @@ msgstr ""
 msgid "L'assistant répond aux questions ponctuelles ; l'explorateur donne la vue d'ensemble. Les deux lisent les mêmes données, versionnées archive par archive."
 msgstr ""
 
-#: src/shared/api/errors.ts:29
+#: src/shared/api/errors.ts:37
 msgid "L'assistant traite beaucoup de questions. Réessayez dans quelques secondes."
 msgstr ""
 
@@ -484,12 +608,16 @@ msgstr ""
 msgid "L'outil interroge des bases publiques. Ne saisissez jamais d'information permettant d'identifier une personne."
 msgstr ""
 
-#: src/shared/api/errors.ts:31
+#: src/shared/api/errors.ts:39
 msgid "La base de fiches est en cours de construction. Réessayez plus tard."
 msgstr ""
 
 #: src/features/auth/components/SsoBlock.tsx:28
 msgid "La connexion Microsoft sera disponible avec le backend. Utilisez votre e-mail en attendant."
+msgstr ""
+
+#: src/shared/api/errors.ts:36
+msgid "Le filtre par panel n'est pas encore disponible dans l'assistant."
 msgstr ""
 
 #: src/shared/components/NotFound.tsx:15
@@ -501,16 +629,25 @@ msgstr ""
 msgid "Le variant rs334 de HBB est-il pathogène ?"
 msgstr ""
 
+#: src/shared/api/errors.ts:27
+msgid "Les inscriptions sont fermées pour le moment."
+msgstr ""
+
 #: src/features/landing/components/Trust.tsx:20
 msgid "Les journaux techniques ne contiennent ni la question, ni la réponse, ni aucune clé."
 msgstr ""
 
+#: src/features/auth/components/ResetPasswordForm.tsx:33
 #: src/features/auth/components/SignUpForm.tsx:50
 msgid "Les mots de passe ne correspondent pas."
 msgstr ""
 
 #: src/features/landing/components/Hero.tsx:24
 msgid "Les variants de l'ADN, expliqués <0>avec leurs sources.</0>"
+msgstr ""
+
+#: src/features/auth/components/VerifyEmailStatus.tsx:33
+msgid "Lien non valable"
 msgstr ""
 
 #: src/features/landing/components/StatsBand.tsx:10
@@ -538,9 +675,18 @@ msgstr ""
 msgid "Mise à jour mensuelle"
 msgstr ""
 
+#: src/features/auth/components/ResetPasswordForm.tsx:83
 #: src/features/auth/components/SignInForm.tsx:80
 #: src/features/auth/components/SignUpForm.tsx:93
 msgid "Mot de passe"
+msgstr ""
+
+#: src/shared/api/errors.ts:21
+msgid "Mot de passe actuel incorrect."
+msgstr ""
+
+#: src/features/auth/components/ResetPasswordForm.tsx:53
+msgid "Mot de passe modifié"
 msgstr ""
 
 #: src/features/auth/components/ForgotPasswordForm.tsx:42
@@ -549,6 +695,10 @@ msgstr ""
 
 #: src/features/auth/components/SignInForm.tsx:89
 msgid "Mot de passe oublié ?"
+msgstr ""
+
+#: src/features/admin/components/AccessRequests.tsx:93
+msgid "Motif du refus (envoyé au demandeur, facultatif)"
 msgstr ""
 
 #: src/features/auth/components/FormBits.tsx:103
@@ -563,12 +713,20 @@ msgstr ""
 msgid "Nettoyage, dédoublonnage, liens variant–gène–maladie–phénotype, historique des classifications."
 msgstr ""
 
+#: src/features/auth/components/OnboardingForm.tsx:71
+msgid "Nom complet"
+msgstr ""
+
 #: src/features/landing/components/Method.tsx:14
 msgid "Normalisation"
 msgstr ""
 
 #: src/features/landing/components/Features.tsx:15
 msgid "Notation HGVS, identifiant rs, nom de protéine ou question libre : l'assistant reconnaît la forme, retrouve les fiches pertinentes et répond en français, avec un numéro de source sur chaque affirmation."
+msgstr ""
+
+#: src/features/auth/components/ResetPasswordForm.tsx:69
+msgid "Nouveau mot de passe"
 msgstr ""
 
 #: src/features/assistant/components/AppSidebar.tsx:60
@@ -591,6 +749,10 @@ msgstr ""
 
 #: src/features/assistant/components/Composer.tsx:81
 msgid "Panel interrogé"
+msgstr ""
+
+#: src/features/auth/components/ResendVerification.tsx:37
+msgid "Pas reçu l'e-mail ? Recevoir un nouveau lien"
 msgstr ""
 
 #: src/shared/components/ThemeToggle.tsx:25
@@ -629,6 +791,10 @@ msgstr ""
 msgid "Probablement bénin"
 msgstr ""
 
+#: src/features/admin/components/AccessRequests.tsx:25
+msgid "Profils complétés, en attente de votre décision. Le demandeur est prévenu par e-mail."
+msgstr ""
+
 #: src/features/assistant/components/EmptyState.tsx:19
 msgid "Quel variant examinons-nous aujourd'hui ?"
 msgstr ""
@@ -641,7 +807,7 @@ msgstr ""
 msgid "Questions non journalisées"
 msgstr ""
 
-#: src/shared/api/errors.ts:28
+#: src/shared/api/errors.ts:34
 msgid "Quota de questions atteint pour aujourd'hui. Il sera remis à zéro demain."
 msgstr ""
 
@@ -661,8 +827,16 @@ msgstr ""
 msgid "Réessayer"
 msgstr ""
 
+#: src/features/admin/components/AccessRequests.tsx:119
+msgid "Refuser…"
+msgstr ""
+
 #: src/features/landing/components/Trust.tsx:56
 msgid "Rejoignez les équipes qui interrogent ClinVar en langage naturel."
+msgstr ""
+
+#: src/features/auth/components/ResendVerification.tsx:50
+msgid "Renvoyer le lien"
 msgstr ""
 
 #: src/features/landing/components/Features.tsx:24
@@ -685,9 +859,13 @@ msgstr ""
 msgid "Réponse sourcée"
 msgstr ""
 
-#: src/features/auth/components/PendingStatus.tsx:54
+#: src/features/auth/components/PendingStatus.tsx:56
 #: src/shared/components/NotFound.tsx:18
 msgid "Retour à l'accueil"
+msgstr ""
+
+#: src/app/$lang/_app/admin/requests.tsx:32
+msgid "Retour à l'assistant"
 msgstr ""
 
 #: src/features/auth/components/ForgotPasswordForm.tsx:32
@@ -700,6 +878,7 @@ msgid "rs334 sur HBB est-il pathogène ?"
 msgstr ""
 
 #: src/features/auth/components/ForgotPasswordForm.tsx:17
+#: src/features/auth/components/ResendVerification.tsx:18
 #: src/features/auth/components/SignInForm.tsx:41
 #: src/features/auth/components/SignUpForm.tsx:29
 msgid "Saisissez une adresse e-mail valide."
@@ -709,13 +888,15 @@ msgstr ""
 msgid "Saisissez votre mot de passe."
 msgstr ""
 
-#: src/features/auth/components/PendingStatus.tsx:57
+#: src/features/auth/components/PendingStatus.tsx:59
+#: src/features/auth/components/ResetPasswordForm.tsx:59
 #: src/features/auth/components/SignInForm.tsx:92
+#: src/features/auth/components/VerifyEmailStatus.tsx:63
 #: src/features/landing/components/SiteHeader.tsx:49
 msgid "Se connecter"
 msgstr ""
 
-#: src/features/assistant/components/AppSidebar.tsx:199
+#: src/features/assistant/components/AppSidebar.tsx:205
 msgid "Se déconnecter"
 msgstr ""
 
@@ -723,7 +904,7 @@ msgstr ""
 msgid "Séquence codante de <0>HBB</0>, positions c.1 à c.24."
 msgstr ""
 
-#: src/shared/api/errors.ts:32
+#: src/shared/api/errors.ts:40
 msgid "Service momentanément indisponible. Réessayez."
 msgstr ""
 
@@ -733,6 +914,10 @@ msgstr ""
 
 #: src/features/auth/components/ForgotPasswordForm.tsx:29
 msgid "Si un compte existe pour cette adresse, un lien de réinitialisation vient d'être envoyé."
+msgstr ""
+
+#: src/features/auth/components/ResendVerification.tsx:30
+msgid "Si une demande est en attente pour cette adresse, un nouveau lien vient d'être envoyé."
 msgstr ""
 
 #: src/features/assistant/components/AppSidebar.tsx:188
@@ -783,7 +968,7 @@ msgstr ""
 msgid "TP53 p.Arg175His a-t-il été reclassé ?"
 msgstr ""
 
-#: src/shared/api/errors.ts:26
+#: src/shared/api/errors.ts:32
 msgid "Trop de tentatives. Réessayez dans quelques minutes."
 msgstr ""
 
@@ -800,8 +985,8 @@ msgid "Une classification a changé ? L'ancienne et sa date de fin sont rappelé
 msgstr ""
 
 #: src/shared/api/errors.ts:24
-msgid "Une demande existe déjà pour cette adresse."
-msgstr ""
+#~ msgid "Une demande existe déjà pour cette adresse."
+#~ msgstr ""
 
 #: src/features/landing/components/Method.tsx:21
 msgid "Une incohérence entre étapes arrête la mise à jour : la base consultée n'est jamais partielle."
@@ -819,11 +1004,17 @@ msgstr ""
 msgid "Une réponse sourcée"
 msgstr ""
 
+#: src/features/admin/components/AccessRequests.tsx:82
+#: src/features/auth/components/OnboardingForm.tsx:100
+msgid "Usage prévu"
+msgstr ""
+
 #: src/features/auth/components/SignUpForm.tsx:28
+#: src/shared/api/errors.ts:26
 msgid "Utilisez l'adresse de votre établissement ou laboratoire, pas une messagerie personnelle."
 msgstr ""
 
-#: src/features/auth/components/PendingStatus.tsx:48
+#: src/features/auth/components/PendingStatus.tsx:49
 msgid "Validation par un administrateur"
 msgstr ""
 
@@ -831,8 +1022,12 @@ msgstr ""
 msgid "variants ClinVar courants"
 msgstr ""
 
-#: src/features/auth/components/PendingStatus.tsx:42
+#: src/features/auth/components/PendingStatus.tsx:43
 msgid "Vérification de l'e-mail"
+msgstr ""
+
+#: src/features/auth/components/VerifyEmailStatus.tsx:46
+msgid "Vérification de votre adresse…"
 msgstr ""
 
 #: src/features/auth/components/ForgotPasswordForm.tsx:26
@@ -843,24 +1038,32 @@ msgstr ""
 msgid "Voir un exemple de réponse"
 msgstr ""
 
+#: src/features/auth/components/ResetPasswordForm.tsx:56
+msgid "Vos autres sessions ont été fermées. Connectez-vous avec votre nouveau mot de passe."
+msgstr ""
+
 #: src/features/assistant/components/AppSidebar.tsx:87
 msgid "Vos conversations apparaîtront ici."
 msgstr ""
 
-#: src/features/auth/components/PendingStatus.tsx:28
+#: src/features/auth/components/PendingStatus.tsx:29
 msgid "Votre adresse est confirmée. Vous serez prévenu par e-mail dès que votre accès sera activé."
 msgstr ""
 
-#: src/shared/api/errors.ts:21
+#: src/shared/api/errors.ts:23
 msgid "Votre demande d'accès est en cours d'examen."
 msgstr ""
 
-#: src/shared/api/errors.ts:22
+#: src/shared/api/errors.ts:24
 msgid "Votre demande d'accès n'a pas été acceptée."
 msgstr ""
 
 #: src/features/auth/components/SignInForm.tsx:82
 msgid "Votre mot de passe"
+msgstr ""
+
+#: src/features/auth/components/OnboardingForm.tsx:61
+msgid "Votre profil"
 msgstr ""
 
 #: src/features/assistant/components/Composer.tsx:64
@@ -875,7 +1078,11 @@ msgstr ""
 msgid "Vous devez accepter ces conditions pour continuer."
 msgstr ""
 
-#: src/features/auth/components/PendingStatus.tsx:49
+#: src/shared/api/errors.ts:19
+msgid "Vous n'avez pas accès à cette action."
+msgstr ""
+
+#: src/features/auth/components/PendingStatus.tsx:50
 msgid "Vous recevrez un e-mail"
 msgstr ""
 

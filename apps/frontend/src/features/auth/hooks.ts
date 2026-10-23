@@ -1,6 +1,16 @@
 import { queryOptions, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getSessionFn, signInFn, signOutFn, signUpFn, forgotPasswordFn } from './server'
-import type { SignInInput, SignUpInput } from '@/shared/api/contracts'
+import {
+  completeOnboardingFn,
+  forgotPasswordFn,
+  getSessionFn,
+  resendVerificationFn,
+  resetPasswordFn,
+  signInFn,
+  signOutFn,
+  signUpFn,
+  verifyEmailFn,
+} from './server'
+import type { OnboardingInput, SignInInput, SignUpInput } from '@/shared/api/contracts'
 
 export const sessionQuery = queryOptions({
   queryKey: ['auth', 'session'],
@@ -31,5 +41,31 @@ export function useSignOut() {
   return useMutation({
     mutationFn: () => signOutFn(),
     onSuccess: () => queryClient.setQueryData(sessionQuery.queryKey, null),
+  })
+}
+
+export function useResendVerification() {
+  return useMutation({ mutationFn: (email: string) => resendVerificationFn({ data: { email } }) })
+}
+
+export function useVerifyEmail() {
+  return useMutation({ mutationFn: (token: string) => verifyEmailFn({ data: { token } }) })
+}
+
+export function useResetPassword() {
+  return useMutation({
+    mutationFn: (data: { token: string; password: string }) => resetPasswordFn({ data }),
+  })
+}
+
+/** On success the session is refreshed: still signed in when activated at once, signed out otherwise. */
+export function useCompleteOnboarding() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (data: OnboardingInput) => completeOnboardingFn({ data }),
+    onSuccess: (result) => {
+      if (!result.ok) return
+      queryClient.setQueryData(sessionQuery.queryKey, result.user.status === 'active' ? result.user : null)
+    },
   })
 }

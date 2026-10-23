@@ -15,10 +15,17 @@ import { LocalizedLink } from '@/shared/components/LocalizedLink'
 export const Route = createFileRoute('/$lang/_auth')({
   beforeLoad: async ({ context, params, location }) => {
     const user = await context.queryClient.ensureQueryData(sessionQuery)
+    const onOnboarding = location.pathname.endsWith('/onboarding')
+    // A verified account without its profile yet has one page to go to: the onboarding form.
+    if (user?.status === 'onboarding') {
+      if (!onOnboarding) throw redirect({ to: '/$lang/onboarding', params })
+      return
+    }
     if (user) {
       const target = (location.search as { redirect?: unknown }).redirect
       throw redirect({ href: safeRedirect(target, `/${params.lang}/assistant`) })
     }
+    if (onOnboarding) throw redirect({ to: '/$lang/sign-in', params })
   },
   loader: ({ context }) => context.queryClient.ensureQueryData(panelsQuery),
   component: AuthLayout,

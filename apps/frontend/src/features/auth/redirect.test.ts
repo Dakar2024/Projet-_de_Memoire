@@ -23,6 +23,9 @@ describe('safeRedirect', () => {
     ['fr/assistant'],
     ['/fr/sign-in'],
     ['/en/pending?reason=pending_email'],
+    ['/fr/onboarding'],
+    ['/fr/verify-email?token=abc'],
+    ['/fr/reset-password?token=abc'],
   ])('falls back for %j', (target) => {
     expect(safeRedirect(target, FALLBACK)).toBe(FALLBACK)
   })

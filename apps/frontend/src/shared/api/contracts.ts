@@ -23,8 +23,29 @@ export type User = {
   fullName: string
   role: Role
   status: AccountStatus
+  /** Null until onboarding is completed. */
+  profession: Profession | null
+  organization: string | null
+}
+
+/** Profile completed after the e-mail check, before the admin review (PUT /api/me/onboarding). */
+export type OnboardingInput = {
+  fullName: string
   profession: Profession
   organization: string
+  intendedUse: string
+}
+
+/** A completed profile waiting for an admin decision (GET /api/admin/requests). */
+export type AccessRequest = {
+  id: string
+  email: string
+  fullName: string
+  profession: Profession | null
+  organization: string | null
+  intendedUse: string | null
+  emailVerifiedAt: string | null
+  createdAt: string
 }
 
 export type SignInInput = {
@@ -112,6 +133,13 @@ export type ConversationSummary = {
   id: string
   title: string
   updatedAt: string
+  pinned?: boolean
+}
+
+/** GET /api/assistant/conversations — newest first, keyset pagination. */
+export type ConversationPage = {
+  items: ConversationSummary[]
+  nextCursor: string | null
 }
 
 /** GET /api/assistant/conversations/{id} */
@@ -140,18 +168,27 @@ export type ApiErrorBody = {
   request_id?: string
 }
 
+/** Every `error` value the backend sends (apps/backend/README.md). */
 export type ApiErrorCode =
   | 'unauthorized'
+  | 'forbidden'
   | 'invalid_credentials'
+  | 'invalid_password'
   | 'account_pending_email'
   | 'account_pending_review'
   | 'account_rejected'
   | 'account_suspended'
-  | 'email_taken'
+  | 'email_not_professional'
+  | 'registration_closed'
+  | 'invalid_token'
+  | 'invalid_transition'
+  | 'last_admin'
   | 'validation_error'
   | 'rate_limited'
   | 'not_found'
   | 'quota_exceeded'
+  | 'budget_exhausted'
+  | 'panel_filter_unavailable'
   | 'assistant_busy'
   | 'assistant_unavailable'
   | 'index_building'
