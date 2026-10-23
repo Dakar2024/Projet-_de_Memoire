@@ -15,8 +15,9 @@ if [ ! -f .env ]; then
   exit 1
 fi
 set -a  # exporte les variables du .env
-# shellcheck disable=SC1091
-. ./.env
+# Sans les CR : un .env édité sous Windows ferait échouer `.` (Docker Compose, lui, les tolère).
+# shellcheck disable=SC1090
+. <(tr -d '\r' < .env)
 set +a
 
 mkdir -p "${CIBLE}"
