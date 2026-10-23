@@ -1,0 +1,103 @@
+# Pile de l'application Genomica (backend). Projet distinct de la pile données/RAG,
+# qu'elle rejoint seulement par le réseau d'entrée de la passerelle RAG.
+name: genomica-apps
+
+x-backend-env: &backend-env
+  POSTGRES_HOST: db
+  POSTGRES_PORT: 5432
+  REDIS_URL: redis://redis:6379/0
+
+services:
+
+  # ──────────────────────────────────────────────
+  # API — Litestar, http://localhost:8100 (8000 est pris par Portainer)
+  # Docs : http://localhost:8100/docs
+  # Dev : code monté et rechargé à chaud ; le polling est nécessaire sur /mnt/c.
+  # ──────────────────────────────────────────────
+  api:
+    build:
+      context: .
+    command: sh -c "piccolo migrations forwards all && uvicorn app:app --host 0.0.0.0 --port 8000 --reload"
+    ports:
+      - "127.0.0.1:${API_PORT:-8100}:8000"
+    env_file:
+      - .env
+    environment:
+      <<: *backend-env
+      WATCHFILES_FORCE_POLLING: "true"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    networks:
+      - default
+      - rag-api-ingress
+    restart: unless-stopped
+
+  # ──────────────────────────────────────────────
+  # Worker — Huey consumer (e-mails, purges planifiées)
+  # ──────────────────────────────────────────────
+  worker:
+    build:
+      context: .
+    command: huey_consumer core.tasks.huey -w 2 -k thread
+    env_file:
+      - .env
+    environment: *backend-env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    restart: unless-stopped
+
+  # ──────────────────────────────────────────────
+  # PostgreSQL « apps » — distincte de rag-postgres et de la base Airflow
+  # Publiée sur 127.0.0.1:5433 pour les outils locaux, sans gêner un PostgreSQL déjà sur 5432.
+  # ──────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER:     ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB:       ${POSTGRES_DB}
+    ports:
+      - "127.0.0.1:${DB_PORT:-5433}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ──────────────────────────────────────────────
+  # Redis — broker Huey et compteurs de limitation de débit
+  # ──────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+networks:
+  # Créé par la pile données/RAG (docker-compose.yml du dépôt) : elle doit tourner avant celle-ci.
+  # L'API y joint la passerelle par http://genomique-rag-gateway:8080.
+  rag-api-ingress:
+    external: true
+    name: genomique_rag-api-ingress
+
+volumes:
+  postgres_data:
+  redis_data:
