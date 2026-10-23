@@ -15,7 +15,7 @@ from ingestion.storage import find_delta_tables, layer_uri, storage_options
 DELTA_LAYERS = ("silver", "gold")
 
 
-def _tables_by_name(lake: str, layer: str) -> dict[str, str]:
+def tables_by_name(lake: str, layer: str) -> dict[str, str]:
     """Indexe les tables Delta d'une couche par leur chemin relatif (`gold/rag/documents`)."""
     root = layer_uri(layer, lake)
     return {f"{layer}{uri[len(root):]}": uri for uri in find_delta_tables(root)}
@@ -30,8 +30,8 @@ def compare_lakes(restored_lake: str, reference_lake: str) -> list[str]:
     """Renvoie les écarts, triés par table, entre lac restauré et sauvegarde (absence, nombre de lignes)."""
     gaps: list[str] = []
     for layer in DELTA_LAYERS:
-        restored = _tables_by_name(restored_lake, layer)
-        reference = _tables_by_name(reference_lake, layer)
+        restored = tables_by_name(restored_lake, layer)
+        reference = tables_by_name(reference_lake, layer)
         for name in sorted(restored.keys() | reference.keys()):
             if name not in restored:
                 gaps.append(f"{name} : absente du lac restauré")
@@ -54,7 +54,7 @@ def main() -> int:
     parser.add_argument("--restaure", required=True, help="racine du lac restauré (ex. s3://)")
     parser.add_argument("--sauvegarde", required=True, help="racine de la sauvegarde (ex. file:///sauvegarde)")
     args = parser.parse_args()
-    tables = sum(len(_tables_by_name(args.sauvegarde, layer)) for layer in DELTA_LAYERS)
+    tables = sum(len(tables_by_name(args.sauvegarde, layer)) for layer in DELTA_LAYERS)
     gaps = compare_lakes(args.restaure, args.sauvegarde)
     for gap in gaps:
         print(f"   ÉCART  {gap}")
