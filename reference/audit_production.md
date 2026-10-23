@@ -54,7 +54,7 @@ Dix-neuf constats, dont cinq retenus comme prioritaires.
 |---|---|---|---|
 | **P1** | **Aucune alerte n'existe** : ni e-mail, ni rappel de fin de tâche, ni serveur d'envoi configuré. Scénario complet : le 10 du mois, l'archive ClinVar n'est pas encore publiée (elle paraît habituellement entre le 2 et le 6, mais rien ne le garantit) ; le téléchargement échoue en 404 ; trois tentatives espacées de cinq minutes échouent aussi ; l'Asset de fin d'acquisition n'est donc jamais émis ; **les deux DAGs de panel ne se déclenchent pas du tout**. Le mois est absent, et rien ne le signale. | Élevée | **Bloquant** |
 | **P3** | **Les logs d'Airflow ne survivent pas à une reconstruction.** Aucun volume n'est monté sur `/opt/airflow/logs` : les journaux résident dans le système de fichiers des conteneurs. Un `docker compose up -d --build`, une montée de version ou un simple `down` efface l'intégralité des logs de tâches. Le post-mortem d'un incident de la semaine précédente est alors impossible. | Certaine | **Bloquant** |
-| P17 | **Aucune procédure de reprise écrite.** Que faire si un mois manque, si une table Gold est corrompue, si le stockage est perdu ? La réponse n'existe que dans la mémoire de l'auteur. | — | Élevé |
+| P17 | **Aucune procédure de reprise écrite.** Que faire si un mois manque, si une table Gold est corrompue, si le stockage est perdu ? La réponse n'existe que dans la mémoire de l'auteur. **✅ 23/10/2026** : `reference/procedure_reprise.md`, par symptôme ; `bronze_to_silver` refuse désormais un mois antérieur à l'historique SCD2 (rejeu hors ordre prouvé corrupteur). | — | Élevé |
 
 ### 3.2 Durabilité et sauvegarde
 
@@ -145,7 +145,8 @@ Par ordre d'intérêt décroissant, si le pipeline devait tourner durablement sa
 3. **Découpler les conversions lourdes** de la limite mémoire du conteneur, en les sérialisant
    par un pool dédié plutôt qu'en comptant sur l'ordre du graphe (P7).
 4. **Définir une rétention Delta** et une règle de cycle de vie MinIO (P11, P9).
-5. **Écrire la procédure de reprise** : mois manquant, table corrompue, stockage perdu (P17).
+5. ~~**Écrire la procédure de reprise** : mois manquant, table corrompue, stockage perdu (P17).~~
+   Fait le 23/10/2026 : `reference/procedure_reprise.md`.
 6. **Épingler explicitement le schéma attendu des sources** et le vérifier à l'entrée, pour que
    la dérive d'une colonne produise un message explicite plutôt qu'une erreur de Polars (P13).
 

@@ -323,14 +323,23 @@ docker compose --env-file .env up -d rag-gateway                   # relance rag
 Les mots de passe des comptes ne sont pas dans le dump : `rag-postgres-init` les pose depuis `.env`.
 Si le Gold a changé depuis la sauvegarde, la prochaine indexation du DAG rattrape l'écart.
 
-Planification hebdomadaire (installée le 14/10/2026), visible avec `crontab -l` :
+**Planification** : `scripts/sauvegarde_si_necessaire.sh` tourne chaque heure et ne lance
+`sauvegarde.sh` que si la dernière copie a plus de 7 jours ou précède un run de panel réussi. Une
+machine éteinte à l'heure prévue est donc rattrapée à l'heure suivante, et chaque mois acquis est
+copié dès la fin de ses runs. Le script ne fait rien si la pile est arrêtée, et reporte la copie si
+un run Airflow est en cours, pour ne pas mélanger deux états du lac. À installer avec `crontab -e` :
 
 ```
-0 3 * * 0 cd /chemin/vers/Projet-_de_Memoire && ./scripts/sauvegarde.sh >> ~/sauvegarde.log 2>&1
+0 * * * * cd /chemin/vers/Projet-_de_Memoire && ./scripts/sauvegarde_si_necessaire.sh >> "$HOME/sauvegarde.log" 2>&1
 ```
 
-Cron ne rattrape pas une échéance manquée : machine éteinte le dimanche à 3 h, pas de sauvegarde
-cette semaine-là (consulter `~/sauvegarde.log`).
+> **Vécu le 23/10/2026 :** la crontab hebdomadaire du 14/10 et ses copies avaient disparu avec
+> l'environnement WSL, sans aucune alerte. Après une réinstallation de WSL, vérifier `crontab -l`
+> et `ls ~/sauvegardes-genomique`. Une copie sur le même disque ne protège pas d'une panne de ce
+> disque : `DESTINATION_SAUVEGARDE` peut viser un disque externe.
+
+**Reprendre après un incident** (mois manqué, e-mail d'échec, table corrompue, lac perdu) :
+`reference/procedure_reprise.md`, organisée par symptôme.
 
 ### Recevoir les alertes
 

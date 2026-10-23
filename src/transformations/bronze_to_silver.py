@@ -9,6 +9,7 @@ import polars as pl
 from deltalake import DeltaTable
 
 from ingestion.config import BRONZE, PANEL_GENES
+from ingestion.errors import OutOfOrderMonthError
 from ingestion.medgen import parse_medgen_conceptmeta
 from ingestion.storage import get_bytes, partition_uri, scan_parquet, storage_options
 from transformations.silver_io import silver_table_uri
@@ -290,6 +291,26 @@ def _build_hpo_term(bronze_partition: str) -> pl.DataFrame:
 _CLINVAR_WATCHED_FIELDS = ["clinicalsignificance", "reviewstatus", "lastevaluated"]
 
 
+def _check_month_order(table_uri: str, panel: str, logical_date: str) -> None:
+    """Refuse un mois antérieur au plus récent `valid_from` du panel ; le même mois reste rejouable.
+
+    La fusion SCD2 compare toujours aux lignes courantes : un mois ancien rejoué après un plus
+    récent fermerait les versions récentes avant leur début et rendrait l'état ancien courant.
+    """
+    if not DeltaTable.is_deltatable(table_uri, storage_options=storage_options(table_uri)):
+        return
+    latest = (
+        pl.read_delta(table_uri, columns=["panel", "valid_from"], storage_options=storage_options(table_uri))
+        .filter(pl.col("panel") == panel)["valid_from"]
+        .max()
+    )
+    if latest is not None and logical_date < latest:
+        raise OutOfOrderMonthError(
+            f"clinvar_variant ({panel}) contient déjà le mois {latest} : y ajouter {logical_date} "
+            "après lui fausserait l'historique SCD2 (voir reference/procedure_reprise.md)"
+        )
+
+
 def _write_clinvar_variant(
     rows: pl.DataFrame, table_uri: str, panel: str, logical_date: str
 ) -> None:
@@ -377,6 +398,8 @@ def _write_clinvar_variant(
 def bronze_to_silver(logical_date: str, panel: str, lake_uri: str | None = None) -> None:
     """Construit les dix tables Silver du panel ; seule `clinvar_variant` garde un historique (SCD2)."""
     genes = PANEL_GENES[panel]
+    # Avant toute écriture : les neuf instantanés reviendraient eux aussi au mois ancien.
+    _check_month_order(silver_table_uri("clinvar_variant", lake_uri), panel, logical_date)
 
     clinvar_partition = partition_uri(BRONZE, "clinvar", logical_date, lake_uri=lake_uri)
     hpo_partition = partition_uri(BRONZE, "hpo", logical_date, lake_uri=lake_uri)

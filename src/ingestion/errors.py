@@ -8,3 +8,7 @@ class ConfigurationError(RuntimeError):
 
 class SourceSchemaError(RuntimeError):
     """Colonnes d'une source différentes du schéma attendu : permanente, une relance relirait le même fichier."""
+
+
+class OutOfOrderMonthError(RuntimeError):
+    """Mois antérieur au dernier mois de l'historique Silver : permanente, le rejouer fausserait le SCD2."""

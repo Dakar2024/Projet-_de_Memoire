@@ -215,3 +215,20 @@ def test_delta_vacuum_runs_after_gold_is_checked_in_the_heavy_pool(dag):
     task = dag.get_task("vacuum_delta_tables")
     assert task.upstream_task_ids == {"quality_check_gold"}
     assert task.pool == HEAVY_CONVERSION_POOL
+
+
+def test_an_out_of_order_month_fails_without_consuming_retries(monkeypatch):
+    """Un mois antérieur à l'historique Silver le restera à chaque relance : échec définitif, message conservé."""
+    from airflow.sdk.exceptions import AirflowFailException
+
+    from dags import dag_genomic_pipeline
+    from ingestion.errors import OutOfOrderMonthError
+
+    def out_of_order(sources_date, panel):
+        raise OutOfOrderMonthError("clinvar_variant (brca) contient déjà le mois 2026-12-01")
+
+    monkeypatch.setattr(dag_genomic_pipeline, "bronze_to_silver", out_of_order)
+    dag = build_panel_dag("brca", ["BRCA1", "BRCA2"])
+
+    with pytest.raises(AirflowFailException, match="2026-12-01"):
+        dag.get_task("bronze_to_silver").python_callable("2026-11-01")

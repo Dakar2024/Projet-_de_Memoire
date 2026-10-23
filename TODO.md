@@ -46,11 +46,12 @@ Ce qui n'est pas encore fait. Les audits complets sont dans `reference/audit_sec
 
 ## 5. Robustesse du pipeline de données
 
-Références : `reference/audit_production.md`.
+Références : `reference/audit_production.md` ; reprise : `reference/procedure_reprise.md` (23/10).
 
-- [ ] **Procédure de reprise** (P17) : écrire la reprise d'une panne de plus d'un mois (Airflow ne
-      relance que la dernière échéance, les mois intermédiaires se rejouent à la main) et la
-      restauration après perte du lac.
+- [ ] **Installer la crontab de sauvegarde** (`scripts/sauvegarde_si_necessaire.sh`, chaque heure,
+      ligne dans le README) : la précédente a disparu avec WSL ; dernière copie le 23/10.
+- [ ] **Seconde copie hors du disque** (`DESTINATION_SAUVEGARDE` : disque externe ou dossier cloud
+      privé) : une copie sur le même SSD ne protège pas d'une panne de ce disque.
 
 ## 6. Sécurité
 

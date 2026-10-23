@@ -2,7 +2,9 @@ import io
 import json as _json
 
 import polars as pl
+import pytest
 
+from ingestion.errors import OutOfOrderMonthError
 from ingestion.storage import put_bytes
 from transformations.bronze_to_silver import (
     _build_clinvar_variant_disease,
@@ -13,6 +15,7 @@ from transformations.bronze_to_silver import (
     _build_medgen_tables,
     _build_ncbi_gene,
     _build_refseq_transcript,
+    _check_month_order,
     _load_clinvar_variants,
     _read_bronze_table,
     _write_clinvar_variant,
@@ -364,6 +367,37 @@ def test_write_clinvar_variant_does_not_touch_the_other_panel(tmp_path):
     assert result.filter(pl.col("panel") == "sickle")["clinicalsignificance"].to_list() == ["Benign"]
 
 
+def test_check_month_order_accepts_a_panel_without_history(tmp_path):
+    _check_month_order(f"file://{tmp_path}/lake/silver/clinvar_variant", "brca", "2026-08-01")
+
+
+@pytest.mark.parametrize("month", ["2026-09-01", "2026-10-01"])
+def test_check_month_order_accepts_the_latest_month_again_or_a_later_one(tmp_path, month):
+    uri = f"file://{tmp_path}/lake/silver/clinvar_variant"
+    _write_clinvar_variant(_rows("1", "brca", "Benign"), uri, "brca", "2026-08-01")
+    _write_clinvar_variant(_rows("1", "brca", "Pathogenic"), uri, "brca", "2026-09-01")
+
+    _check_month_order(uri, "brca", month)
+
+
+def test_check_month_order_refuses_a_month_older_than_the_history(tmp_path):
+    """Rejouer novembre après décembre fermerait les versions de décembre au 1er novembre
+    et rendrait l'état de novembre « courant » : l'historique serait faux, sans erreur."""
+    uri = f"file://{tmp_path}/lake/silver/clinvar_variant"
+    _write_clinvar_variant(_rows("1", "brca", "Benign"), uri, "brca", "2026-10-01")
+    _write_clinvar_variant(_rows("1", "brca", "Pathogenic"), uri, "brca", "2026-12-01")
+
+    with pytest.raises(OutOfOrderMonthError, match="2026-12-01.*2026-11-01"):
+        _check_month_order(uri, "brca", "2026-11-01")
+
+
+def test_check_month_order_ignores_the_history_of_the_other_panel(tmp_path):
+    uri = f"file://{tmp_path}/lake/silver/clinvar_variant"
+    _write_clinvar_variant(_rows("1", "sickle", "Benign"), uri, "sickle", "2026-12-01")
+
+    _check_month_order(uri, "brca", "2026-11-01")
+
+
 def test_build_ncbi_gene_extracts_known_esummary_fields(tmp_path):
     df = pl.DataFrame({
         "gene_symbol": ["HBB"],
@@ -635,3 +669,18 @@ def test_build_clinvar_variant_disease_keeps_identifiers_when_a_group_is_misalig
     assert result["disease_name"].to_list() == [None, None]
     assert result["medgen_cui"].to_list() == ["C1", None]
     assert result["omim_id"].to_list() == [None, "222"]
+
+
+def test_bronze_to_silver_refuses_an_older_month_before_writing_anything(tmp_path):
+    """Les neuf autres tables sont des instantanés : les écrire avant de refuser les
+    ramènerait elles aussi à l'état du mois ancien."""
+    lake = f"file://{tmp_path}/lake"
+    _seed_all_bronze(tmp_path, lake, "sickle")
+    _write_clinvar_variant(
+        _rows("1", "sickle", "Benign"), f"{lake}/silver/clinvar_variant", "sickle", "2026-10-01"
+    )
+
+    with pytest.raises(OutOfOrderMonthError):
+        bronze_to_silver("2026-09-01", "sickle", lake_uri=lake)
+
+    assert not (tmp_path / "lake" / "silver" / "ncbi_gene").exists()

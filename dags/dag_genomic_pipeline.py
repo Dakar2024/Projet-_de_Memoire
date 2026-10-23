@@ -22,7 +22,7 @@ from dags.common.panels import (
     RAG_INDEX_POOL,
     SOURCES_READY,
 )
-from ingestion.errors import ConfigurationError
+from ingestion.errors import ConfigurationError, OutOfOrderMonthError
 from ingestion.http_client import NcbiClient
 from ingestion.storage import assert_partitions_complete
 from scripts.ingest_hpo_terms import ingest_hpo_terms
@@ -121,7 +121,11 @@ def build_panel_dag(panel: str, genes: list[str]) -> DAG:
 
         @task(task_id="bronze_to_silver", pool=HEAVY_CONVERSION_POOL)
         def task_bronze_to_silver(sources_date: str) -> None:
-            bronze_to_silver(sources_date, panel)
+            try:
+                bronze_to_silver(sources_date, panel)
+            except OutOfOrderMonthError as exc:
+                # Une relance lirait le même historique : échec définitif, avec la marche à suivre.
+                raise AirflowFailException(str(exc)) from exc
 
         @task(task_id="quality_check_silver")
         def task_quality_check_silver(sources_date: str) -> None:
