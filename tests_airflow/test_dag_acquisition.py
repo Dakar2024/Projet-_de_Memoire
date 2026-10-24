@@ -103,6 +103,24 @@ def test_an_archive_not_yet_published_fails_without_consuming_retries(monkeypatc
         dag.get_task("download_clinvar_bulk").python_callable("2026-12-01")
 
 
+@pytest.mark.parametrize(
+    ("task_id", "ingest"), [("download_clinvar_bulk", "ingest_clinvar"), ("download_hpo_files", "ingest_hpo_files")]
+)
+def test_a_full_disk_fails_without_consuming_retries(monkeypatch, task_id, ingest):
+    """D-E3b-3 : `ensure_free_space` refuse avant tout téléchargement ; une relance 5 min plus tard
+    trouverait le même disque plein (E3b P2 : 4 essais, 15 min perdues)."""
+    from dags import dag_acquisition_sources
+    from ingestion.errors import ConfigurationError
+
+    def full_disk(logical_date):
+        raise ConfigurationError("espace disque insuffisant : 1,0 Gio libres pour 2,0 Gio requis")
+
+    monkeypatch.setattr(dag_acquisition_sources, ingest, full_disk)
+
+    with pytest.raises(AirflowFailException, match="espace disque insuffisant"):
+        dag.get_task(task_id).python_callable("2026-10-01")
+
+
 def test_a_changed_source_schema_fails_without_consuming_retries(monkeypatch):
     """Une relance relirait le même fichier : l'erreur de schéma est définitive (P13)."""
     from dags import dag_acquisition_sources

@@ -93,13 +93,18 @@ with DAG(
     def download_clinvar_bulk(acquisition_date: str) -> str:
         try:
             return ingest_clinvar(acquisition_date)
-        except ArchiveNotPublishedError as exc:
-            # Les relances (15 min) ne suffiraient pas : la parution se compte en jours.
+        except (ArchiveNotPublishedError, ConfigurationError) as exc:
+            # Archive pas encore parue (des jours), disque plein (à libérer) : les relances de
+            # 15 min referaient le même constat (D-E3b-3).
             raise AirflowFailException(str(exc)) from exc
 
     @task(task_id="download_hpo_files")
     def download_hpo_files(acquisition_date: str) -> str:
-        return ingest_hpo_files(acquisition_date)
+        try:
+            return ingest_hpo_files(acquisition_date)
+        except ConfigurationError as exc:
+            # Disque plein : une relance trouverait le même disque (D-E3b-3).
+            raise AirflowFailException(str(exc)) from exc
 
     @task(task_id="check_raw_shared")
     def check_raw_shared(clinvar_partition: str, hpo_partition: str) -> None:

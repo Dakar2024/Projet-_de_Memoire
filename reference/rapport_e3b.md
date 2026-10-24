@@ -6,7 +6,7 @@ Critères fixés **avant** les mesures. Pile isolée `genomique-e3b` (spec § 3)
 | Niveau | État |
 |---|---|
 | 6 — Restauration | ✅ conforme ; un défaut du pipeline trouvé (D-E3b-1), **corrigé et revérifié** |
-| 5 — Comportement en panne | ✅ six scénarios joués ; deux défauts trouvés (D-E3b-2 corrigé, D-E3b-3 à corriger), une réserve (O-E3b-2) |
+| 5 — Comportement en panne | ✅ six scénarios joués ; deux défauts trouvés et corrigés (D-E3b-2, D-E3b-3), une réserve (O-E3b-2) |
 | 7a — Onze fiches (utilisateur) | à faire |
 | 7b — 400 variants contre l'API ClinVar | à faire |
 
@@ -36,7 +36,7 @@ sur un `NoSuchKey` brut, après les ingestions NCBI et trois relances. **Corrig�
 `resolve_sources_date` vérifie d'abord que le bronze ClinVar et HPO du mois est complet, et échoue
 sans relance (« lancer d'abord dag_acquisition_sources pour ce mois »).
 
-### Défaut D-E3b-3 — erreurs permanentes relancées
+### Défaut D-E3b-3 — erreurs permanentes relancées (corrigé)
 
 **Observé** (P2, P4, et le 24/10 à 01:24 quand le disque C: était plein) : `ensure_free_space`
 lève une `ConfigurationError` documentée « non relancée », et `quality_check_silver` une
@@ -44,6 +44,11 @@ lève une `ConfigurationError` documentée « non relancée », et `quality_chec
 `download_hpo_files`, `quality_check_silver`, et de même `quality_check_gold`) ne les convertit en
 `AirflowFailException`. Chaque relance refait le même constat : 15 min perdues, et le mail d'échec
 dit « après 4 essais, erreur peut-être passagère » au lieu de « corriger la cause ».
+
+**Correction** (24/10/2026, avec l'accord de l'utilisateur) : ces quatre tâches convertissent leur
+erreur en `AirflowFailException`, message conservé. Tests d'abord, rouges sur l'ancien code.
+**Revérifié en réel** : P2 rejoué à 15:19, échec des deux téléchargements au **1er essai**, run
+terminé en 13 s.
 
 ### Observation O-E3b-1 — run manuel avant `start_date`
 

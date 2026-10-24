@@ -34,8 +34,8 @@ from scripts.ingest_ncbi_gene import build_client, ingest_ncbi_gene
 from scripts.ingest_refseq import ingest_refseq
 from transformations.bronze_to_silver import bronze_to_silver
 from transformations.delta_maintenance import vacuum_delta_tables
-from transformations.quality_check_gold import quality_check_gold
-from transformations.quality_check_silver import quality_check_silver
+from transformations.quality_check_gold import GoldQualityError, quality_check_gold
+from transformations.quality_check_silver import SilverQualityError, quality_check_silver
 from transformations.raw_to_bronze import raw_to_bronze
 from transformations.silver_to_gold_analytique import silver_to_gold_analytique
 from transformations.silver_to_gold_rag import silver_to_gold_rag
@@ -149,7 +149,11 @@ def build_panel_dag(panel: str, genes: list[str]) -> DAG:
 
         @task(task_id="quality_check_silver")
         def task_quality_check_silver(sources_date: str) -> None:
-            quality_check_silver(sources_date, panel)
+            try:
+                quality_check_silver(sources_date, panel)
+            except SilverQualityError as exc:
+                # Le contrôle relit les mêmes tables : une relance referait le même constat (D-E3b-3).
+                raise AirflowFailException(str(exc)) from exc
 
         @task(task_id="silver_to_gold_rag", pool=HEAVY_CONVERSION_POOL)
         def task_silver_to_gold_rag(sources_date: str) -> None:
@@ -161,7 +165,10 @@ def build_panel_dag(panel: str, genes: list[str]) -> DAG:
 
         @task(task_id="quality_check_gold")
         def task_quality_check_gold(sources_date: str) -> None:
-            quality_check_gold(sources_date, panel)
+            try:
+                quality_check_gold(sources_date, panel)
+            except GoldQualityError as exc:
+                raise AirflowFailException(str(exc)) from exc
 
         # Tables partagées entre panels : une écriture à la fois, comme les conversions.
         @task(task_id="vacuum_delta_tables", pool=HEAVY_CONVERSION_POOL)

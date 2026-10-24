@@ -338,6 +338,35 @@ def test_delta_vacuum_runs_after_gold_is_checked_in_the_heavy_pool(dag):
     assert task.pool == HEAVY_CONVERSION_POOL
 
 
+@pytest.mark.parametrize(
+    ("task_id", "check", "error"),
+    [
+        ("quality_check_silver", "quality_check_silver", "SilverQualityError"),
+        ("quality_check_gold", "quality_check_gold", "GoldQualityError"),
+    ],
+)
+def test_a_failed_quality_check_fails_without_consuming_retries(dag, monkeypatch, task_id, check, error):
+    """D-E3b-3 : le contrôle relit les mêmes tables ; une relance refait le même constat
+    (E3b P4 : 4 essais, 15 min, et un e-mail « erreur peut-être passagère »)."""
+    from airflow.sdk.exceptions import AirflowFailException
+
+    from dags import dag_genomic_pipeline
+    from transformations import quality_check_gold, quality_check_silver
+
+    errors = {
+        "SilverQualityError": quality_check_silver.SilverQualityError,
+        "GoldQualityError": quality_check_gold.GoldQualityError,
+    }
+
+    def blocked(sources_date, panel):
+        raise errors[error]("46 % des variants courants absents")
+
+    monkeypatch.setattr(dag_genomic_pipeline, check, blocked)
+
+    with pytest.raises(AirflowFailException, match="46 %"):
+        dag.get_task(task_id).python_callable("2026-10-01")
+
+
 def test_an_out_of_order_month_fails_without_consuming_retries(monkeypatch):
     """Un mois antérieur à l'historique Silver le restera à chaque relance : échec définitif, message conservé."""
     from airflow.sdk.exceptions import AirflowFailException
