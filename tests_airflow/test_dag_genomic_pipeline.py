@@ -42,6 +42,7 @@ def test_panel_dag_has_the_expected_tasks(dag):
         "quality_check_gold",
         "index_rag_documents",
         "vacuum_delta_tables",
+        "notify_run_success",
     })
 
 
@@ -191,6 +192,73 @@ def test_missing_shared_sources_fail_without_consuming_retries(dag, monkeypatch)
         _resolve(dag, conf={"sources_date": "2026-10-01"})
 
 
+def test_the_success_email_is_the_last_task_after_the_index_and_the_vacuum(dag):
+    """Envoyé seulement si tout le reste a réussi (règle par défaut `all_success`)."""
+    task = dag.get_task("notify_run_success")
+
+    assert task.upstream_task_ids == {
+        "index_rag_documents", "vacuum_delta_tables", "resolve_sources_date",
+    }
+    assert task.downstream_task_ids == set()
+    assert task.trigger_rule == "all_success"
+
+
+def _notify_success(dag, clear_number=0):
+    ti = SimpleNamespace(
+        dag_id="dag_genomic_pipeline_brca", run_id="manual__2026-10-24",
+        log_url="http://localhost:8080/dags/dag_genomic_pipeline_brca/runs/manual__2026-10-24/tasks/notify_run_success?try_number=1",
+        get_task_breadcrumbs=lambda dag_id, run_id: [
+            {"task_id": "ingest_medgen", "duration": 260.0},
+            {"task_id": "bronze_to_silver", "duration": 8.0},
+            {"task_id": "check_raw", "duration": None},
+        ],
+    )
+    dag_run = SimpleNamespace(start_date=NOW, clear_number=clear_number)
+    report = {"panel": "brca", "embedded": 2, "deleted": 0, "unchanged": 10, "canary_cosine": 1.0}
+    return dag.get_task("notify_run_success").python_callable(
+        "2026-10-01", report, ti=ti, dag_run=dag_run, dag=dag,
+    )
+
+
+def test_a_successful_run_sends_the_success_email(dag, smtp_outbox):
+    _notify_success(dag)
+
+    assert smtp_outbox[0]["to"] == ["alerte@example.test"]
+    assert smtp_outbox[0]["subject"] == "[genomique] Succès dag_genomic_pipeline_brca — 10/2026"
+    text = smtp_outbox[0]["email"].text
+    assert "ingest_medgen" in text
+    assert "2 vectorisés" in text
+    assert "http://localhost:8080/dags/dag_genomic_pipeline_brca/runs/manual__2026-10-24" in text
+    assert "/tasks/" not in text
+
+
+def test_a_relaunched_run_sends_a_success_after_relaunch(dag, smtp_outbox):
+    _notify_success(dag, clear_number=1)
+
+    assert smtp_outbox[0]["subject"].endswith("après relance")
+
+
+def test_no_recipient_sends_no_success_email(dag, smtp_outbox, monkeypatch):
+    from airflow.sdk.exceptions import AirflowSkipException
+
+    monkeypatch.setenv("ALERT_EMAIL", "")
+
+    with pytest.raises(AirflowSkipException, match="ALERT_EMAIL"):
+        _notify_success(dag)
+    assert smtp_outbox == []
+
+
+def test_the_index_task_returns_its_report_for_the_success_email(dag, monkeypatch):
+    from RAG.src.ingestion import indexer
+    from RAG.src.ingestion.indexer import IndexReport
+
+    monkeypatch.setattr(indexer, "run_index", lambda panel: IndexReport(panel, 1, 2, 3, 0.99))
+
+    assert dag.get_task("index_rag_documents").python_callable() == {
+        "panel": "brca", "deleted": 1, "embedded": 2, "unchanged": 3, "canary_cosine": 0.99,
+    }
+
+
 def test_task_failures_are_emailed(dag):
     """Un pipeline mensuel sans surveillance : sans alerte, un échec ne se voit que
     si quelqu'un ouvre l'interface. Le destinataire vient de l'environnement pour
@@ -205,9 +273,10 @@ def test_task_failures_are_emailed(dag):
 
 
 def test_rag_indexing_runs_last_on_checked_gold_only(dag):
-    """On n'indexe que des documents contrôlés : jamais avant quality_check_gold."""
+    """On n'indexe que des documents contrôlés : jamais avant quality_check_gold. Seul le mail
+    de succès vient après."""
     assert dag.get_task("index_rag_documents").upstream_task_ids == {"quality_check_gold"}
-    assert dag.get_task("index_rag_documents").downstream_task_ids == set()
+    assert dag.get_task("index_rag_documents").downstream_task_ids == {"notify_run_success"}
 
 
 def test_rag_indexing_is_serialised_and_has_room_for_a_full_cpu_run(dag):

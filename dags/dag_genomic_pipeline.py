@@ -1,6 +1,7 @@
 """DAG médaillon d'un panel : raw → bronze → silver → gold, puis indexation RAG."""
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import sys
 from pathlib import Path
@@ -9,9 +10,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from airflow.sdk import DAG, task
-from airflow.sdk.exceptions import AirflowFailException
+from airflow.sdk.exceptions import AirflowFailException, AirflowSkipException
 
-from dags.common.alerting import alert_args
+from dags.common.alerting import alert_args, alert_recipients
 from dags.common.dates import resolve_sources_date
 from dags.common.panels import (
     HEAVY_CONVERSION_POOL,
@@ -45,6 +46,10 @@ DEFAULT_ARGS = {
     "retry_delay": dt.timedelta(minutes=5),
     "execution_timeout": dt.timedelta(hours=3),
 }
+
+
+# Tâches les plus longues citées par l'e-mail de succès.
+SUCCESS_LONGEST_TASKS = 3
 
 
 def client_or_fail() -> NcbiClient:
@@ -169,15 +174,47 @@ def build_panel_dag(panel: str, genes: list[str]) -> DAG:
             pool=RAG_INDEX_POOL,
             execution_timeout=dt.timedelta(hours=6),
         )
-        def task_index_rag_documents() -> None:
+        def task_index_rag_documents() -> dict:
+            """Indexe le Gold du panel et renvoie le bilan, repris par l'e-mail de succès."""
             # Import ici : une dépendance RAG manquante ne casse que cette tâche, pas l'analyse de tous les DAGs.
             from RAG.src.ingestion.indexer import run_index
             from RAG.src.utils.errors import RagPermanentError
 
             try:
-                run_index(panel)
+                return dataclasses.asdict(run_index(panel))
             except RagPermanentError as exc:
                 raise AirflowFailException(str(exc)) from exc
+
+        # Dernière tâche : ne part que si tout le reste a réussi, y compris après une relance.
+        @task(task_id="notify_run_success")
+        def task_notify_run_success(sources_date: str, index_report: dict | None, **context) -> None:
+            """Envoie l'e-mail de succès du run : chaque mois, un succès ou un échec, jamais de silence."""
+            from dags.common import mailer, preflight
+            from dags.common.emails import RunSuccess, success_email
+
+            destinataires = alert_recipients()
+            if not destinataires:
+                raise AirflowSkipException("ALERT_EMAIL vide : aucun e-mail de succès envoyé")
+            ti, dag_run = context["ti"], context["dag_run"]
+            durations = [
+                (crumb["task_id"], crumb["duration"])
+                for crumb in ti.get_task_breadcrumbs(ti.dag_id, ti.run_id)
+                if crumb.get("duration")
+            ]
+            success = RunSuccess(
+                dag_id=ti.dag_id,
+                dag_description=getattr(context.get("dag"), "description", None),
+                run_id=ti.run_id,
+                month=sources_date,
+                started=dag_run.start_date,
+                ended=preflight.utcnow(),
+                clear_number=dag_run.clear_number,
+                index=index_report,
+                longest=sorted(durations, key=lambda d: d[1], reverse=True)[:SUCCESS_LONGEST_TASKS],
+                # Lien du run, tiré de celui du journal : même base d'URL que les e-mails d'échec.
+                run_url=ti.log_url.split("/tasks/")[0] if getattr(ti, "log_url", None) else None,
+            )
+            mailer.send_email(destinataires, success_email(success))
 
         sources_date = task_resolve_sources_date()
         checked_raw = task_check_raw(
@@ -196,7 +233,10 @@ def build_panel_dag(panel: str, genes: list[str]) -> DAG:
         checked_bronze >> silver >> quality >> [gold_rag, gold_analytique]
         checked_gold = task_quality_check_gold(sources_date)
         [gold_rag, gold_analytique] >> checked_gold
-        checked_gold >> [task_index_rag_documents(), task_vacuum_delta_tables()]
+        index_report = task_index_rag_documents()
+        vacuum = task_vacuum_delta_tables()
+        checked_gold >> [index_report, vacuum]
+        vacuum >> task_notify_run_success(sources_date, index_report)
 
     return dag
 

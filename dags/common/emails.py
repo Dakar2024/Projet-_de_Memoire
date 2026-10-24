@@ -58,6 +58,24 @@ class Failure:
     log_url: str | None
 
 
+@dataclass(frozen=True)
+class RunSuccess:
+    """Ce qu'un e-mail de succès doit dire, réuni par la dernière tâche d'un DAG de panel."""
+
+    dag_id: str
+    dag_description: str | None
+    run_id: str
+    month: str
+    started: dt.datetime
+    ended: dt.datetime
+    # Nombre de Clear du run : au-dessus de zéro, c'est une relance après échec qui a abouti.
+    clear_number: int
+    # Bilan de `index_rag_documents` (XCom), absent si la tâche n'en a pas rendu.
+    index: dict | None
+    longest: list[tuple[str, float]]
+    run_url: str | None
+
+
 def _compose(
     subject: str,
     title: str,
@@ -144,6 +162,52 @@ def catch_up_email(scheduled: dt.datetime, started: dt.datetime, month: str) -> 
         "Run mensuel rattrapé",
         paragraphs,
         footnote="Un e-mail suivra si une tâche échoue.",
+    )
+
+
+def _duration(seconds: float) -> str:
+    """Durée lisible : `4 min 20 s`, `8 s`."""
+    minutes, secs = divmod(round(seconds), 60)
+    return f"{minutes} min {secs:02d} s" if minutes else f"{secs} s"
+
+
+def _thousands(number: int) -> str:
+    return f"{number:,}".replace(",", " ")
+
+
+def success_email(success: RunSuccess) -> Email:
+    """Succès d'un run de panel : mois traité, durée, relance éventuelle, index RAG et tâches longues."""
+    month = f"{success.month[5:7]}/{success.month[:4]}"
+    relaunched = success.clear_number > 0
+    where = success.dag_description or success.dag_id
+    paragraphs = [
+        f"{where} ({success.dag_id}), run {success.run_id}.",
+        (
+            f"Mois traité : {month}. Démarré le {success.started:%d/%m/%Y à %H:%M} UTC, "
+            f"durée {_duration((success.ended - success.started).total_seconds())}."
+        ),
+    ]
+    if relaunched:
+        paragraphs.append("Le run avait échoué : la relance est allée jusqu'au bout.")
+    if success.index:
+        paragraphs.append(
+            f"Index RAG : {_thousands(success.index['embedded'])} vectorisés, "
+            f"{_thousands(success.index['deleted'])} supprimés, "
+            f"{_thousands(success.index['unchanged'])} inchangés."
+        )
+    rows = [
+        _Row(task_id, "OK", _duration(seconds), _STATUS_COLOR[Status.OK])
+        for task_id, seconds in success.longest
+    ]
+    suffix = " après relance" if relaunched else ""
+    return _compose(
+        f"Succès {success.dag_id} — {month}{suffix}",
+        f"Run du panel terminé{suffix}",
+        paragraphs,
+        rows=rows,
+        button_url=success.run_url,
+        button_label="Ouvrir le run",
+        footnote="Tâches les plus longues ci-dessus. Un e-mail de succès part à chaque run de panel réussi.",
     )
 
 

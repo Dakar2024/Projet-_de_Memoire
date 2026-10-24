@@ -360,7 +360,13 @@ par le relais SMTP de [Resend](https://resend.com), port 465 en SSL. Renseigner 
 - `ALERT_FROM` : expéditeur sur ce domaine, vérifié chez Resend (SPF et DKIM) ;
 - `ALERT_EMAIL` : destinataires séparés par des virgules.
 
-Les e-mails du pipeline (échec, rappels J-2 et jour J, rattrapage) reprennent le design de ceux de
+Chaque run de panel réussi se termine par un e-mail de succès (`notify_run_success`) : mois traité,
+durée, tâches les plus longues, bilan de l'index RAG, et « après relance » si le run avait échoué
+puis été relancé (Clear). Chaque mois, on reçoit donc un succès ou un échec, jamais rien. Si le
+relais SMTP est en panne, cette dernière tâche échoue et le run passe en échec alors que les
+données sont à jour : c'est voulu, la confirmation n'est pas arrivée.
+
+Les e-mails du pipeline (succès, échec, rappels J-2 et jour J, rattrapage) reprennent le design de ceux de
 l'application : gabarit `dags/common/templates/message.html`, logo intégré au message
 (`dags/common/mailer.py`), version texte jointe. L'e-mail d'échec dit si l'échec est définitif ou
 survenu après les relances, montre le message d'erreur et renvoie au journal de la tâche.

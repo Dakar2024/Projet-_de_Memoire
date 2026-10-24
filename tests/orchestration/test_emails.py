@@ -5,9 +5,11 @@ from markupsafe import escape
 from dags.common.emails import (
     LOGO_CID,
     Failure,
+    RunSuccess,
     catch_up_email,
     failure_email,
     reminder_email,
+    success_email,
 )
 from dags.common.preflight import Check, Reminder, Status
 
@@ -21,6 +23,7 @@ def test_every_pipeline_email_uses_the_application_design_with_its_logo():
         reminder_email(EARLY, [], Status.OK),
         catch_up_email(SCHEDULED, STARTED, "2026-11-01"),
         failure_email(FAILURE),
+        success_email(SUCCESS),
     ):
         assert f'src="cid:{LOGO_CID}"' in email.html
         assert "Genomica" in email.html
@@ -157,3 +160,63 @@ def test_failure_without_log_url_has_no_button():
     email = failure_email(Failure(**{**FAILURE.__dict__, "log_url": None}))
 
     assert "Ouvrir le journal" not in email.html
+
+
+SUCCESS = RunSuccess(
+    dag_id="dag_genomic_pipeline_brca",
+    dag_description="Pipeline médaillon — Cancer du sein héréditaire",
+    run_id="asset_triggered__2026-11-10T06:21:00",
+    month="2026-11-01",
+    started=dt.datetime(2026, 11, 10, 6, 21, tzinfo=dt.UTC),
+    ended=dt.datetime(2026, 11, 10, 6, 29, 9, tzinfo=dt.UTC),
+    clear_number=0,
+    index={"embedded": 12, "deleted": 3, "unchanged": 93612},
+    longest=[("ingest_medgen", 260.4), ("bronze_to_silver", 8.2)],
+    run_url="http://localhost:8080/dags/dag_genomic_pipeline_brca/runs/asset_triggered__2026-11-10T06%3A21%3A00",
+)
+
+
+def test_success_subject_names_the_dag_and_the_month():
+    assert success_email(SUCCESS).subject == "[genomique] Succès dag_genomic_pipeline_brca — 11/2026"
+
+
+def test_success_gives_month_start_and_duration():
+    text = success_email(SUCCESS).text
+
+    assert "Mois traité : 11/2026" in text
+    assert "10/11/2026 à 06:21 UTC" in text
+    assert "8 min 09 s" in text
+    assert "Pipeline médaillon — Cancer du sein héréditaire" in text
+
+
+def test_success_reports_the_rag_index_and_the_longest_tasks():
+    text = success_email(SUCCESS).text
+
+    assert "12 vectorisés, 3 supprimés, 93 612 inchangés" in text
+    assert "ingest_medgen" in text and "4 min 20 s" in text
+
+
+def test_success_links_to_the_run():
+    email = success_email(SUCCESS)
+
+    assert f'href="{SUCCESS.run_url}"' in email.html
+    assert "Ouvrir le run" in email.html
+
+
+def test_a_run_relaunched_after_a_failure_says_so():
+    """Cas demandé : la relance d'un run en échec est passée, jusqu'au bout."""
+    email = success_email(RunSuccess(**{**SUCCESS.__dict__, "clear_number": 1}))
+
+    assert email.subject.endswith("après relance")
+    assert "terminé après relance" in email.text
+
+
+def test_a_first_time_success_does_not_mention_a_relaunch():
+    assert "relance" not in success_email(SUCCESS).text
+
+
+def test_success_without_index_report_still_composes():
+    """Index absent du XCom (run d'avant cette version, par exemple) : le mail part quand même."""
+    text = success_email(RunSuccess(**{**SUCCESS.__dict__, "index": None})).text
+
+    assert "Index RAG" not in text
