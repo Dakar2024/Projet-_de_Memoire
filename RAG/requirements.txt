@@ -4,4 +4,7 @@ pgvector==0.5.0
 psycopg[binary]==3.3.4
 PyYAML==6.0.3
 litestar==2.24.0
+# multidict 7.2.0 (24/10/2026) refuse la liste d'en-têtes que Litestar lui passe (2.24 et 2.25) :
+# toute requête répond 500. À retirer quand Litestar suivra.
+multidict<7.2
 uvicorn==0.54.0
