@@ -151,3 +151,37 @@ def test_esummary_returns_result_for_uid():
     )
     client = NcbiClient(email="test@example.com", rate_limiter=_no_wait_limiter())
     assert client.esummary(db="gene", uid="3043") == {"name": "HBB"}
+
+
+@responses.activate
+def test_esummary_many_fetches_a_batch_in_one_call():
+    responses.add(
+        responses.GET,
+        "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi",
+        json={"result": {"uids": ["1", "2"], "1": {"uid": "1"}, "2": {"uid": "2", "error": "x"}}},
+        status=200,
+    )
+    client = NcbiClient(email="test@example.com", rate_limiter=_no_wait_limiter())
+
+    assert client.esummary_many(db="clinvar", uids=["1", "2"]) == {
+        "1": {"uid": "1"}, "2": {"uid": "2", "error": "x"},
+    }
+    assert len(responses.calls) == 1
+    assert "id=1%2C2" in responses.calls[0].request.url
+
+
+@responses.activate
+def test_efetch_returns_the_raw_text_of_a_batch():
+    responses.add(
+        responses.GET,
+        "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi",
+        body="<ClinVarResult-Set/>",
+        status=200,
+    )
+    client = NcbiClient(email="test@example.com", rate_limiter=_no_wait_limiter())
+
+    text = client.efetch(db="clinvar", uids=["1", "2"], rettype="vcv", is_variationid="true")
+
+    assert text == "<ClinVarResult-Set/>"
+    url = responses.calls[0].request.url
+    assert "id=1%2C2" in url and "rettype=vcv" in url and "retmode=xml" in url

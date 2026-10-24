@@ -106,3 +106,14 @@ class NcbiClient:
         """Renvoie le résumé d'un UID de la base `db`."""
         resp = self._get("esummary.fcgi", {"db": db, "id": uid})
         return resp.json()["result"][uid]
+
+    def esummary_many(self, db: str, uids: list[str]) -> dict[str, dict]:
+        """Renvoie les résumés de plusieurs UID en un appel ; un UID inconnu porte un champ `error`."""
+        resp = self._get("esummary.fcgi", {"db": db, "id": ",".join(uids)})
+        result = resp.json()["result"]
+        return {uid: result[uid] for uid in result["uids"]}
+
+    def efetch(self, db: str, uids: list[str], **params: str) -> str:
+        """Renvoie le XML brut de plusieurs UID de la base `db` (ex. `rettype="vcv"` pour ClinVar)."""
+        resp = self._get("efetch.fcgi", {"db": db, "id": ",".join(uids), "retmode": "xml", **params})
+        return resp.text

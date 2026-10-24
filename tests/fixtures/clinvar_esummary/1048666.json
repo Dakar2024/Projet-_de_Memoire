@@ -1,0 +1,145 @@
+{
+ "uid": "1048666",
+ "obj_type": "Deletion",
+ "accession": "VCV001048666",
+ "accession_version": "VCV001048666.3",
+ "title": "NC_000011.10:g.5224303_5227790del",
+ "variation_set": [
+  {
+   "measure_id": "1036754",
+   "variation_xrefs": [
+    {
+     "db_source": "ClinGen",
+     "db_id": "CA2499220996"
+    }
+   ],
+   "variation_name": "NC_000011.10:g.5224303_5227790del",
+   "cdna_change": "NC_000011.10:g.5224303_5227790del",
+   "aliases": [],
+   "variation_loc": [
+    {
+     "status": "current",
+     "assembly_name": "GRCh38",
+     "chr": "11",
+     "band": "11p15.4",
+     "start": "5224303",
+     "stop": "5227790",
+     "inner_start": "",
+     "inner_stop": "",
+     "outer_start": "",
+     "outer_stop": "",
+     "display_start": "5224303",
+     "display_stop": "5227790",
+     "assembly_acc_ver": "GCF_000001405.38",
+     "annotation_release": "",
+     "alt": "",
+     "ref": ""
+    },
+    {
+     "status": "previous",
+     "assembly_name": "GRCh37",
+     "chr": "11",
+     "band": "11p15.4",
+     "start": "5245533",
+     "stop": "5249020",
+     "inner_start": "",
+     "inner_stop": "",
+     "outer_start": "",
+     "outer_stop": "",
+     "display_start": "5245533",
+     "display_stop": "5249020",
+     "assembly_acc_ver": "GCF_000001405.25",
+     "annotation_release": "",
+     "alt": "",
+     "ref": ""
+    }
+   ],
+   "allele_freq_set": [],
+   "variant_type": "Deletion",
+   "canonical_spdi": "",
+   "common_name": ""
+  }
+ ],
+ "supporting_submissions": {
+  "scv": [
+   "SCV001548399"
+  ],
+  "rcv": [
+   "RCV001353256"
+  ]
+ },
+ "germline_classification": {
+  "description": "Pathogenic",
+  "last_evaluated": "2021/03/01 00:00",
+  "review_status": "no assertion criteria provided",
+  "fda_recognized_database": "",
+  "trait_set": [
+   {
+    "trait_xrefs": [
+     {
+      "db_source": "Orphanet",
+      "db_id": "848"
+     },
+     {
+      "db_source": "MedGen",
+      "db_id": "C0005283"
+     },
+     {
+      "db_source": "MONDO",
+      "db_id": "MONDO:0019402"
+     }
+    ],
+    "trait_name": "beta Thalassemia"
+   }
+  ]
+ },
+ "clinical_impact_classification": {
+  "description": "",
+  "last_evaluated": "1/01/01 00:00",
+  "review_status": "",
+  "fda_recognized_database": "",
+  "trait_set": []
+ },
+ "oncogenicity_classification": {
+  "description": "",
+  "last_evaluated": "1/01/01 00:00",
+  "review_status": "",
+  "fda_recognized_database": "",
+  "trait_set": []
+ },
+ "record_status": "",
+ "gene_sort": "HBB",
+ "chr_sort": "11",
+ "location_sort": "00000000000005224303",
+ "variation_set_name": "",
+ "variation_set_id": "",
+ "genes": [
+  {
+   "symbol": "HBB",
+   "geneid": "3043",
+   "strand": "-",
+   "source": "submitted"
+  },
+  {
+   "symbol": "LOC106099062",
+   "geneid": "106099062",
+   "strand": "+",
+   "source": "submitted"
+  },
+  {
+   "symbol": "LOC107133510",
+   "geneid": "107133510",
+   "strand": "+",
+   "source": "submitted"
+  },
+  {
+   "symbol": "LOC110006319",
+   "geneid": "110006319",
+   "strand": "+",
+   "source": "submitted"
+  }
+ ],
+ "molecular_consequence_list": [],
+ "protein_change": "",
+ "fda_recognized_database": ""
+}

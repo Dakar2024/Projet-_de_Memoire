@@ -1,0 +1,117 @@
+{
+ "uid": "242797",
+ "obj_type": "single nucleotide variant",
+ "accession": "VCV000242797",
+ "accession_version": "VCV000242797.1",
+ "title": "NM_001360016.2(G6PD):c.317C>G (p.Ser106Cys)",
+ "variation_set": [
+  {
+   "measure_id": "25431",
+   "variation_xrefs": [
+    {
+     "db_source": "OMIM",
+     "db_id": "305900.0032"
+    },
+    {
+     "db_source": "dbSNP",
+     "db_id": "267606835"
+    },
+    {
+     "db_source": "ClinVar",
+     "db_id": "10392"
+    }
+   ],
+   "variation_name": "NM_001360016.2(G6PD):c.317C>G (p.Ser106Cys)",
+   "cdna_change": "c.317C>G",
+   "aliases": [
+    "G6PD, SER106CYS"
+   ],
+   "variation_loc": [
+    {
+     "status": "current",
+     "assembly_name": "GRCh38",
+     "chr": "X",
+     "band": "Xq28",
+     "start": "154535336",
+     "stop": "154535336",
+     "inner_start": "",
+     "inner_stop": "",
+     "outer_start": "",
+     "outer_stop": "",
+     "display_start": "154535336",
+     "display_stop": "154535336",
+     "assembly_acc_ver": "GCF_000001405.38",
+     "annotation_release": "",
+     "alt": "",
+     "ref": ""
+    },
+    {
+     "status": "previous",
+     "assembly_name": "GRCh37",
+     "chr": "X",
+     "band": "Xq28",
+     "start": "153763551",
+     "stop": "153763551",
+     "inner_start": "",
+     "inner_stop": "",
+     "outer_start": "",
+     "outer_stop": "",
+     "display_start": "153763551",
+     "display_stop": "153763551",
+     "assembly_acc_ver": "GCF_000001405.25",
+     "annotation_release": "",
+     "alt": "",
+     "ref": ""
+    }
+   ],
+   "allele_freq_set": [],
+   "variant_type": "single nucleotide variant",
+   "canonical_spdi": "NC_000023.11:154535335:G:C",
+   "common_name": ""
+  }
+ ],
+ "supporting_submissions": {
+  "scv": [],
+  "rcv": []
+ },
+ "germline_classification": {
+  "description": "no classification for the single variant",
+  "last_evaluated": "1/01/01 00:00",
+  "review_status": "no classification for the single variant",
+  "fda_recognized_database": "",
+  "trait_set": []
+ },
+ "clinical_impact_classification": {
+  "description": "no classification for the single variant",
+  "last_evaluated": "1/01/01 00:00",
+  "review_status": "no classification for the single variant",
+  "fda_recognized_database": "",
+  "trait_set": []
+ },
+ "oncogenicity_classification": {
+  "description": "no classification for the single variant",
+  "last_evaluated": "1/01/01 00:00",
+  "review_status": "no classification for the single variant",
+  "fda_recognized_database": "",
+  "trait_set": []
+ },
+ "record_status": "",
+ "gene_sort": "G6PD",
+ "chr_sort": "X",
+ "location_sort": "00000000000154535336",
+ "variation_set_name": "",
+ "variation_set_id": "",
+ "genes": [
+  {
+   "symbol": "G6PD",
+   "geneid": "2539",
+   "strand": "-",
+   "source": "submitted"
+  }
+ ],
+ "molecular_consequence_list": [
+  "missense variant"
+ ],
+ "protein_change": "S106C, S136C",
+ "fda_recognized_database": ""
+}

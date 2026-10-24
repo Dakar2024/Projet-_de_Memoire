@@ -1,0 +1,97 @@
+<?xml version='1.0' encoding='utf-8'?>
+<ClinVarResult-Set>
+  <VariationArchive VariationID="37392" VariationName="NM_007294.4(BRCA1):c.116G&gt;A (p.Cys39Tyr)" Accession="VCV000037392">
+    <ClassifiedRecord>
+      <RCVList>
+        <RCVAccession Accession="RCV000030973">
+          <ClassifiedConditionList>
+            <ClassifiedCondition DB="MedGen" ID="C2676676">Breast-ovarian cancer, familial, susceptibility to, 1</ClassifiedCondition>
+          </ClassifiedConditionList>
+        </RCVAccession>
+        <RCVAccession Accession="RCV000222558">
+          <ClassifiedConditionList>
+            <ClassifiedCondition DB="MedGen" ID="C0027672">Hereditary cancer-predisposing syndrome</ClassifiedCondition>
+          </ClassifiedConditionList>
+        </RCVAccession>
+        <RCVAccession Accession="RCV000235619">
+          <ClassifiedConditionList>
+            <ClassifiedCondition DB="MedGen" ID="C3661900">not provided</ClassifiedCondition>
+          </ClassifiedConditionList>
+        </RCVAccession>
+        <RCVAccession Accession="RCV000496391">
+          <ClassifiedConditionList>
+            <ClassifiedCondition DB="MedGen" ID="C0677776">Hereditary breast ovarian cancer syndrome</ClassifiedCondition>
+          </ClassifiedConditionList>
+        </RCVAccession>
+        <RCVAccession Accession="RCV000677804">
+          <ClassifiedConditionList>
+            <ClassifiedCondition DB="MedGen" ID="C1458155">Breast neoplasm</ClassifiedCondition>
+          </ClassifiedConditionList>
+        </RCVAccession>
+        <RCVAccession Accession="RCV003332086">
+          <ClassifiedConditionList>
+            <ClassifiedCondition DB="MedGen" ID="C0005684">Malignant tumor of urinary bladder</ClassifiedCondition>
+          </ClassifiedConditionList>
+        </RCVAccession>
+      </RCVList>
+    </ClassifiedRecord>
+  </VariationArchive>
+  <VariationArchive VariationID="1048666" VariationName="NC_000011.10:g.5224303_5227790del" Accession="VCV001048666">
+    <ClassifiedRecord>
+      <RCVList>
+        <RCVAccession Accession="RCV001353256">
+          <ClassifiedConditionList>
+            <ClassifiedCondition DB="MedGen" ID="C0005283">beta Thalassemia</ClassifiedCondition>
+          </ClassifiedConditionList>
+        </RCVAccession>
+      </RCVList>
+    </ClassifiedRecord>
+  </VariationArchive>
+  <VariationArchive VariationID="1336926" VariationName="NM_001143992.2(WRAP53):c.1A&gt;G (p.Met1Val)" Accession="VCV001336926">
+    <ClassifiedRecord>
+      <RCVList>
+        <RCVAccession Accession="RCV001819412">
+          <ClassifiedConditionList>
+            <ClassifiedCondition DB="MedGen" ID="CN169374">not specified</ClassifiedCondition>
+          </ClassifiedConditionList>
+        </RCVAccession>
+        <RCVAccession Accession="RCV001869692">
+          <ClassifiedConditionList>
+            <ClassifiedCondition DB="MedGen" ID="C3661900">not provided</ClassifiedCondition>
+          </ClassifiedConditionList>
+        </RCVAccession>
+      </RCVList>
+    </ClassifiedRecord>
+  </VariationArchive>
+  <VariationArchive VariationID="242797" VariationName="NM_001360016.2(G6PD):c.317C&gt;G (p.Ser106Cys)" Accession="VCV000242797">
+    <ClassifiedRecord>
+      <RCVList />
+    </ClassifiedRecord>
+  </VariationArchive>
+  <VariationArchive VariationID="125855" VariationName="NM_007294.4(BRCA1):c.5468-18T&gt;A" Accession="VCV000125855">
+    <ClassifiedRecord>
+      <RCVList>
+        <RCVAccession Accession="RCV000112665">
+          <ClassifiedConditionList>
+            <ClassifiedCondition DB="MedGen" ID="C2676676">Breast-ovarian cancer, familial, susceptibility to, 1</ClassifiedCondition>
+          </ClassifiedConditionList>
+        </RCVAccession>
+        <RCVAccession Accession="RCV000430492">
+          <ClassifiedConditionList>
+            <ClassifiedCondition DB="MedGen" ID="CN169374">not specified</ClassifiedCondition>
+          </ClassifiedConditionList>
+        </RCVAccession>
+        <RCVAccession Accession="RCV000476139">
+          <ClassifiedConditionList>
+            <ClassifiedCondition DB="MedGen" ID="C0677776">Hereditary breast ovarian cancer syndrome</ClassifiedCondition>
+          </ClassifiedConditionList>
+        </RCVAccession>
+        <RCVAccession Accession="RCV003352771">
+          <ClassifiedConditionList>
+            <ClassifiedCondition DB="MedGen" ID="C0027672">Hereditary cancer-predisposing syndrome</ClassifiedCondition>
+          </ClassifiedConditionList>
+        </RCVAccession>
+      </RCVList>
+    </ClassifiedRecord>
+  </VariationArchive>
+</ClinVarResult-Set>
