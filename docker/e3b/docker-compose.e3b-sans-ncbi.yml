@@ -1,0 +1,10 @@
+# Scénario P3 de l'évaluation E3b (source indisponible), par-dessus docker-compose.e3b.yml :
+#   docker compose -p genomique-e3b -f docker-compose.yml -f docker/e3b/docker-compose.e3b.yml \
+#     -f docker/e3b/docker-compose.e3b-sans-ncbi.yml --env-file .env up -d airflow-scheduler
+# HTTPS vers un port fermé : NCBI et HPO deviennent injoignables comme lors d'une vraie panne réseau.
+# MinIO (HTTP interne), PostgreSQL et le relais SMTP (465, sans proxy) restent joignables.
+services:
+  airflow-scheduler:
+    environment:
+      HTTPS_PROXY: http://127.0.0.1:9
+      https_proxy: http://127.0.0.1:9

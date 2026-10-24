@@ -6,9 +6,57 @@ Critères fixés **avant** les mesures. Pile isolée `genomique-e3b` (spec § 3)
 | Niveau | État |
 |---|---|
 | 6 — Restauration | ✅ conforme ; un défaut du pipeline trouvé (D-E3b-1), **corrigé et revérifié** |
-| 5 — Comportement en panne | à faire |
+| 5 — Comportement en panne | ✅ six scénarios joués ; deux défauts trouvés (D-E3b-2 corrigé, D-E3b-3 à corriger), une réserve (O-E3b-2) |
 | 7a — Onze fiches (utilisateur) | à faire |
 | 7b — 400 variants contre l'API ClinVar | à faire |
+
+---
+
+## Niveau 5 — Comportement en panne (23 et 24/10/2026)
+
+Pile isolée, restaurée au niveau 6. **Scénarios reformulés sur le mois en cours** : le 24/10/2026,
+l'utilisateur a fixé la règle « le pipeline ne traite que le mois en cours, jamais un mois passé »
+(commit f597ec0). P3 ne vise donc plus 2019 mais octobre avec `force`, P6 ne vise plus un
+`bronze_to_silver` hors ordre mais le refus en amont. Mails reçus : ceux de la pile isolée, même
+`ALERT_EMAIL`.
+
+| # | Scénario | Provocation | Observé | Verdict |
+|---|---|---|---|---|
+| P1 | Conteneur tué en plein run | `docker kill` du scheduler isolé à 12:01:27 pendant `bronze_to_silver` (brca), redémarré à 12:02:40 | Les deux tâches en cours (`bronze_to_silver` brca, `ingest_refseq` sickle) marquées en échec à 12:02:15, réussies au 2ᵉ essai ; les deux runs vont au bout. Chaque table instantanée prend exactement 2 versions (une par panel, comme un run normal) : l'essai tué n'a rien commité. `clinvar_variant` reste v1, `gold/rag/documents` inchangé (R4). Deux mails de succès, aucun mail d'échec | ✅ |
+| P2 | Disque saturé | Scheduler isolé avec un tmpfs de 1 Gio sur `data/external`, acquisition d'octobre `force` | « espace disque insuffisant dans /opt/projet/data/external : 1,0 Gio libres pour 2,0 Gio requis », **avant tout téléchargement** ; mais **4 essais en 15 min** au lieu d'un échec immédiat ; aucun événement d'Asset | ⚠️ D-E3b-3 |
+| P3 | Source indisponible | Scheduler isolé derrière un proxy fermé (`HTTPS_PROXY=http://127.0.0.1:9`), archive retirée du cache, acquisition d'octobre `force` | ClinVar : `ProxyError` explicite, 4 essais en 15 min, mail d'échec « après 4 essais » ; aucun événement d'Asset ; aucun run de panel. HPO réussit sans réseau : un rejeu relit la release épinglée dans le manifest du mois (`v2026-09-01`) et le fichier en cache, voulu | ✅ |
+| P4 | Archive tronquée | Bronze ClinVar d'octobre réécrit avec une ligne sur deux (9 223 698 → 4 611 849), panel brca sur octobre | `quality_check_silver` : « 42722 variant(s) courant(s) sur 93615 absent(s) de l'instantané du mois, soit 46 % — au-delà du seuil de 5 % » ; Gold non construit (versions inchangées), rien d'indexé, pas de mail de succès. Mais 4 essais du contrôle (D-E3b-3) et Silver instantané réécrit avec les données tronquées (O-E3b-2) | ✅ réserve |
+| P5 | Double déclenchement | Trigger manuel sans date, octobre déjà publié | Mois résolu `2026-10-01` depuis l'heure de départ ; 6 tâches sautées par `skip_if_already_published` ; aucun événement d'Asset, aucun run de panel (7 s) | ✅ |
+| P6 | Mois passé | `--logical-date 2026-09-10` sur l'acquisition ; `sources_date 2026-09-01` sur brca | Les deux refusés au 1er essai, 4 s : « … hors du mois en cours (2026-10) : le pipeline ne traite que le mois en cours » ; aucune ingestion. Avant la règle (23/10) : `bronze_to_silver` des deux panels refusait septembre (« contient déjà le mois »), 24 versions Delta inchangées — la garde reste en filet | ✅ |
+
+### Défaut D-E3b-2 — panel lancé sur un mois sans sources partagées (corrigé)
+
+**Observé le 23/10** : un run de panel sur un mois sans acquisition échouait dans `bronze_to_silver`
+sur un `NoSuchKey` brut, après les ingestions NCBI et trois relances. **Corrigé** (f597ec0) :
+`resolve_sources_date` vérifie d'abord que le bronze ClinVar et HPO du mois est complet, et échoue
+sans relance (« lancer d'abord dag_acquisition_sources pour ce mois »).
+
+### Défaut D-E3b-3 — erreurs permanentes relancées
+
+**Observé** (P2, P4, et le 24/10 à 01:24 quand le disque C: était plein) : `ensure_free_space`
+lève une `ConfigurationError` documentée « non relancée », et `quality_check_silver` une
+`SilverQualityError` ; aucune des tâches qui les appellent (`download_clinvar_bulk`,
+`download_hpo_files`, `quality_check_silver`, et de même `quality_check_gold`) ne les convertit en
+`AirflowFailException`. Chaque relance refait le même constat : 15 min perdues, et le mail d'échec
+dit « après 4 essais, erreur peut-être passagère » au lieu de « corriger la cause ».
+
+### Observation O-E3b-1 — run manuel avant `start_date`
+
+Le 23/10, `--logical-date 2019-01-10` donnait un run « réussi » sans aucune tâche : Airflow ne crée
+pas de tâche avant le `start_date` du DAG (2026-01-01). Sans effet sur les données (rien n'est
+ingéré, conforme à la règle du mois en cours), mais sans message.
+
+### Observation O-E3b-2 — le Silver n'est pas protégé par son propre contrôle
+
+Le contrôle Silver bloque le Gold, pas le Silver : `bronze_to_silver` a déjà remplacé les tables
+instantanées du panel par les données tronquées (v7 → v8). L'application et le RAG lisent le Gold,
+resté sain ; le Silver reste faux jusqu'au prochain run correct (`procedure_reprise.md` § 5.1 :
+réacquérir le mois avec `force`).
 
 ---
 

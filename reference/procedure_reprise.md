@@ -103,20 +103,21 @@ relancé par Clear après le run du mois suivant (règle 3). La garde a refusé 
 
 ## 5. Perte ou corruption du stockage
 
-### 5.1 Données fausses publiées pour le dernier mois
+### 5.1 Données fausses publiées pour le mois en cours
 
-Un bug corrigé après le run du mois : rejouer **ce mois-là** (le plus récent, donc sans risque
-pour l'historique). L'acquisition d'un mois déjà publié est sautée, il faut la forcer :
+Un bug corrigé, ou une archive tronquée bloquée par `quality_check_silver` (le Silver instantané
+du panel est alors déjà réécrit, seul le Gold est protégé) : rejouer **le mois en cours**, avant la
+fin du mois (règle 3). L'acquisition d'un mois déjà publié est sautée, il faut la forcer :
 
 ```bash
 docker compose exec airflow-scheduler \
-  airflow dags trigger dag_acquisition_sources --logical-date 2026-10-15 --conf '{"force": true}'
+  airflow dags trigger dag_acquisition_sources --conf '{"force": true}'
 ```
 
-Le jour est ramené au 1er du mois. Choisir un jour qu'aucun run n'utilise déjà : Airflow refuse
-deux runs de même date logique. Si seule la partie panel est en cause, relancer le panel seul :
-`airflow dags trigger dag_genomic_pipeline_brca --conf '{"sources_date": "2026-10-01"}'`.
-Vérifiée le 23/10/2026 (sans `force` : run sauté, aucun événement d'Asset, aucun run de panel).
+Si seule la partie panel est en cause, relancer le panel seul :
+`airflow dags trigger dag_genomic_pipeline_brca --conf '{"sources_date": "2026-10-01"}'` (mois en
+cours). Un mois passé n'est plus corrigeable (règle 2). Vérifiée le 23/10/2026 (sans `force` : run
+sauté, aucun événement d'Asset, aucun run de panel) et le 24/10/2026 sans date (P5 d'E3b).
 
 ### 5.2 Une table Delta corrompue
 
@@ -199,8 +200,9 @@ d'un run de panel la reconstruit depuis le Gold, en environ 4 h sur CPU.
 
 ## 6. Aucun e-mail du tout
 
-Ni rappel J-2, ni rappel jour J, ni e-mail d'échec ou de rattrapage autour du 10 : l'envoi lui-même
-est en panne. `dag_test_alerte` échoue volontairement et doit produire un e-mail ; il est en pause
+Ni rappel J-2, ni rappel jour J, ni e-mail de succès, d'échec ou de rattrapage autour du 10 :
+l'envoi lui-même est en panne. Chaque run de panel réussi envoie un e-mail de succès
+(`notify_run_success`) : après le 10, **le silence n'est donc jamais normal**. `dag_test_alerte` échoue volontairement et doit produire un e-mail ; il est en pause
 dès sa création :
 
 ```bash

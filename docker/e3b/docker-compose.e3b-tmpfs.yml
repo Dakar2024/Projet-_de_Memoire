@@ -1,0 +1,8 @@
+# Scénario P2 de l'évaluation E3b (disque saturé), par-dessus docker-compose.e3b.yml :
+#   docker compose -p genomique-e3b -f docker-compose.yml -f docker/e3b/docker-compose.e3b.yml \
+#     -f docker/e3b/docker-compose.e3b-tmpfs.yml --env-file .env up -d airflow-scheduler
+# 1 Gio sous le seuil de 2 Gio de `ensure_free_space` : le vrai code échoue, sans remplir le disque de l'hôte.
+services:
+  airflow-scheduler:
+    tmpfs:
+      - /opt/projet/data/external:size=1g,mode=1777
