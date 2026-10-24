@@ -8,7 +8,7 @@ Critères fixés **avant** les mesures. Pile isolée `genomique-e3b` (spec § 3)
 | 6 — Restauration | ✅ conforme ; un défaut du pipeline trouvé (D-E3b-1), **corrigé et revérifié** |
 | 5 — Comportement en panne | ✅ six scénarios joués ; deux défauts trouvés et corrigés (D-E3b-2, D-E3b-3), une réserve (O-E3b-2) |
 | 7a — Onze fiches (utilisateur) | à faire |
-| 7b — 400 variants contre l'API ClinVar | à faire |
+| 7b — 400 variants contre l'API ClinVar | ✅ 400/400 conformes, Wilson 95 % [99,05 ; 100] ; règle des maladies corrigée après mesure (P-E3b-1), les deux résultats donnés |
 
 ---
 
@@ -149,3 +149,82 @@ lancé deux fois sur les deux panels) :
 Le Gold analytique de la pile principale garde l'ancienne dimension jusqu'au prochain run de panel.
 
 Sorties : `data/experiments/e3b/ecarts_rejeu.txt`, `data/experiments/e3b/memoire.csv`.
+
+---
+
+## Niveau 7b — 400 variants contre l'API ClinVar (24/10/2026)
+
+**Ce que 7b prouve, et ce qu'il ne prouve pas.** Il vérifie **nos transformations** (lecture du
+fichier mensuel, filtres de panel, jointures, HGVS, éclatement des maladies) contre une autre voie
+d'accès aux mêmes données, les E-utilities. Il ne vérifie pas ClinVar lui-même, puisque la source
+est la même : c'est le rôle de la lecture humaine de 7a.
+
+**Tirage** (`scripts/verifier_justesse.py --tirage`) : 400 variants courants du Silver d'octobre
+(`valid_from` 2026-10-01), graine 20261023, au prorata des panels : 385 brca sur 93 615, 15 sickle
+sur 3 577. Trié par `variationid` avant le tirage, donc indépendant de l'ordre de lecture Delta ;
+figé dans `data/experiments/e3b/tirage.json`.
+
+L'échantillon contient les cas difficiles :
+- **dbSNP et dates** : 64 variants sans dbSNP (`-1`), 12 sans date d'évaluation ;
+- **classification** : 11 sans classification germinale (`-`), 24 revus par un panel d'experts,
+  9 sans critères ;
+- **maladies** : 20 sans maladie, 64 avec trois maladies ou plus ;
+- **forme** : 1 variant multi-gènes, 3 noms génomiques (`NC_`), 51 délétions.
+
+**Comparaison** (`--comparer`, scheduler principal, lecture seule du lac, aucun run en cours) :
+- les **cinq premiers champs** viennent d'`esummary` par lots de 200 ;
+- les **maladies** viennent du XML VCV d'`efetch` (`rettype=vcv`) par lots de 20 ;
+- durée : 21 s, en 22 appels.
+
+Le code de comparaison est pur (`src/evaluation/clinvar_agreement.py`) et testé sur des fiches
+réelles mises en fixtures.
+
+| Champ | Règle | Écarts |
+|---|---|---|
+| Nom HGVS | `name` = `title`, au caractère près | 0 |
+| Signification | égalité ; `-` chez nous = vide dans l'API (piège 3) | 0 |
+| Statut de revue | idem | 0 |
+| Date d'évaluation | API ≥ nôtre ; absente des deux côtés = égal | 0 |
+| dbSNP | le nôtre ∈ ceux de l'API ; `-1` = aucun dans l'API | 0 |
+| Maladies | les nôtres ⊆ conditions des RCV de la fiche, `not provided` et `not specified` exclus | 0 |
+
+**Résultat : 400 conformes sur 400**, aucune fiche absente, aucune mise à jour postérieure.
+Intervalle de Wilson à 95 % : [99,05 % ; 100 %]. Le taux d'erreur de nos transformations sur les
+variants courants est donc, avec 95 % de confiance, inférieur à 1 %.
+
+La règle du piège 1 (mise à jour postérieure) est testée mais n'a pas servi. Il n'y a que trois
+semaines entre l'archive d'octobre et l'API : aucune date d'évaluation n'a bougé dans l'échantillon.
+
+### Correction de protocole P-E3b-1 — les maladies comparées au mauvais champ
+
+**Règle fixée d'avance** : nos maladies ⊆ `germline_classification.trait_set` de l'esummary.
+
+**Mesure avec cette règle** : 339 conformes, 61 écarts, soit 84,75 %, Wilson [80,9 ; 87,9].
+- **61 écarts sur les maladies.** Des maladies présentes chez nous manquent dans l'API. Exemple :
+  125855, dont la date est identique des deux côtés, a chez nous « Breast-ovarian cancer, familial,
+  susceptibility to, 1 », absente du `trait_set`.
+- **11 écarts sur la signification et le statut.** Ce sont des variants sans classification
+  germinale : `-` dans le fichier, chaîne vide dans l'API. C'était un défaut du comparateur (la
+  sentinelle n'était pas normalisée), corrigé tests d'abord. Ces 11 variants étaient déjà comptés
+  dans les 61.
+
+**Cause**, établie avant tout changement de la règle :
+- Le README de ClinVar (`tab_delimited/README`) dit que `PhenotypeList` liste les maladies
+  **par RCV** : « the sets of names per RCV are separated by a pipe ». Il y inclut le contexte des
+  données fonctionnelles.
+- Le `trait_set` de l'esummary ne garde que les maladies de la classification **germinale
+  agrégée**. Les deux champs n'ont donc pas le même périmètre.
+- Vérifié sur les 61 écarts, en lisant les conditions des RCV dans le XML VCV : **61 sur 61** sont
+  entièrement inclus.
+
+**Décision** (utilisateur, 24/10/2026) : comparer les maladies aux conditions des RCV, et donner
+les deux résultats. Le détail de la mesure avec la règle d'origine est conservé dans
+`data/experiments/e3b/comparaisons_regle_initiale.csv` et `resume_regle_initiale.json`.
+
+Ce n'est pas un défaut du pipeline : le Silver reproduit fidèlement le fichier. C'est une précision
+pour le RAG. La ligne « Associated conditions » du document d'un variant cite les maladies de ses
+RCV, pas seulement celles de sa classification germinale. Une maladie citée ne veut donc pas dire
+« classé pathogène pour cette maladie ».
+
+Sorties : `data/experiments/e3b/tirage.json`, `comparaisons.csv`, `resume.json`.
+
