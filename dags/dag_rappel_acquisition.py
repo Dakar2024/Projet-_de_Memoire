@@ -32,10 +32,8 @@ with DAG(
     @task(task_id="envoyer_rappel")
     def envoyer_rappel(**context) -> str:
         """Lance les contrôles et envoie le rappel ; renvoie l'état global."""
-        from airflow.providers.smtp.hooks.smtp import SmtpHook
-
-        from dags.common import preflight
-        from dags.common.emails import reminder_html, reminder_subject
+        from dags.common import mailer, preflight
+        from dags.common.emails import reminder_email
         from ingestion.config import DATA_EXTERNAL_DIR
         from ingestion.maintenance import free_bytes
         from ingestion.storage import layer_reachable
@@ -61,12 +59,7 @@ with DAG(
         ]
         status = preflight.overall(checks)
 
-        with SmtpHook() as smtp:
-            smtp.send_email_smtp(
-                to=destinataires,
-                subject=reminder_subject(reminder, status),
-                html_content=reminder_html(reminder, checks, status),
-            )
+        mailer.send_email(destinataires, reminder_email(reminder, checks, status))
         return status.value
 
     envoyer_rappel()

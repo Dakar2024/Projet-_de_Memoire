@@ -210,26 +210,32 @@ Deux familles de DAGs (pipelines Airflow) :
 | `dag_genomic_pipeline_brca` | Panel cancer du sein : sources NCBI, puis `raw` → `bronze` → `silver` → `gold` | Automatique à la fin de l'acquisition, ou manuel |
 | `dag_genomic_pipeline_sickle` | Panel drépanocytose : idem | idem |
 
-Dans l'interface, activer les DAGs (interrupteur « unpause »). **Activer suffit pour le mois en
-cours** : Airflow lance aussitôt la dernière échéance passée du 10, et la relance de lui-même au
-redémarrage si la machine était éteinte ce jour-là (un e-mail « Rattrapage » le signale). Le
-bouton ▶ **Trigger** sert à acquérir un autre mois. Un mois déjà publié est sauté
-(`skip_if_already_published`), pour ne pas faire tourner les panels deux fois ; le forcer après une
-correction demande `force`. En ligne de commande :
+Dans l'interface, activer les DAGs (interrupteur « unpause »). **Le pipeline ne traite que le
+mois en cours, jamais un mois passé** : le mois traité est celui du démarrage réel du run. Activer
+suffit : Airflow lance aussitôt la dernière échéance passée, qui ingère le mois en cours, puis
+chaque 10 à 6 h UTC. Le run du 10 relit le mois même s'il a déjà été acquis, pour prendre ce qui a
+changé. Si la machine était éteinte le 10, Airflow relance de lui-même au redémarrage (e-mail
+« Rattrapage » avec le mois traité) ; un mois entièrement manqué n'est pas rattrapé.
+
+Le bouton ▶ **Trigger** relance le mois en cours. Un mois déjà publié est alors sauté
+(`skip_if_already_published`), pour ne pas faire tourner les panels deux fois ; le relire après
+une correction demande `force`. Une date d'un autre mois est refusée. En ligne de commande :
 
 ```bash
-# Acquisition : la date logique (AAAA-MM-JJ) est obligatoire pour un run manuel
-docker compose exec airflow-scheduler \
-  airflow dags trigger dag_acquisition_sources --logical-date 2026-09-01
+# Acquisition du mois en cours (sans date)
+docker compose exec airflow-scheduler airflow dags trigger dag_acquisition_sources
 
-# Réacquérir un mois déjà publié (après une correction), ce qui relance aussi les panels
+# Relire le mois en cours déjà publié (après une correction), ce qui relance aussi les panels
 docker compose exec airflow-scheduler \
-  airflow dags trigger dag_acquisition_sources --logical-date 2026-09-01 --conf '{"force": true}'
+  airflow dags trigger dag_acquisition_sources --conf '{"force": true}'
 
-# Un panel, sur des sources déjà acquises à cette date
+# Un panel seul, sur les sources du mois en cours déjà acquises
 docker compose exec airflow-scheduler \
-  airflow dags trigger dag_genomic_pipeline_brca --conf '{"sources_date": "2026-09-01"}'
+  airflow dags trigger dag_genomic_pipeline_brca --conf '{"sources_date": "2026-10-01"}'
 ```
+
+L'archive ClinVar d'un mois paraît le premier jeudi (au plus tard le 7) : un run lancé avant
+échoue sans relance (« pas encore publiée ») et le run du 10 la prend.
 
 > Un run de panel va jusqu'au bout : `quality_check_gold` est la dernière tâche, et elle bloque
 > la suite si le Gold ne reflète pas fidèlement le Silver.
@@ -353,6 +359,11 @@ par le relais SMTP de [Resend](https://resend.com), port 465 en SSL. Renseigner 
 - `RESEND_API_KEY` : clé à permission « Sending access », limitée au domaine d'envoi ;
 - `ALERT_FROM` : expéditeur sur ce domaine, vérifié chez Resend (SPF et DKIM) ;
 - `ALERT_EMAIL` : destinataires séparés par des virgules.
+
+Les e-mails du pipeline (échec, rappels J-2 et jour J, rattrapage) reprennent le design de ceux de
+l'application : gabarit `dags/common/templates/message.html`, logo intégré au message
+(`dags/common/mailer.py`), version texte jointe. L'e-mail d'échec dit si l'échec est définitif ou
+survenu après les relances, montre le message d'erreur et renvoie au journal de la tâche.
 
 La connection `smtp_default` est déclarée dans `docker-compose.yml` (`AIRFLOW_CONN_SMTP_DEFAULT`),
 jamais dans la base d'Airflow. Laisser `ALERT_EMAIL` vide ne casse rien : seul l'envoi est

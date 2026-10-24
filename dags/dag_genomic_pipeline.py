@@ -20,11 +20,13 @@ from dags.common.panels import (
     PANEL_SOURCES,
     PANELS,
     RAG_INDEX_POOL,
+    SHARED_SOURCES,
     SOURCES_READY,
 )
+from ingestion.config import BRONZE
 from ingestion.errors import ConfigurationError, OutOfOrderMonthError
 from ingestion.http_client import NcbiClient
-from ingestion.storage import assert_partitions_complete
+from ingestion.storage import IncompletePartitionError, assert_partitions_complete, partition_uri
 from scripts.ingest_hpo_terms import ingest_hpo_terms
 from scripts.ingest_medgen import ingest_medgen
 from scripts.ingest_ncbi_gene import build_client, ingest_ncbi_gene
@@ -69,16 +71,29 @@ def build_panel_dag(panel: str, genes: list[str]) -> DAG:
 
         @task(task_id="resolve_sources_date")
         def task_resolve_sources_date(**context) -> str:
-            """Renvoie la date des sources (événement d'Asset ou `--conf`)."""
-            dag_run = context.get("dag_run")
+            """Renvoie la date des sources (événement d'Asset ou `--conf`, mois en cours) une fois
+            vérifié que l'acquisition de ce mois a publié son bronze partagé."""
+            dag_run = context["dag_run"]
             try:
-                return resolve_sources_date(
+                sources_date = resolve_sources_date(
                     context.get("triggering_asset_events"),
                     SOURCES_READY,
-                    dag_run.conf if dag_run else None,
+                    dag_run.conf,
+                    started_at=dag_run.start_date,
                 )
             except ConfigurationError as exc:
                 raise AirflowFailException(str(exc)) from exc
+            # D-E3b-2 : sans ce contrôle, un mois sans acquisition échouait sur un `NoSuchKey`
+            # brut dans bronze_to_silver, après trois relances et toutes les ingestions NCBI.
+            try:
+                assert_partitions_complete(
+                    [partition_uri(BRONZE, source, sources_date) for source in SHARED_SOURCES]
+                )
+            except IncompletePartitionError as exc:
+                raise AirflowFailException(
+                    f"{exc} — lancer d'abord dag_acquisition_sources pour ce mois"
+                ) from exc
+            return sources_date
 
         # Les ingestions NCBI passent par le pool à un slot ; HPO (ontology.jax.org) reste hors pool.
         @task(task_id="ingest_ncbi_gene", pool=NCBI_POOL)

@@ -17,20 +17,13 @@ os.environ["ALERT_EMAIL"] = "alerte@example.test"
 
 @pytest.fixture
 def smtp_outbox(monkeypatch):
-    """Remplace le hook SMTP : capture les mails au lieu de les envoyer."""
-    import airflow.providers.smtp.hooks.smtp as smtp_module
+    """Remplace l'envoi des e-mails du pipeline : les capture au lieu de les envoyer."""
+    from dags.common import mailer
 
     mails = []
 
-    class FakeSmtpHook:
-        def __enter__(self):
-            return self
+    def capture(to, email):
+        mails.append({"to": to, "subject": email.subject, "email": email})
 
-        def __exit__(self, *exc):
-            return False
-
-        def send_email_smtp(self, **kwargs):
-            mails.append(kwargs)
-
-    monkeypatch.setattr(smtp_module, "SmtpHook", FakeSmtpHook)
+    monkeypatch.setattr(mailer, "send_email", capture)
     return mails

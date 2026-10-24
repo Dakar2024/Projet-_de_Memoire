@@ -1,8 +1,10 @@
 import re
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
+from airflow.sdk.exceptions import AirflowFailException
 
 from dags.common.alerting import alert_args, alert_recipients
 
@@ -22,16 +24,86 @@ def test_no_recipient_means_no_callback(monkeypatch):
     assert alert_args() == {}
 
 
-def test_failure_callback_targets_the_recipients_and_names_the_task(monkeypatch):
-    from airflow.providers.smtp.notifications.smtp import SmtpNotifier
+def _failure_context(exception, try_number=1):
+    ti = SimpleNamespace(
+        dag_id="dag_genomic_pipeline_brca", task_id="bronze_to_silver",
+        run_id="manual__2026-10-24", try_number=try_number, log_url="http://localhost:8080/log",
+    )
+    return {"ti": ti, "dag": SimpleNamespace(description="Pipeline médaillon — BRCA"),
+            "exception": exception}
 
+
+def test_failure_callback_sends_the_failure_email_to_the_recipients(monkeypatch, smtp_outbox):
     monkeypatch.setenv("ALERT_EMAIL", "a@example.test")
     notifier = alert_args()["on_failure_callback"]
 
-    assert isinstance(notifier, SmtpNotifier)
-    assert notifier.to == ["a@example.test"]
-    assert "ti.task_id" in notifier.subject
-    assert "exception" in notifier.html_content
+    notifier.notify(_failure_context(AirflowFailException("mois refusé")))
+
+    assert smtp_outbox[0]["to"] == ["a@example.test"]
+    assert smtp_outbox[0]["subject"] == "[genomique] Échec dag_genomic_pipeline_brca.bronze_to_silver"
+    email = smtp_outbox[0]["email"]
+    assert "mois refusé" in email.text
+    assert "Pipeline médaillon — BRCA" in email.text
+    assert "http://localhost:8080/log" in email.text
+
+
+def test_an_airflow_fail_exception_is_reported_as_definitive(monkeypatch, smtp_outbox):
+    monkeypatch.setenv("ALERT_EMAIL", "a@example.test")
+
+    alert_args()["on_failure_callback"].notify(_failure_context(AirflowFailException("x")))
+
+    assert "sans relance" in smtp_outbox[0]["email"].text
+
+
+def test_any_other_exception_is_reported_after_its_retries(monkeypatch, smtp_outbox):
+    monkeypatch.setenv("ALERT_EMAIL", "a@example.test")
+
+    alert_args()["on_failure_callback"].notify(_failure_context(ConnectionError("x"), try_number=4))
+
+    assert "après 4 essais" in smtp_outbox[0]["email"].text
+
+
+def test_a_failure_without_exception_still_sends_an_email(monkeypatch, smtp_outbox):
+    """Une tâche tuée (délai dépassé, zombie) peut échouer sans exception dans le contexte."""
+    monkeypatch.setenv("ALERT_EMAIL", "a@example.test")
+
+    alert_args()["on_failure_callback"].notify(_failure_context(None))
+
+    assert "aucun message" in smtp_outbox[0]["email"].text
+
+
+def test_the_mailer_still_finds_the_smtp_client_of_the_provider():
+    """`send_email` passe par le client SMTP interne du hook (SmtpHook n'envoie que son propre MIME,
+    logo en pièce jointe ordinaire) : une montée de version du provider qui le renomme doit casser ici."""
+    from airflow.providers.smtp.hooks.smtp import SmtpHook
+
+    assert hasattr(SmtpHook(), "_smtp_client")
+
+
+def test_send_email_uses_the_smtp_connection_and_its_sender(monkeypatch):
+    import airflow.providers.smtp.hooks.smtp as smtp_module
+
+    from dags.common import mailer
+    from dags.common.emails import Email
+
+    sent = []
+
+    class FakeHook:
+        from_email = "alertes@example.test"
+        _smtp_client = SimpleNamespace(send_message=sent.append)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(smtp_module, "SmtpHook", FakeHook)
+
+    mailer.send_email(["a@example.test"], Email(subject="s", text="t", html="<p>h</p>"))
+
+    assert sent[0]["From"] == "Genomica <alertes@example.test>"
+    assert sent[0]["To"] == "a@example.test"
 
 
 @pytest.fixture

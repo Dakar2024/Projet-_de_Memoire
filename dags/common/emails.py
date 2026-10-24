@@ -1,35 +1,101 @@
-"""Gabarits des e-mails du pipeline, réunis ici pour en reprendre le design en un seul endroit."""
+"""Contenu des e-mails du pipeline, rendus avec le design de ceux de l'application. Pur : l'envoi
+passe par `dags.common.mailer`."""
 from __future__ import annotations
 
 import datetime as dt
-from html import escape
+from dataclasses import dataclass
+from pathlib import Path
+
+from jinja2 import Environment, FileSystemLoader
 
 from dags.common.preflight import Check, Reminder, Status
 from dags.common.schedule import ACQUISITION_HOUR
 
+APP_NAME = "Genomica"
 SUBJECT_PREFIX = "[genomique]"
+# Image intégrée au message (cid:), comme dans les e-mails de l'application : pas de serveur public,
+# et Gmail bloque les images en data:.
+LOGO_CID = "genomica-logo"
 
-# Gabarits Jinja rendus par SmtpNotifier dans le contexte de la tâche en échec.
-FAILURE_SUBJECT = SUBJECT_PREFIX + " Échec {{ ti.dag_id }}.{{ ti.task_id }} ({{ ti.run_id }})"
-# Le gabarit par défaut du provider omet l'exception, première chose à lire pour diagnostiquer.
-FAILURE_HTML = (
-    "<p>Tâche <b>{{ ti.dag_id }}.{{ ti.task_id }}</b> en échec définitif "
-    "(essai {{ ti.try_number }}, run {{ ti.run_id }}).</p>"
-    "<pre>{{ exception | string | e }}</pre>"
-    '<p>Journal : <a href="{{ ti.log_url }}">{{ ti.log_url }}</a></p>'
-)
+_jinja = Environment(loader=FileSystemLoader(Path(__file__).parent / "templates"), autoescape=True)
 
 _STATUS_LABEL = {Status.OK: "OK", Status.WARNING: "À surveiller", Status.BLOCKING: "Bloquant"}
+_STATUS_COLOR = {Status.OK: "#0f766e", Status.WARNING: "#b45309", Status.BLOCKING: "#b91c1c"}
+_REMINDER_TITLE = {
+    Status.OK: "Tout est prêt pour le run mensuel",
+    Status.WARNING: "Un point à surveiller avant le run mensuel",
+    Status.BLOCKING: "Un point bloque le run mensuel",
+}
 
 
-def reminder_subject(reminder: Reminder, status: Status) -> str:
-    """Sujet lisible dans la liste des mails : échéance, date du run et état global."""
-    date = reminder.run_date.strftime("%d/%m/%Y")
-    return f"{SUBJECT_PREFIX} {reminder.label} : run du {date} — {_STATUS_LABEL[status]}"
+@dataclass(frozen=True)
+class Email:
+    subject: str
+    text: str
+    html: str
 
 
-def reminder_html(reminder: Reminder, checks: list[Check], status: Status) -> str:
-    """Corps du rappel : quand tourne le run, et ce qu'il faut corriger avant."""
+@dataclass(frozen=True)
+class _Row:
+    label: str
+    status: str
+    detail: str
+    color: str
+
+
+@dataclass(frozen=True)
+class Failure:
+    """Ce qu'un e-mail d'échec doit dire, extrait du contexte Airflow par `dags.common.alerting`."""
+
+    dag_id: str
+    dag_description: str | None
+    task_id: str
+    run_id: str
+    try_number: int
+    # Vrai pour une `AirflowFailException` : la tâche a renoncé aux relances.
+    definitive: bool
+    error: str
+    log_url: str | None
+
+
+def _compose(
+    subject: str,
+    title: str,
+    paragraphs: list[str],
+    *,
+    rows: list[_Row] | None = None,
+    code: str | None = None,
+    button_url: str | None = None,
+    button_label: str | None = None,
+    footnote: str | None = None,
+) -> Email:
+    """Rend un e-mail en HTML (gabarit commun) et en texte brut, avec le même contenu."""
+    lines = [title, "", *paragraphs]
+    if rows:
+        lines += ["", *(f"- {row.label} : {row.status} — {row.detail}" for row in rows)]
+    if code:
+        lines += ["", code]
+    if button_url:
+        lines += ["", f"{button_label} : {button_url}"]
+    if footnote:
+        lines += ["", footnote]
+    html = _jinja.get_template("message.html").render(
+        app_name=APP_NAME,
+        logo_cid=LOGO_CID,
+        year=dt.date.today().year,
+        title=title,
+        paragraphs=paragraphs,
+        rows=rows,
+        code=code,
+        button_url=button_url,
+        button_label=button_label,
+        footnote=footnote,
+    )
+    return Email(subject=f"{SUBJECT_PREFIX} {subject}", text="\n".join(lines), html=html)
+
+
+def reminder_email(reminder: Reminder, checks: list[Check], status: Status) -> Email:
+    """Rappel à J-2 ou le jour J : quand tourne le run, et ce qu'il faut corriger avant."""
     date = reminder.run_date.strftime("%d/%m/%Y")
     # Pas de « dans une heure » : un rappel rattrapé par Airflow peut partir en retard.
     heure = f"{ACQUISITION_HOUR:02d}:00 UTC"
@@ -39,29 +105,68 @@ def reminder_html(reminder: Reminder, checks: list[Check], status: Status) -> st
         intro = f"Le run mensuel d'acquisition démarre demain ({date}) à {heure}."
     else:
         intro = f"Le run mensuel d'acquisition démarre le {date} à {heure}, dans {reminder.days_left} jours."
-    rows = "".join(
-        f"<tr><td>{escape(c.name)}</td><td><b>{_STATUS_LABEL[c.status]}</b></td>"
-        f"<td>{escape(c.detail)}</td></tr>"
-        for c in checks
+    action = "Rien à faire." if status is Status.OK else "Corriger les points ci-dessous avant le run."
+    rows = [
+        _Row(check.name, _STATUS_LABEL[check.status], check.detail, _STATUS_COLOR[check.status])
+        for check in checks
+    ]
+    return _compose(
+        f"{reminder.label} : run du {date} — {_STATUS_LABEL[status]}",
+        _REMINDER_TITLE[status],
+        [intro, action],
+        rows=rows,
+        footnote="Rappel envoyé à J-2 et le jour J, avec les contrôles faits au moment de l'envoi.",
     )
-    action = (
-        "<p>Rien à faire.</p>"
-        if status is Status.OK
-        else "<p>Corriger les points ci-dessus avant le run.</p>"
+
+
+def catch_up_email(scheduled: dt.datetime, started: dt.datetime, month: str) -> Email:
+    """Rattrapage : l'échéance manquée, le départ réel et le mois traité."""
+    processed = f"{month[5:7]}/{month[:4]}"
+    missed = f"{scheduled:%m/%Y}"
+    paragraphs = [
+        (
+            f"Le run mensuel d'acquisition prévu le {scheduled:%d/%m/%Y à %H:%M} UTC n'a pas pu "
+            "partir à l'heure : la machine ou la pile était arrêtée."
+        ),
+        (
+            f"Airflow l'a rattrapé automatiquement : il a démarré le {started:%d/%m/%Y à %H:%M} UTC. "
+            f"Mois traité : {processed}."
+        ),
+    ]
+    # Seul le mois en cours est ingéré : un départ le mois suivant abandonne celui de l'échéance.
+    if missed != processed:
+        paragraphs.append(
+            f"Le mois {missed} n'est pas rattrapé : le pipeline ne traite que le mois en cours."
+        )
+    paragraphs.append("Rien à faire.")
+    return _compose(
+        f"Rattrapage : run du {scheduled:%d/%m/%Y} lancé en retard",
+        "Run mensuel rattrapé",
+        paragraphs,
+        footnote="Un e-mail suivra si une tâche échoue.",
     )
-    return f"<p>{escape(intro)}</p><table>{rows}</table>{action}"
 
 
-def catch_up_subject(scheduled: dt.datetime) -> str:
-    """Sujet du rattrapage : le run manqué, reconnaissable à côté des rappels du même mois."""
-    return f"{SUBJECT_PREFIX} Rattrapage : run du {scheduled:%d/%m/%Y} lancé en retard"
-
-
-def catch_up_html(scheduled: dt.datetime, started: dt.datetime) -> str:
-    """Corps du rattrapage : l'échéance manquée, le départ réel, et quand s'inquiéter."""
-    return (
-        f"<p>Le run mensuel d'acquisition prévu le {scheduled:%d/%m/%Y à %H:%M} UTC n'a pas pu partir "
-        "à l'heure : la machine ou la pile était arrêtée.</p>"
-        f"<p>Airflow le rattrape automatiquement : il a démarré le {started:%d/%m/%Y à %H:%M} UTC.</p>"
-        "<p>Rien à faire. Un e-mail suivra si une tâche échoue.</p>"
+def failure_email(failure: Failure) -> Email:
+    """Échec définitif d'une tâche : ce qui a échoué, le type d'échec, l'erreur et le journal."""
+    where = failure.dag_description or failure.dag_id
+    if failure.definitive:
+        kind = (
+            "Échec définitif, sans relance : réessayer referait la même erreur (configuration, "
+            "données ou mois refusé). Corriger la cause avant de relancer."
+        )
+    else:
+        essais = f"{failure.try_number} essai{'s' if failure.try_number > 1 else ''}"
+        kind = (
+            f"Échec après {essais} : l'erreur peut être passagère (source ou réseau indisponible). "
+            "Relancer plus tard suffit souvent ; sinon, lire le journal."
+        )
+    return _compose(
+        f"Échec {failure.dag_id}.{failure.task_id}",
+        f"La tâche {failure.task_id} a échoué",
+        [f"{where} ({failure.dag_id}), run {failure.run_id}.", kind, "Message d'erreur :"],
+        code=failure.error,
+        button_url=failure.log_url,
+        button_label="Ouvrir le journal",
+        footnote="Marche à suivre : reference/procedure_reprise.md, § 3 « Un e-mail d'échec ».",
     )

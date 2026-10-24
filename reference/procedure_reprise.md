@@ -17,11 +17,15 @@ Toutes les commandes se lancent depuis la racine du dépôt monté par la pile. 
 ## 0. Trois règles avant toute reprise
 
 1. **Sauvegarder d'abord** : `./scripts/sauvegarde.sh`. Une reprise ratée doit pouvoir s'annuler.
-2. **Ne jamais rejouer un mois antérieur au dernier mois traité.** La fusion SCD2 de
-   `clinvar_variant` compare toujours le mois traité aux lignes courantes : novembre rejoué après
-   décembre ferme les versions de décembre au 1er novembre et rend l'état de novembre « courant ».
-   Prouvé le 23/10/2026 sur une table de test, et désormais refusé par `bronze_to_silver` (§ 4).
-3. **Un mois à la fois, dans l'ordre**, en attendant la fin des deux runs de panel avant le suivant.
+2. **Le pipeline ne traite que le mois en cours, jamais un mois passé** (règle du 24/10/2026).
+   Le mois traité est celui du **démarrage réel** du run, pas de son échéance : une pile activée le
+   4 décembre ingère décembre. Un Trigger manuel sur un autre mois est refusé, sans relance
+   (`hors du mois en cours`). Un mois manqué est donc perdu, et c'est voulu : rejouer novembre
+   après décembre fausserait l'historique SCD2 de `clinvar_variant` (prouvé le 23/10/2026 sur une
+   table de test ; `bronze_to_silver` le refuse aussi, § 4).
+3. **Relancer un échec dans le mois même.** Un run du mois en échec, relancé (Clear) après le
+   début du mois suivant, retraiterait un mois passé : laisser plutôt le run du 10 prendre le
+   nouveau mois.
 
 ---
 
@@ -32,37 +36,41 @@ Toutes les commandes se lancent depuis la racine du dépôt monté par la pile. 
 **Action** : aucune. Au redémarrage, Airflow lance de lui-même la dernière échéance passée, même
 avec `catchup=False`, et `notify_catch_up` l'annonce. Vérifié le 23/10/2026 : scheduler arrêté
 3 min 30 sur un DAG planifié chaque minute, la dernière échéance manquée est partie 10 s après le
-redémarrage.
+redémarrage. Le run traite le **mois du redémarrage** (« Mois traité » dans l'e-mail) : rallumée
+le 3 décembre après un 10 novembre manqué, la pile ingère décembre, et novembre n'est pas
+rattrapé (règle 2).
+
+Avant le premier jeudi du mois, l'archive ClinVar du mois n'existe pas encore : le run échoue
+sans relance (`pas encore publiée`). Rien à faire, le run planifié du 10 la prendra.
 
 **Vérification** : un e-mail d'échec arriverait sinon. En l'absence d'e-mail, voir § 6.
 
 ## 2. La machine était éteinte plus d'un mois
 
-**Symptôme** : rattrapage annoncé pour le dernier mois seulement. Airflow ne relance que la
-**dernière** échéance passée : les mois intermédiaires ne tournent jamais. Vérifié le 23/10/2026,
-les échéances intermédiaires ont été sautées.
+**Symptôme** : un seul e-mail de rattrapage. Airflow ne relance que la **dernière** échéance
+passée : les échéances intermédiaires ne tournent jamais (vérifié le 23/10/2026), et le run traite
+le mois du redémarrage.
 
-**Action recommandée : accepter le trou.** L'état courant du dernier mois est exact. Seule la date
-d'une reclassification survenue pendant le trou est décalée : un variant reclassé en novembre
-apparaîtra reclassé en décembre. Ne pas rejouer novembre (règle 2).
-
-**Si la date exacte compte** (analyse de l'historique pour le mémoire) : restaurer la dernière
-sauvegarde **antérieure** au premier mois manquant (§ 5), puis rejouer chaque mois dans l'ordre
-(§ 5.4). La rotation ne garde que quatre copies : à faire vite, avant que la copie utile soit
-supprimée.
+**Action : aucune, le trou est accepté** (règle 2). L'état courant du mois traité est exact. Seule
+la date d'une reclassification survenue pendant le trou est décalée : un variant reclassé en
+novembre apparaîtra reclassé en décembre.
 
 ## 3. Un e-mail d'échec
 
-**Symptôme** : « [genomique] Échec dag_id.task_id (run_id) », avec l'exception et le lien du journal.
+**Symptôme** : « [genomique] Échec dag_id.task_id ». L'e-mail dit si l'échec est **définitif**
+(sans relance : corriger la cause d'abord) ou survenu **après les relances** (souvent passager),
+donne le message d'erreur et un bouton vers le journal.
 
 1. Lire l'exception dans l'e-mail, puis le journal (lien de l'e-mail). Causes connues :
 
    | Message | Cause | Correction |
    |---|---|---|
-   | 404 sur l'archive ClinVar | archive du mois pas encore publiée (habituellement entre le 2 et le 6) | attendre sa publication |
+   | `archive ClinVar … pas encore publiée` | run lancé avant le premier jeudi du mois (parution observée du 1er au 7, FTP NCBI 2025-07 à 2026-10) | rien : le run planifié du 10 la prendra |
    | `colonnes manquantes` / `SourceSchemaError` | la source a changé de format | adapter le code de conversion, puis relancer |
+   | `hors du mois en cours` | Trigger manuel sur un autre mois | relancer sans date, ou avec une date du mois en cours (règle 2) |
+   | `date des sources absente` | run de panel manuel sans `--conf` | relancer avec `--conf '{"sources_date": …}'` du mois en cours (README) |
+   | `lancer d'abord dag_acquisition_sources` | run de panel sur un mois dont le bronze partagé manque | lancer l'acquisition du mois : elle déclenche les panels |
    | `contient déjà le mois` | mois antérieur à l'historique Silver | § 4 |
-   | `date logique absente` / `date des sources absente` | run manuel sans date | relancer avec `--logical-date` ou `--conf` (README) |
 
 2. Relancer **la tâche en échec et la suite**, sans refaire ce qui a réussi. Dans l'interface :
    le DAG, onglet Grid, la tâche rouge, **Clear** avec « Downstream ». En ligne de commande,
@@ -85,12 +93,13 @@ ensuite d'eux-mêmes.
 **Symptôme** : `bronze_to_silver` échoue sans relance, avec
 `clinvar_variant (brca) contient déjà le mois 2026-12-01 : y ajouter 2026-11-01 après lui fausserait l'historique SCD2`.
 
-**Cause** : un run de panel a reçu un mois plus ancien que le dernier mois de son historique
-(Trigger manuel sur un vieux mois, ou acquisition `force` d'un mois passé). La garde a refusé
-**avant toute écriture** : le Silver et le Gold sont intacts.
+**Cause** : un run de panel a reçu un mois plus ancien que le dernier mois de son historique.
+Les DAGs refusant tout mois autre que le mois en cours, le cas restant est un run d'un mois passé
+relancé par Clear après le run du mois suivant (règle 3). La garde a refusé **avant toute
+écriture** : le Silver et le Gold sont intacts.
 
-**Action** : ne rien forcer. Si ce mois devait vraiment être intégré, suivre l'option « date
-exacte » du § 2. Sinon, marquer le run en échec comme vu, rien à corriger.
+**Action** : ne rien forcer, marquer le run en échec comme vu. Le mois passé n'est pas intégré
+(règle 2).
 
 ## 5. Perte ou corruption du stockage
 
@@ -148,7 +157,7 @@ lac, base vectorielle.
 ./scripts/restaurer.sh --pile genomique --pile-principale ~/sauvegardes-genomique/<date>
 ```
 
-La plus récente copie, sauf au § 2. Sans `--pile-principale`, le script refuse : il écrase les
+La plus récente copie. Sans `--pile-principale`, le script refuse : il écrase les
 trois bases de la pile visée. Il refuse aussi une copie incomplète, avant toute modification.
 
 **Vérifié le 23/10/2026** sur la pile isolée de l'évaluation E3b (`--pile genomique-e3b`, copie
@@ -170,18 +179,17 @@ Ce que fait le script, dans l'ordre :
 **Vérification** : `docker compose exec airflow-scheduler airflow dags list-runs dag_acquisition_sources`
 redonne l'historique d'avant la copie ; l'interface MinIO montre les quatre buckets.
 
-### 5.4 Rejouer les mois postérieurs à la copie
+### 5.4 Après la restauration : reprendre au mois en cours
 
-Pour chaque mois absent de la copie, **du plus ancien au plus récent** :
+Les mois écoulés entre la copie et la restauration ne sont **pas** rejoués (règle 2). Le run
+planifié du 10 reprendra au mois en cours ; pour l'ingérer tout de suite :
 
 ```bash
-docker compose exec airflow-scheduler \
-  airflow dags trigger dag_acquisition_sources --logical-date 2026-11-10
+docker compose exec airflow-scheduler airflow dags trigger dag_acquisition_sources
 ```
 
-Attendre que l'acquisition **et les deux runs de panel** soient verts avant le mois suivant
-(règle 3). La garde de chronologie (§ 4) refuse un mois sauté dans le mauvais ordre. Les archives
-ClinVar mensuelles depuis 2023 restent téléchargeables ; les plus anciennes non (constat P16).
+Sans date, le Trigger prend le mois en cours. Si la copie contenait déjà ce mois, il est sauté
+(`skip_if_already_published`) : ajouter `--conf '{"force": true}'` pour le relire quand même.
 
 ### 5.5 Perte de la base vectorielle seule
 

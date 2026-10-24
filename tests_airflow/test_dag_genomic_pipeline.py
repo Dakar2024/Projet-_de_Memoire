@@ -1,4 +1,5 @@
 import datetime as dt
+from types import SimpleNamespace
 
 import pytest
 
@@ -130,24 +131,75 @@ def test_both_panel_dags_are_exposed_at_module_level():
     assert dag_genomic_pipeline.dag_genomic_pipeline_sickle.dag_id == "dag_genomic_pipeline_sickle"
 
 
-def test_a_manual_run_without_sources_date_fails_with_instructions(dag):
+NOW = dt.datetime(2026, 10, 24, 15, tzinfo=dt.UTC)
+
+
+@pytest.fixture
+def shared_bronze(monkeypatch):
+    """Remplace le contrôle des partitions partagées : enregistre les partitions demandées."""
+    from dags import dag_genomic_pipeline
+
+    checked = []
+    monkeypatch.setenv("LAKE_URI", "s3://")
+    monkeypatch.setattr(dag_genomic_pipeline, "assert_partitions_complete", checked.extend)
+    return checked
+
+
+def _resolve(dag, conf):
+    dag_run = SimpleNamespace(conf=conf, start_date=NOW)
+    return dag.get_task("resolve_sources_date").python_callable(dag_run=dag_run)
+
+
+def test_a_manual_run_without_sources_date_fails_with_instructions(dag, shared_bronze):
     """Un run de panel n'a pas de date logique dans Airflow 3. Sans événement d'Asset ni
     `--conf`, la résolution échoue définitivement en disant comment relancer."""
     from airflow.sdk.exceptions import AirflowFailException
 
     with pytest.raises(AirflowFailException, match="--conf"):
-        dag.get_task("resolve_sources_date").python_callable()
+        _resolve(dag, conf=None)
+
+
+def test_a_manual_run_on_a_past_month_fails_without_consuming_retries(dag, shared_bronze):
+    from airflow.sdk.exceptions import AirflowFailException
+
+    with pytest.raises(AirflowFailException, match="mois en cours"):
+        _resolve(dag, conf={"sources_date": "2026-09-01"})
+
+
+def test_the_shared_sources_of_the_month_are_checked_before_any_ingestion(dag, shared_bronze):
+    """D-E3b-2 : sans ce contrôle, un mois sans acquisition échouait plus loin sur un
+    `NoSuchKey` brut, relancé trois fois."""
+    assert _resolve(dag, conf={"sources_date": "2026-10-01"}) == "2026-10-01"
+    assert shared_bronze == [
+        "s3://bronze/clinvar/dt=2026-10-01",
+        "s3://bronze/hpo/dt=2026-10-01",
+    ]
+
+
+def test_missing_shared_sources_fail_without_consuming_retries(dag, monkeypatch):
+    from airflow.sdk.exceptions import AirflowFailException
+
+    from dags import dag_genomic_pipeline
+    from ingestion.storage import IncompletePartitionError
+
+    def absent(partitions):
+        raise IncompletePartitionError("partitions incomplètes ou vides : s3://bronze/clinvar/dt=2026-10-01")
+
+    monkeypatch.setattr(dag_genomic_pipeline, "assert_partitions_complete", absent)
+
+    with pytest.raises(AirflowFailException, match="dag_acquisition_sources"):
+        _resolve(dag, conf={"sources_date": "2026-10-01"})
 
 
 def test_task_failures_are_emailed(dag):
     """Un pipeline mensuel sans surveillance : sans alerte, un échec ne se voit que
     si quelqu'un ouvre l'interface. Le destinataire vient de l'environnement pour
     ne pas figer une adresse dans le dépôt."""
-    from airflow.providers.smtp.notifications.smtp import SmtpNotifier
+    from dags.common.alerting import FailureNotifier
 
     notifier = dag.default_args["on_failure_callback"]
 
-    assert isinstance(notifier, SmtpNotifier)
+    assert isinstance(notifier, FailureNotifier)
     assert notifier.to == ["alerte@example.test"]
     assert "on_retry_callback" not in dag.default_args
 

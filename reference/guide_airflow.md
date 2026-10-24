@@ -65,27 +65,30 @@ ses gènes.
 
 ### Le DAG d'acquisition
 
-La date logique est **obligatoire** : c'est elle qui détermine quelle archive mensuelle de
-ClinVar sera téléchargée.
+Le pipeline ne traite que **le mois en cours** : la tâche `resolve_acquisition_month` le lit dans
+l'heure de démarrage réelle du run (`dag_run.start_date`, UTC), jamais dans la date logique.
+Pourquoi : une pile activée le 4 décembre exécute l'échéance du **10 novembre** ; lire la date
+logique ingérerait novembre, un mois passé.
 
 ```bash
-docker compose exec airflow-scheduler \
-  airflow dags trigger dag_acquisition_sources --logical-date 2026-09-01
+docker compose exec airflow-scheduler airflow dags trigger dag_acquisition_sources
 ```
 
-Sans cette option, la première tâche échoue volontairement avec un message explicite. Ce n'est
-pas un bug : en Airflow 3, un run déclenché à la main n'a pas de date logique, et deviner
-la bonne archive serait pire que refuser.
+Une `--logical-date` reste acceptée si elle tombe dans le mois en cours ; une autre est refusée
+sans relance (`hors du mois en cours`).
 
 ### Un DAG de panel
 
 Il attend normalement le signal de l'acquisition. Pour le lancer seul, il faut lui dire sur
-quelles sources travailler :
+quelles sources travailler, dans le mois en cours :
 
 ```bash
 docker compose exec airflow-scheduler \
-  airflow dags trigger dag_genomic_pipeline_brca --conf '{"sources_date": "2026-09-01"}'
+  airflow dags trigger dag_genomic_pipeline_brca --conf '{"sources_date": "2026-10-01"}'
 ```
+
+`resolve_sources_date` vérifie d'abord que le bronze ClinVar et HPO de ce mois est complet ;
+sinon, échec sans relance (`lancer d'abord dag_acquisition_sources`).
 
 ### Depuis l'interface
 
@@ -95,12 +98,15 @@ DAG en pause ne se déclenche jamais, même par signal.
 > **Piège vécu (21/10) :** activer `dag_acquisition_sources` déclenche aussi, immédiatement, le run
 > planifié du mois en cours s'il est déjà passé. Un ▶ Trigger juste après acquérait le même mois une
 > seconde fois et faisait tourner chaque panel deux fois. Depuis le 23/10, la tâche
-> `skip_if_already_published` saute un mois déjà publié ; pour le réacquérir quand même, ajouter
-> `--conf '{"force": true}'`.
+> `skip_if_already_published` saute un mois déjà publié lors d'un Trigger manuel ; pour le
+> réacquérir quand même, ajouter `--conf '{"force": true}'`. Un run **planifié** passe toujours :
+> le 10, il relit le mois pour prendre ce qui a changé (NCBI Gene, RefSeq et MedGen sont
+> interrogés en direct).
 >
 > Le même mécanisme rattrape une machine éteinte le 10 : au redémarrage, Airflow lance la dernière
-> échéance passée et `notify_catch_up` l'annonce par e-mail. Seule la **dernière** échéance est
-> rattrapée : après plus d'un mois d'arrêt, les mois intermédiaires se rejouent à la main.
+> échéance passée et `notify_catch_up` l'annonce par e-mail, avec le mois traité. Seule la
+> **dernière** échéance est rattrapée, et elle traite le mois du redémarrage : un mois
+> entièrement manqué est perdu, volontairement (jamais de mois passé).
 
 ---
 
@@ -126,8 +132,10 @@ même à une reconstruction des images.
 
 | Message | Ce que ça veut dire |
 |---|---|
-| `date logique absente` | Un run manuel de l'acquisition sans `--logical-date`. |
+| `hors du mois en cours` | Un Trigger manuel sur un autre mois que le mois en cours : refusé exprès. |
+| `pas encore publiée` | Run lancé avant le premier jeudi du mois : l'archive ClinVar n'existe pas encore. Le run du 10 la prendra. |
 | `date des sources absente` | Un run manuel de panel sans `--conf '{"sources_date": ...}'`. |
+| `lancer d'abord dag_acquisition_sources` | Run de panel sur un mois sans bronze partagé complet. |
 | `SilverQualityError` / `GoldQualityError` | Un contrôle qualité a bloqué la propagation. Le message nomme la table et le problème : c'est le garde-fou qui fonctionne. |
 | `espace disque insuffisant` | Moins de 2 Go libres avant un téléchargement de 440 Mo. Libérer de la place, puis relancer. |
 | `NotImplementedError ... sous-projet D` | Ne devrait plus apparaître : tout est livré. Si tu le vois, c'est qu'une ancienne image traîne. |

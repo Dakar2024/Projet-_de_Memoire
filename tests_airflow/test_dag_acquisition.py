@@ -9,8 +9,7 @@ from dags.dag_acquisition_sources import dag
 
 
 def test_acquisition_dag_runs_monthly_after_the_clinvar_archive_is_published():
-    """L'archive ClinVar du mois paraît entre le 2 et le 6 : un run le 1er la
-    trouverait absente."""
+    """Le 10 laisse une marge après la parution de l'archive ClinVar du mois."""
     assert dag.schedule == "0 6 10 * *"
     assert dag.catchup is False
 
@@ -33,7 +32,7 @@ def test_acquisition_dag_has_the_expected_tasks():
         "download_hpo_files",
         "notify_catch_up",
         "raw_to_bronze_shared",
-        "resolve_logical_date",
+        "resolve_acquisition_month",
         "skip_if_already_published",
     ]
 
@@ -41,7 +40,7 @@ def test_acquisition_dag_has_the_expected_tasks():
 def test_both_downloads_run_in_parallel_then_gate_on_check_raw():
     for task_id in ("download_clinvar_bulk", "download_hpo_files"):
         assert dag.get_task(task_id).upstream_task_ids == {
-            "resolve_logical_date",
+            "resolve_acquisition_month",
             "skip_if_already_published",
         }
     assert dag.get_task("check_raw_shared").upstream_task_ids == {
@@ -53,11 +52,11 @@ def test_both_downloads_run_in_parallel_then_gate_on_check_raw():
 def test_bronze_conversion_is_gated_on_both_sides():
     assert dag.get_task("raw_to_bronze_shared").upstream_task_ids == {
         "check_raw_shared",
-        "resolve_logical_date",
+        "resolve_acquisition_month",
     }
     assert dag.get_task("check_bronze_shared").upstream_task_ids == {
         "raw_to_bronze_shared",
-        "resolve_logical_date",
+        "resolve_acquisition_month",
     }
 
 
@@ -68,11 +67,40 @@ def test_the_asset_is_published_only_once_bronze_is_complete():
     assert SOURCES_READY not in dag.get_task("check_raw_shared").outlets
 
 
-def test_a_manual_run_without_logical_date_fails_with_instructions():
-    """Dans Airflow 3, un run manuel sans --logical-date n'a pas de `ds` : la résolution
-    échoue définitivement, sans consommer les retries, en disant comment relancer."""
-    with pytest.raises(AirflowFailException, match="--logical-date"):
-        dag.get_task("resolve_logical_date").python_callable()
+def _resolve(start_date, ds=None, run_type="manual"):
+    context = {"ds": ds, "dag_run": SimpleNamespace(start_date=start_date, run_type=run_type)}
+    return dag.get_task("resolve_acquisition_month").python_callable(**context)
+
+
+def test_a_catch_up_run_processes_the_month_it_starts_in():
+    """Pile activée le 4 décembre : Airflow exécute l'échéance du 10 novembre, décembre est ingéré."""
+    started = dt.datetime(2026, 12, 4, 9, tzinfo=dt.UTC)
+
+    assert _resolve(started, ds="2026-11-10", run_type="scheduled") == "2026-12-01"
+
+
+def test_a_manual_run_without_logical_date_processes_the_current_month():
+    assert _resolve(dt.datetime(2026, 10, 24, 15, tzinfo=dt.UTC)) == "2026-10-01"
+
+
+def test_a_manual_run_on_a_past_month_fails_without_consuming_retries():
+    """Une relance referait le même refus : échec définitif, avec la règle dans le message."""
+    with pytest.raises(AirflowFailException, match="mois en cours"):
+        _resolve(dt.datetime(2026, 10, 24, 15, tzinfo=dt.UTC), ds="2026-09-10")
+
+
+def test_an_archive_not_yet_published_fails_without_consuming_retries(monkeypatch):
+    """L'archive ne paraîtra pas dans les 15 minutes des relances : le run du 10 la prendra."""
+    from dags import dag_acquisition_sources
+    from ingestion.errors import ArchiveNotPublishedError
+
+    def not_yet(logical_date):
+        raise ArchiveNotPublishedError("archive ClinVar 2026-12 pas encore publiée")
+
+    monkeypatch.setattr(dag_acquisition_sources, "ingest_clinvar", not_yet)
+
+    with pytest.raises(AirflowFailException, match="pas encore publiée"):
+        dag.get_task("download_clinvar_bulk").python_callable("2026-12-01")
 
 
 def test_a_changed_source_schema_fails_without_consuming_retries(monkeypatch):
@@ -104,15 +132,18 @@ class FakeInletEvents:
         return self._events
 
 
-def _guard(*published, conf=None):
-    context = {"inlet_events": FakeInletEvents(*published), "dag_run": SimpleNamespace(conf=conf)}
+def _guard(*published, conf=None, run_type="manual"):
+    context = {
+        "inlet_events": FakeInletEvents(*published),
+        "dag_run": SimpleNamespace(conf=conf, run_type=run_type),
+    }
     return dag.get_task("skip_if_already_published").python_callable("2026-10-01", **context)
 
 
 def test_the_guard_runs_before_any_download_and_reads_the_asset_history():
     guard = dag.get_task("skip_if_already_published")
 
-    assert guard.upstream_task_ids == {"resolve_logical_date"}
+    assert guard.upstream_task_ids == {"resolve_acquisition_month"}
     assert SOURCES_READY in guard.inlets
     assert guard.ignore_downstream_trigger_rules is True
 
@@ -121,9 +152,14 @@ def test_the_guard_lets_an_unpublished_month_through():
     assert _guard("2026-09-01") is True
 
 
-def test_the_guard_stops_a_second_acquisition_of_the_same_month():
+def test_the_guard_stops_a_second_manual_acquisition_of_the_same_month():
     """Cas du 21/10 : deux runs d'octobre publiaient deux événements, donc deux runs par panel."""
     assert _guard("2026-10-01") is False
+
+
+def test_the_guard_lets_a_scheduled_run_reread_a_published_month():
+    """Pile activée le 4, échéance le 10 : le run du 10 prend ce qui a changé depuis le 4."""
+    assert _guard("2026-10-01", run_type="scheduled") is True
 
 
 def test_the_guard_lets_a_forced_reacquisition_through():
@@ -132,7 +168,10 @@ def test_the_guard_lets_a_forced_reacquisition_through():
 
 def test_the_catch_up_notice_follows_the_guard_without_blocking_the_downloads():
     """Un mois déjà publié ne doit pas annoncer de rattrapage ; un échec SMTP ne doit pas bloquer les données."""
-    assert dag.get_task("notify_catch_up").upstream_task_ids == {"skip_if_already_published"}
+    assert dag.get_task("notify_catch_up").upstream_task_ids == {
+        "resolve_acquisition_month",
+        "skip_if_already_published",
+    }
     assert dag.get_task("notify_catch_up").downstream_task_ids == set()
 
 
@@ -148,7 +187,7 @@ def clock(monkeypatch):
 def _notify(clock, now, run_type="scheduled"):
     clock["now"] = now
     context = {"logical_date": SCHEDULED, "dag_run": SimpleNamespace(run_type=run_type)}
-    dag.get_task("notify_catch_up").python_callable(**context)
+    dag.get_task("notify_catch_up").python_callable("2026-11-01", **context)
 
 
 def test_a_late_scheduled_run_sends_a_catch_up_notice(smtp_outbox, clock):
@@ -165,7 +204,7 @@ def test_an_on_time_scheduled_run_sends_nothing(smtp_outbox, clock):
 
 
 def test_a_manual_run_is_never_a_catch_up(smtp_outbox, clock):
-    """Un rejeu manuel porte une date logique passée (--logical-date) : ce n'est pas un retard."""
+    """Un Trigger manuel n'a pas d'échéance à rattraper : ce n'est pas un retard."""
     with pytest.raises(AirflowSkipException, match="manuel"):
         _notify(clock, dt.datetime(2026, 11, 15, tzinfo=UTC), run_type="manual")
     assert smtp_outbox == []

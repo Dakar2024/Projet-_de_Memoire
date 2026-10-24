@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ title }} — {{ app_name }}</title>
+</head>
+{#- Même design que les e-mails de l'application (apps/backend/features/auth/templates/message.html),
+    plus un tableau et un encadré pour l'exploitation. -#}
+<body style="margin:0;padding:0;background:#f4f4f5;font-family:Arial,Helvetica,sans-serif;color:#18181b;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:40px 16px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="560" cellpadding="0" cellspacing="0"
+               style="max-width:560px;width:100%;background:#ffffff;border-radius:12px;border:1px solid #e4e4e7;">
+          <tr>
+            <td style="padding:28px 40px 4px 40px;">
+              <img src="cid:{{ logo_cid }}" width="300" height="74" alt="{{ app_name }}"
+                   style="display:block;width:300px;max-width:100%;height:auto;border:0;outline:none;text-decoration:none;" />
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:12px 40px 8px 40px;">
+              <h1 style="margin:0 0 16px 0;font-size:20px;line-height:28px;">{{ title }}</h1>
+              {% for paragraph in paragraphs %}
+              <p style="margin:0 0 14px 0;font-size:15px;line-height:23px;color:#3f3f46;">{{ paragraph }}</p>
+              {% endfor %}
+            </td>
+          </tr>
+          {% if rows %}
+          <tr>
+            <td style="padding:0 40px 14px 40px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+                     style="border-collapse:collapse;font-size:14px;line-height:20px;">
+                {% for row in rows %}
+                <tr>
+                  <td style="padding:8px 8px 8px 0;border-top:1px solid #e4e4e7;color:#3f3f46;">{{ row.label }}</td>
+                  <td style="padding:8px;border-top:1px solid #e4e4e7;font-weight:700;white-space:nowrap;color:{{ row.color }};">{{ row.status }}</td>
+                  <td style="padding:8px 0 8px 8px;border-top:1px solid #e4e4e7;color:#71717a;">{{ row.detail }}</td>
+                </tr>
+                {% endfor %}
+              </table>
+            </td>
+          </tr>
+          {% endif %}
+          {% if code %}
+          <tr>
+            <td style="padding:0 40px 14px 40px;">
+              <pre style="margin:0;padding:12px 14px;background:#fafafa;border:1px solid #e4e4e7;border-radius:8px;font-family:Consolas,Menlo,monospace;font-size:13px;line-height:19px;color:#991b1b;white-space:pre-wrap;word-break:break-word;">{{ code }}</pre>
+            </td>
+          </tr>
+          {% endif %}
+          {% if button_url %}
+          <tr>
+            <td style="padding:8px 40px 24px 40px;">
+              <a href="{{ button_url }}"
+                 style="display:inline-block;background:#0f766e;color:#ffffff;text-decoration:none;font-weight:700;font-size:15px;padding:12px 22px;border-radius:8px;">
+                {{ button_label }}
+              </a>
+              <p style="margin:16px 0 0 0;font-size:12px;line-height:18px;color:#71717a;word-break:break-all;">
+                Si le bouton ne fonctionne pas, copiez ce lien : {{ button_url }}
+              </p>
+            </td>
+          </tr>
+          {% endif %}
+          <tr>
+            <td style="padding:16px 40px 28px 40px;border-top:1px solid #f4f4f5;font-size:12px;line-height:18px;color:#a1a1aa;">
+              {% if footnote %}{{ footnote }}<br />{% endif %}
+              © {{ year }} {{ app_name }} — pipeline de données
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

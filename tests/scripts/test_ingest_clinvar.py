@@ -84,3 +84,28 @@ def test_an_interrupted_replay_leaves_the_partition_incomplete(tmp_path):
             ingest_clinvar("2026-09-01", lake_uri=lake, cache_dir=tmp_path / "cache")
 
     assert partition_is_complete(partition) is False
+
+
+@responses.activate
+def test_an_archive_not_yet_published_is_reported_as_such(tmp_path):
+    """Un run lancé avant le premier jeudi du mois (pile activée le 2, par exemple) trouve l'archive
+    absente : le dire clairement plutôt qu'un 404 brut relancé trois fois."""
+    from ingestion.errors import ArchiveNotPublishedError
+
+    responses.add(responses.GET, ARCHIVE, status=404)
+    lake = f"file://{tmp_path}/lake"
+
+    with pytest.raises(ArchiveNotPublishedError, match="2026-09 pas encore publiée"):
+        ingest_clinvar("2026-09-01", lake_uri=lake, cache_dir=tmp_path / "cache")
+    assert not (tmp_path / "lake").exists()
+
+
+@responses.activate
+def test_other_http_errors_are_left_to_the_retries(tmp_path):
+    """Un 503 est passager : il doit rester une erreur ordinaire, relancée par Airflow."""
+    import requests
+
+    responses.add(responses.GET, ARCHIVE, status=503)
+
+    with pytest.raises(requests.HTTPError):
+        ingest_clinvar("2026-09-01", lake_uri=f"file://{tmp_path}/lake", cache_dir=tmp_path / "cache")

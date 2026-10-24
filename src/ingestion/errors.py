@@ -12,3 +12,7 @@ class SourceSchemaError(RuntimeError):
 
 class OutOfOrderMonthError(RuntimeError):
     """Mois antérieur au dernier mois de l'historique Silver : permanente, le rejouer fausserait le SCD2."""
+
+
+class ArchiveNotPublishedError(RuntimeError):
+    """Archive ClinVar du mois pas encore publiée : permanente pour ce run, le run du 10 la prendra."""

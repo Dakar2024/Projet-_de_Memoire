@@ -5,11 +5,14 @@ import argparse
 import sys
 from pathlib import Path
 
+import requests
+
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from ingestion.clinvar import archive_url_for, archive_version_for
 from ingestion.config import DATA_EXTERNAL_DIR, RAW
 from ingestion.download import download_to_file
+from ingestion.errors import ArchiveNotPublishedError
 from ingestion.maintenance import ensure_free_space, purge_old_downloads
 from ingestion.storage import (
     begin_partition,
@@ -30,7 +33,17 @@ def ingest_clinvar(
     url = archive_url_for(logical_date)
     cache_dir = cache_dir or DATA_EXTERNAL_DIR
     ensure_free_space(cache_dir)
-    local = download_to_file(url, cache_dir / f"variant_summary_{archive_version_for(logical_date)}.txt.gz")
+    version = archive_version_for(logical_date)
+    try:
+        local = download_to_file(url, cache_dir / f"variant_summary_{version}.txt.gz")
+    except requests.HTTPError as exc:
+        if exc.response is None or exc.response.status_code != 404:
+            raise
+        # Observé de 2025-07 à 2026-10 : parution le premier jeudi du mois, vers 00:05.
+        raise ArchiveNotPublishedError(
+            f"archive ClinVar {version} pas encore publiée ({url}) : NCBI la publie d'habitude "
+            "le premier jeudi du mois, au plus tard le 7 ; le run planifié du 10 la prendra"
+        ) from exc
 
     partition = partition_uri(RAW, "clinvar", logical_date, lake_uri=lake_uri)
     begin_partition(partition)
@@ -42,7 +55,7 @@ def ingest_clinvar(
             source="clinvar",
             logical_date=logical_date,
             source_url=url,
-            source_version=archive_version_for(logical_date),
+            source_version=version,
             files={OBJECT_NAME: local.stat().st_size},
             record_count=1,
             # Aucune somme publiée pour ce fichier : la nôtre, figée au dépôt, est revérifiée en bronze.

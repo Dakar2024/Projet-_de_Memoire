@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import datetime as dt
 
-# L'archive ClinVar du mois paraît entre le 2 et le 6 : le 10 laisse une marge.
+# L'archive ClinVar du mois paraît le premier jeudi, donc au plus tard le 7 (FTP NCBI,
+# 2025-07 à 2026-10) : le 10 laisse une marge.
 ACQUISITION_DAY = 10
 ACQUISITION_HOUR = 6
 ACQUISITION_CRON = f"0 {ACQUISITION_HOUR} {ACQUISITION_DAY} * *"
