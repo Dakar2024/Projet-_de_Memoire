@@ -5,9 +5,9 @@ import asyncio
 import math
 import threading
 import uuid
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
-from typing import Callable
 
 import psycopg
 from litestar import Litestar, Request, Response, get, post
@@ -19,8 +19,12 @@ from RAG.src.api.schemas import QuestionIn
 from RAG.src.api.security import require_api_key, require_json
 from RAG.src.utils.config import ApiConfig, load_api_config, load_api_key
 from RAG.src.utils.errors import (
-    EmbeddingServiceError, IndexEmptyError, LlmProviderMismatchError, LlmQuotaExhaustedError, LlmUnavailableError,
-    QuestionRejectedError, RagPermanentError,
+    EmbeddingServiceError,
+    IndexEmptyError,
+    LlmProviderMismatchError,
+    LlmQuotaExhaustedError,
+    LlmUnavailableError,
+    QuestionRejectedError,
 )
 
 _MESSAGES = {
@@ -146,7 +150,7 @@ async def ask_question(data: QuestionIn, state: State, request: Request) -> dict
     future.add_done_callback(consume)
     try:
         result = await asyncio.wait_for(asyncio.shield(future), timeout=state.api_config.request_timeout_s)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         timed_out = True
         raise ApiError("timeout", 503) from None
     body = result.as_dict(include_trace=data.trace)

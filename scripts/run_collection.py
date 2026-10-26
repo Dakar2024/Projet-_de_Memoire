@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -45,7 +45,8 @@ def run_collection(
 
     bulk_path = DATA_EXTERNAL_DIR / "variant_summary.txt.gz"
     if bulk_path.exists() and not refresh:
-        age = datetime.fromtimestamp(bulk_path.stat().st_mtime)
+        # Heure locale, comme avant ; `tz` rend seulement l'horodatage explicite.
+        age = datetime.fromtimestamp(bulk_path.stat().st_mtime, tz=UTC).astimezone()
         print(
             f"Réutilisation du bulk ClinVar téléchargé le {age:%Y-%m-%d %H:%M} "
             "(--refresh pour le retélécharger)."
@@ -71,15 +72,15 @@ def run_collection(
         hpo_rows_by_gene.setdefault(row["gene_symbol"], []).append(row)
 
     provenance = {
-        "collected_at": datetime.now(timezone.utc).isoformat(),
+        "collected_at": datetime.now(UTC).isoformat(),
         "n_genes": len(genes),
         "clinvar_bulk_url": CLINVAR_BULK_URL,
         "clinvar_bulk_mtime": datetime.fromtimestamp(
-            clinvar_path.stat().st_mtime, timezone.utc
+            clinvar_path.stat().st_mtime, UTC
         ).isoformat(),
         "hpo_genes_to_phenotype_url": GENES_TO_PHENOTYPE_URL,
         "hpo_genes_to_phenotype_mtime": datetime.fromtimestamp(
-            hpo_paths["genes_to_phenotype"].stat().st_mtime, timezone.utc
+            hpo_paths["genes_to_phenotype"].stat().st_mtime, UTC
         ).isoformat(),
         "hpo_terms_api_url": HP_TERMS_URL,
     }

@@ -39,8 +39,8 @@ os.environ.setdefault("RAG_PG_DB", "rag")
 os.environ.setdefault("RAG_PG_USER", "rag_reader")
 os.environ.setdefault("RAG_PG_PASSWORD", os.environ.get("RAG_READER_PASSWORD", ""))
 
-from RAG.src.api.app import create_app  # noqa: E402  (après la préparation de l'environnement)
-from RAG.src.utils.config import load_api_config  # noqa: E402
+from RAG.src.api.app import create_app
+from RAG.src.utils.config import load_api_config
 
 # Documentation OpenAPI (/schema) ouverte en local seulement ; config.yaml la garde fermée en production.
 app = create_app(api_config=replace(load_api_config(), openapi=True))

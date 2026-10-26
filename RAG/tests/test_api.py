@@ -11,7 +11,11 @@ from RAG.src.generation.answer import Answer
 from RAG.src.generation.pipeline import PipelineResult
 from RAG.src.utils.config import ApiConfig
 from RAG.src.utils.errors import (
-    IndexEmptyError, LlmPermanentError, LlmQuotaExhaustedError, LlmUnavailableError, QuestionRejectedError,
+    IndexEmptyError,
+    LlmPermanentError,
+    LlmQuotaExhaustedError,
+    LlmUnavailableError,
+    QuestionRejectedError,
 )
 from RAG.tests.test_generation_answer import result
 
@@ -320,7 +324,7 @@ def test_openapi_can_be_enabled_by_config():
 @pytest.mark.parametrize("content_type", [None, "text/plain", "application/x-www-form-urlencoded",
                                           "application/jsonx"])
 def test_a_body_that_is_not_declared_json_is_refused(content_type):
-    c, pipeline = client()
+    c, _pipeline = client()
     headers = {**H, **({"content-type": content_type} if content_type else {})}
     with c:
         r = c.post("/v1/questions", content=b'{"question": "Que sait-on de rs80357906 ?"}', headers=headers)

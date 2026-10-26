@@ -1,7 +1,10 @@
 import pytest
 
 from RAG.src.generation.checks import (
-    check_citations, check_identifiers, check_no_history_narration, check_significances,
+    check_citations,
+    check_identifiers,
+    check_no_history_narration,
+    check_significances,
 )
 from RAG.src.retrieval.retriever import RetrievedDocument
 from RAG.src.utils.errors import GenerationRejectedError
@@ -214,7 +217,7 @@ def test_uncertain_wordings_are_recognised(answer):
 
 
 def test_zero_width_and_decomposed_text_cannot_hide_anything():
-    assert _reason(check_identifiers, "Voir rs​12345.", [H]) == "identifier_not_in_sources"
+    assert _reason(check_identifiers, "Voir rs\u200b12345.", [H]) == "identifier_not_in_sources"
     assert _reason(check_significances, "Il est bénin.", [H]) == "significance_not_in_sources"
 
 
@@ -465,7 +468,7 @@ def test_explain_rejection_matches_the_check_chain():
 
 
 # --- Étiquettes de documents (D1, D2…) dans le texte ---------------------------------------
-from RAG.src.generation.checks import check_document_labels  # noqa: E402
+from RAG.src.generation.checks import check_document_labels
 
 
 @pytest.mark.parametrize("answer", [
@@ -650,24 +653,24 @@ def test_genes_may_still_come_from_transmitted_documents_only():
 
 @pytest.mark.parametrize("answer", [
     # Liste à puces, un variant et sa signification par ligne (forme des réponses de la recette).
-    "Variants répertoriés :\n- NM_007294.4(BRCA1):c.5266dup (p.Gln1756fs) – signification clinique : pathogène – "
+    ("Variants répertoriés :\n- NM_007294.4(BRCA1):c.5266dup (p.Gln1756fs) – signification clinique : pathogène – "
     "statut de révision : reviewed by expert panel.\n- NM_007294.4(BRCA1):c.4837A>G (p.Ser1613Gly) – "
-    "signification clinique : bénin.\n- NM_007294.4(BRCA1):c.5123C>A (p.Ala1708Glu) – probablement pathogène.",
+    "signification clinique : bénin.\n- NM_007294.4(BRCA1):c.5123C>A (p.Ala1708Glu) – probablement pathogène."),
     # Même liste sans point final : une seule « phrase », les puces ne sont pas découpées.
     "Variants :\n- c.5266dup : pathogène\n- c.4837A>G : bénin\n- c.5123C>A : probablement pathogène",
     "Le variant c.5266dup (pathogène) et le variant c.4837A>G (bénin) sont cités.",
     "Le variant c.5266dup est pathogène, tandis que le variant c.4837A>G (rs1799966) est bénin.",
-    "Une variante (c.4837A>G, rs1799966) est classée bénin, tandis que les variantes c.5266dup (p.Gln1756fs) "
-    "et c.5123C>A sont respectivement classées pathogène et probablement pathogène.",
+    ("Une variante (c.4837A>G, rs1799966) est classée bénin, tandis que les variantes c.5266dup (p.Gln1756fs) "
+    "et c.5123C>A sont respectivement classées pathogène et probablement pathogène."),
     "Les variants c.5266dup et c.4837A>G sont respectivement pathogène et bénin.",
     "Les variants c.5266dup et c.5123C>A sont pathogène ou probablement pathogène.",
-    "Les variantes classées comme pathogène ou probablement pathogène sont :\n- c.5123C>A – signification "
-    "clinique : probablement pathogène ;\n- c.5266dup – signification clinique : pathogène.",
+    ("Les variantes classées comme pathogène ou probablement pathogène sont :\n- c.5123C>A – signification "
+    "clinique : probablement pathogène ;\n- c.5266dup – signification clinique : pathogène."),
     "Les variants pathogènes sont c.5266dup (rs80357906).",
     "Le variant c.5266dup est un variant pathogène, c.4837A>G un variant bénin.",
     # Forme de la recette P1-B02 : en-tête, un variant annoté entre parenthèses, puis « d'autres ».
-    "Les variantes répertoriées comme pathogènes sont : NM_007294.4(BRCA1):c.5266dup (p.Gln1756fs), "
-    "c.4837A>G (p.Ser1613Gly, bénin) et d'autres variantes probablement pathogènes.",
+    ("Les variantes répertoriées comme pathogènes sont : NM_007294.4(BRCA1):c.5266dup (p.Gln1756fs), "
+    "c.4837A>G (p.Ser1613Gly, bénin) et d'autres variantes probablement pathogènes."),
     "Les variantes répertoriées comme pathogènes sont : c.5266dup, c.4837A>G (bénin), rs80357906.",
 ])
 def test_correct_multi_variant_answers_pass(answer):
@@ -676,8 +679,8 @@ def test_correct_multi_variant_answers_pass(answer):
 
 @pytest.mark.parametrize("answer", [
     "Variants :\n- c.5266dup : bénin\n- c.4837A>G : pathogène",
-    "Variants répertoriés :\n- NM_007294.4(BRCA1):c.5266dup – signification clinique : pathogène.\n"
-    "- NM_007294.4(BRCA1):c.4837A>G – signification clinique : pathogène.",
+    ("Variants répertoriés :\n- NM_007294.4(BRCA1):c.5266dup – signification clinique : pathogène.\n"
+    "- NM_007294.4(BRCA1):c.4837A>G – signification clinique : pathogène."),
     "Le variant c.5266dup (bénin) et le variant c.4837A>G (pathogène) sont cités.",
     "Le variant c.5266dup est bénin, tandis que le variant c.4837A>G (rs1799966) est pathogène.",
     "Les variants c.5266dup et c.4837A>G sont respectivement bénin et pathogène.",
@@ -689,8 +692,8 @@ def test_correct_multi_variant_answers_pass(answer):
     "Les variantes répertoriées comme pathogènes sont : c.4837A>G, c.5266dup (pathogène).",
     "Le variant c.4837A>G et d'autres variantes pathogènes sont décrits.",
     "Le variant c.5266dup est pathogène (bénin selon certains).",
-    "Les variantes répertoriées comme pathogènes sont : c.5266dup (p.Gln1756fs) et d'autres variantes "
-    "de signification incertaine, dont c.4837A>G.",
+    ("Les variantes répertoriées comme pathogènes sont : c.5266dup (p.Gln1756fs) et d'autres variantes "
+    "de signification incertaine, dont c.4837A>G."),
 ])
 def test_inverted_or_misattributed_multi_variant_answers_are_rejected(answer):
     assert _verdict(answer) == "significance_not_in_sources"
@@ -1038,7 +1041,7 @@ def test_a_plural_parenthesis_after_a_list_covers_the_whole_list():
 
 
 # --- Correctif post-recette n° 1 : retrait des références déjà citées --------------------------
-from RAG.src.generation.checks import strip_cited_labels  # noqa: E402
+from RAG.src.generation.checks import strip_cited_labels
 
 
 @pytest.mark.parametrize("answer,citations,expected", [

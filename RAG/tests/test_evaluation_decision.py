@@ -5,7 +5,12 @@ import pytest
 
 from RAG.experiments.comparaison_embeddings import bootstrap_mean_ci as e1_bootstrap
 from RAG.src.evaluation.decision import (
-    CandidateResult, bootstrap_mean_ci, choose, eliminate, noise_margin, run_variance,
+    CandidateResult,
+    bootstrap_mean_ci,
+    choose,
+    eliminate,
+    noise_margin,
+    run_variance,
 )
 from RAG.src.evaluation.settings import Thresholds
 

@@ -31,8 +31,8 @@ def test_trace_is_only_exposed_on_request():
 
 
 def test_history_is_exposed_next_to_the_answer():
-    history = ("Historique ClinVar (clinvar:32716) : classé « signification incertaine » jusqu'au 2015-01, "
-               "avant la classification actuelle.",)
+    history = (("Historique ClinVar (clinvar:32716) : classé « signification incertaine » jusqu'au 2015-01, "
+               "avant la classification actuelle."),)
     out = answer_question("q ?", search=lambda q: result(),
                           generate=lambda q, r: Answer("answered", "ok", (), "a", None, None, "Groq", "m", 0.0, 1.0,
                                                        True, history=history),
@@ -85,7 +85,7 @@ class _FakeClient:
 
 
 def _wire(monkeypatch, fail_on_client=None):
-    import RAG.src.generation.pipeline as pipeline
+    from RAG.src.generation import pipeline
     from RAG.src.utils.config import GenerationConfig
     from RAG.tests.test_generation_answer import PROFILE
 
@@ -119,9 +119,8 @@ def test_a_failed_opening_closes_what_was_already_opened(monkeypatch):
     import pytest
 
     pipeline = _wire(monkeypatch, fail_on_client=2)
-    with pytest.raises(RuntimeError):
-        with pipeline.QuestionPipeline(3):
-            pass
+    with pytest.raises(RuntimeError), pipeline.QuestionPipeline(3):
+        pass
     assert (_FakeSearcher.opened, _FakeSearcher.closed, _FakeClient.closed) == (2, 2, 1)
 
 
@@ -130,9 +129,8 @@ def test_a_failed_database_opening_closes_the_http_sessions(monkeypatch):
 
     pipeline = _wire(monkeypatch)
     _FakeSearcher.fail_enter_on = 2
-    with pytest.raises(ConnectionError):
-        with pipeline.QuestionPipeline(2):
-            pass
+    with pytest.raises(ConnectionError), pipeline.QuestionPipeline(2):
+        pass
     # Emplacement 1 fermé par __exit__ ; le Searcher 2, jamais entré, ferme ses sessions HTTP.
     assert (_FakeSearcher.closed, _FakeSearcher.sessions_closed, _FakeClient.closed) == (1, 1, 1)
 
@@ -142,9 +140,8 @@ def test_a_cleanup_error_does_not_mask_the_opening_error(monkeypatch):
 
     pipeline = _wire(monkeypatch, fail_on_client=2)
     _FakeSearcher.fail_exit = True
-    with pytest.raises(RuntimeError, match="clé absente"):
-        with pipeline.QuestionPipeline(2):
-            pass
+    with pytest.raises(RuntimeError, match="clé absente"), pipeline.QuestionPipeline(2):
+        pass
 
 
 def test_the_analysis_cache_allows_a_single_slot(monkeypatch, tmp_path):

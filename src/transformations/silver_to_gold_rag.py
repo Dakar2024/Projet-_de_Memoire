@@ -101,8 +101,8 @@ def render_variant_document(
 def render_gene_document(gene: dict, diseases: list[str], phenotypes: list[str]) -> str:
     """Rend le texte anglais d'un document gène (fonction pure)."""
     lines = [
-        f"Gene {gene['gene_symbol']} ({gene.get('description') or gene['gene_symbol']}), "
-        f"location {gene.get('maplocation') or 'unknown'}.",
+        (f"Gene {gene['gene_symbol']} ({gene.get('description') or gene['gene_symbol']}), "
+        f"location {gene.get('maplocation') or 'unknown'}."),
     ]
     if gene.get("summary"):
         lines.append(_truncate_summary(gene["summary"]))

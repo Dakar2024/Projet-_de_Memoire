@@ -1,3 +1,5 @@
+from typing import ClassVar
+
 import pytest
 
 from RAG.experiments.mesure_recherche import choose_model, score_question, significance_accuracy
@@ -75,7 +77,11 @@ def test_significance_accuracy():
 import polars as pl
 
 from RAG.experiments.mesure_recherche import (
-    check_complete_field, check_run_manifest, check_runs_consistency, exact_doc_ids, v0_scores,
+    check_complete_field,
+    check_run_manifest,
+    check_runs_consistency,
+    exact_doc_ids,
+    v0_scores,
 )
 from RAG.src.retrieval.identifiers import Identifiers
 
@@ -122,7 +128,7 @@ def _manifest(**over):
 
 
 def test_check_run_manifest_accepts_a_consistent_run_and_refuses_the_rest():
-    ok = dict(questions_sha="q", prompt_version="p1", prompt_sha="s1", k=10)
+    ok = {"questions_sha": "q", "prompt_version": "p1", "prompt_sha": "s1", "k": 10}
     check_run_manifest("a__full", _manifest(), **ok)
     check_run_manifest("a__similarity__approx", _manifest(mode="similarity", approx=True), **ok)
     for name, manifest in [("a__full", _manifest(questions_sha256="x")), ("a__full", _manifest(prompt_version="p0")),
@@ -283,7 +289,7 @@ def test_output_dir_separates_trial_and_official_runs(tmp_path, monkeypatch):
 
 
 class _FakeSearcher:
-    instances: list = []
+    instances: ClassVar[list] = []
 
     def __init__(self, *, profile_name, cache_path):
         from RAG.src.utils.config import load_search_config
@@ -314,7 +320,7 @@ class _FakeSearcher:
 def test_mesurer_writes_trial_runs_apart_from_official_ones(tmp_path, monkeypatch, profile, folder):
     import argparse
 
-    import RAG.src.retrieval.retriever as retriever
+    from RAG.src.retrieval import retriever
 
     m = _dirs(tmp_path, monkeypatch)
     monkeypatch.setattr(retriever, "Searcher", _FakeSearcher)
@@ -393,7 +399,7 @@ def test_evaluer_essai_reports_without_choosing_a_model(tmp_path, monkeypatch, c
 
 
 def test_check_run_manifest_refuses_old_format_and_missing_keys_cleanly():
-    ok = dict(questions_sha="q", prompt_version="p1", prompt_sha="s1", k=10)
+    ok = {"questions_sha": "q", "prompt_version": "p1", "prompt_sha": "s1", "k": 10}
     old = _manifest()
     old["exact"] = old.pop("approx")
     with pytest.raises(SystemExit, match=r"a__full.*ancien format \(champ exact\)"):
@@ -446,10 +452,10 @@ def test_mesurer_approx_forces_the_hnsw_search_and_names_the_run(tmp_path, monke
     import argparse
     import json
 
-    import RAG.src.retrieval.retriever as retriever
+    from RAG.src.retrieval import retriever
 
     class Spy(_FakeSearcher):
-        forced = []
+        forced: ClassVar[list] = []
 
         def search(self, question, mode, force_exact):
             Spy.forced.append(force_exact)
@@ -527,7 +533,7 @@ def test_an_exhausted_quota_stops_the_measurement_at_once():
 def test_mesurer_stops_at_the_first_exhausted_quota(tmp_path, monkeypatch):
     import argparse
 
-    import RAG.src.retrieval.retriever as retriever
+    from RAG.src.retrieval import retriever
 
     class QuotaSearcher(_FakeSearcher):
         searched = 0

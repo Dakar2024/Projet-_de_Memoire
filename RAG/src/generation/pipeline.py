@@ -1,27 +1,29 @@
 """Pipeline d'une question (recherche puis génération) ; un emplacement par fil, jamais partagé (connexion psycopg)."""
 from __future__ import annotations
 
+import contextlib
+import functools
 import queue
 import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Self
 
 import psycopg
 import requests
 
 from RAG.src.generation.answer import Answer, generate_answer
-from RAG.src.retrieval.retriever import PANELS, SearchResult, Searcher, build_llm_client
+from RAG.src.retrieval.retriever import PANELS, Searcher, SearchResult, build_llm_client
 from RAG.src.utils.config import DEFAULT_CONFIG_PATH, load_generation_config, load_service_settings
 
 
 def _quietly(close: Callable[[], object]) -> None:
     """Nettoie sur un chemin d'erreur en ignorant son propre échec (l'erreur d'origine prime)."""
-    try:
+    # L'erreur d'origine est relevée par l'appelant : celle du nettoyage est ignorée.
+    with contextlib.suppress(Exception):
         close()
-    except Exception:  # noqa: BLE001 - l'erreur d'origine est relevée par l'appelant
-        pass
 
 
 @dataclass(frozen=True)
@@ -83,7 +85,7 @@ class QuestionPipeline:
         self._busy: set[int] = set()
         self._lock = threading.Lock()
 
-    def __enter__(self) -> QuestionPipeline:
+    def __enter__(self) -> Self:
         """Ouvre tous les emplacements, ou referme ceux déjà ouverts en cas d'échec."""
         try:
             for _ in range(self._n):
@@ -97,7 +99,7 @@ class QuestionPipeline:
                 try:
                     generator = build_llm_client(self._generation.profile, self._env, self._generation.timeout_s)
                 except BaseException:
-                    _quietly(lambda: searcher.__exit__(None, None, None))
+                    _quietly(functools.partial(searcher.__exit__, None, None, None))
                     raise
                 slot = Slot(searcher, generator)
                 self._all.append(slot)
@@ -111,7 +113,7 @@ class QuestionPipeline:
         """Ferme tous les emplacements, même si l'un d'eux échoue ; relève la première erreur."""
         first: BaseException | None = None
         for slot in self._all:
-            for close in (lambda: slot.searcher.__exit__(None, None, None), slot.generator.close):
+            for close in (functools.partial(slot.searcher.__exit__, None, None, None), slot.generator.close):
                 try:
                     close()
                 except Exception as exc:  # noqa: BLE001 - on ferme tout avant de relever

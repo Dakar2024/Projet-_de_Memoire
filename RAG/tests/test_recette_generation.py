@@ -476,7 +476,7 @@ def _replay_setup():
     client = rg.ReplayClient(cache, GENERATION_PROMPT_SHA)
     v1 = [{"id": q["id"], "part": q["part"], "status": "answered", "citations": ["clinvar:32716"],
            "timings_ms": {"total": 9.0}, "analysis_latency_ms": 5.0} for q in questions[:3]]
-    generate = lambda q, r: generate_answer(q, r, client=client, profile=PROFILE, max_tokens=3000)  # noqa: E731
+    generate = lambda q, r: generate_answer(q, r, client=client, profile=PROFILE, max_tokens=3000)
     return questions, v1, res_for, generate, client
 
 
@@ -523,7 +523,7 @@ def test_diagnose_explains_the_trigger_of_each_rejection_without_network():
     from RAG.tests.test_generation_answer import PROFILE
     questions, v1, res_for, _, replay_client = _replay_setup()
     client = rg.RecordingReplayClient(replay_client._cache, GENERATION_PROMPT_SHA)
-    generate = lambda q, r: generate_answer(q, r, client=client, profile=PROFILE, max_tokens=3000)  # noqa: E731
+    generate = lambda q, r: generate_answer(q, r, client=client, profile=PROFILE, max_tokens=3000)
     diagnostics = rg.diagnose_records(questions, v1, search=res_for, generate=generate, client=client)
     # Q1 rejetée (négation) ; Q2 hors périmètre sans LLM ; Q3 non en cache : ni l'une ni l'autre.
     assert [d["id"] for d in diagnostics] == ["Q1"]

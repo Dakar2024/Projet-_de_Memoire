@@ -66,12 +66,14 @@ def test_ingest_hpo_files_does_not_resolve_the_tag_when_one_is_given(tmp_path):
 def test_an_interrupted_replay_leaves_the_partition_incomplete(tmp_path):
     responses.add(responses.GET, RELEASE, body=b"contenu", status=200)
     lake = f"file://{tmp_path}/lake"
-    kwargs = dict(lake_uri=lake, cache_dir=tmp_path / "cache", release_tag="v2026-09-01")
+    kwargs = {"lake_uri": lake, "cache_dir": tmp_path / "cache", "release_tag": "v2026-09-01"}
     partition = ingest_hpo_files("2026-09-01", **kwargs)
 
-    with patch("scripts.ingest_hpo_files.put_file", side_effect=OSError("connexion perdue en pleine écriture")):
-        with pytest.raises(OSError):
-            ingest_hpo_files("2026-09-01", **kwargs)
+    with (
+        patch("scripts.ingest_hpo_files.put_file", side_effect=OSError("connexion perdue en pleine écriture")),
+        pytest.raises(OSError),
+    ):
+        ingest_hpo_files("2026-09-01", **kwargs)
 
     assert partition_is_complete(partition) is False
 

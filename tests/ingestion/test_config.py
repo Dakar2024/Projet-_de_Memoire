@@ -1,8 +1,8 @@
 from ingestion.config import (
     ALL_GENES,
     BREAST_CANCER_GENES,
-    SICKLE_CELL_GENES,
     EUTILS_BASE_URL,
+    SICKLE_CELL_GENES,
 )
 
 

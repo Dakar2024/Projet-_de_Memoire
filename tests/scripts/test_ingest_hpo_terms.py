@@ -89,8 +89,10 @@ def test_an_interrupted_replay_leaves_the_partition_incomplete(tmp_path):
     responses.add(responses.GET, HP_TERMS, json=[], status=200)
     partition = ingest_hpo_terms("2026-09-01", "sickle", ["HBB"], lake_uri=lake)
 
-    with patch("scripts.ingest_hpo_terms.put_bytes", side_effect=OSError("connexion perdue en pleine écriture")):
-        with pytest.raises(OSError):
-            ingest_hpo_terms("2026-09-01", "sickle", ["HBB"], lake_uri=lake)
+    with (
+        patch("scripts.ingest_hpo_terms.put_bytes", side_effect=OSError("connexion perdue en pleine écriture")),
+        pytest.raises(OSError),
+    ):
+        ingest_hpo_terms("2026-09-01", "sickle", ["HBB"], lake_uri=lake)
 
     assert partition_is_complete(partition) is False

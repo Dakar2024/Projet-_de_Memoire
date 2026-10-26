@@ -3,7 +3,11 @@ from pathlib import Path
 import pytest
 
 from RAG.src.utils.config import (
-    DEFAULT_CONFIG_PATH, load_api_config, load_api_key, load_generation_config, load_search_config,
+    DEFAULT_CONFIG_PATH,
+    load_api_config,
+    load_api_key,
+    load_generation_config,
+    load_search_config,
 )
 from RAG.src.utils.errors import RagConfigurationError
 

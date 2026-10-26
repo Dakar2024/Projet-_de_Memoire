@@ -100,7 +100,7 @@ def _compose(
     html = _jinja.get_template("message.html").render(
         app_name=APP_NAME,
         logo_cid=LOGO_CID,
-        year=dt.date.today().year,
+        year=dt.datetime.now(dt.UTC).year,
         title=title,
         paragraphs=paragraphs,
         rows=rows,

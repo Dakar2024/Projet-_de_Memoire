@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import re
 import shutil
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 from ingestion.errors import ConfigurationError
 

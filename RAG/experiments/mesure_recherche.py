@@ -78,10 +78,10 @@ def choose_model(scores: dict[str, list[float]], costs: dict[str, float], seed: 
     means = {name: float(np.mean(values)) for name, values in scores.items()}
     best = max(means, key=lambda name: (means[name], -costs[name]))
     intervals, indistinguishable = {}, [best]
-    for name in scores:
+    for name, values in scores.items():
         if name == best:
             continue
-        diffs = np.array(scores[best]) - np.array(scores[name])
+        diffs = np.array(scores[best]) - np.array(values)
         mean, low, high = bootstrap_mean_ci(diffs, seed=seed)
         intervals[name] = {"ecart": mean, "ic_bas": low, "ic_haut": high}
         if low <= 0:

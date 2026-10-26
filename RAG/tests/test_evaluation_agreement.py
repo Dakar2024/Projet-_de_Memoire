@@ -70,7 +70,7 @@ def test_unknown_category_is_refused():
 def test_cluster_bootstrap_is_deterministic_and_ordered():
     clusters = [[(True, True), (False, False)], [(True, False)], [(False, False), (True, True)],
                 [(False, True), (True, True)], [(True, True)], [(False, False)]]
-    stat = lambda a, b: cohen_kappa(a, b, YES_NO)  # noqa: E731
+    stat = lambda a, b: cohen_kappa(a, b, YES_NO)
     first = cluster_bootstrap_ci(clusters, stat, seed=1, n_resamples=500)
     assert first == cluster_bootstrap_ci(clusters, stat, seed=1, n_resamples=500)
     low, high = first

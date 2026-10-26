@@ -1,6 +1,7 @@
 """Outil de l'évaluation E3a : tirage, contrôles du jeu, vérité terrain (sans réseau ni base)."""
 
 import json
+from typing import ClassVar
 
 import polars as pl
 import pytest
@@ -178,12 +179,12 @@ def test_atomic_write(tmp_path):
 
 # --- Budget, caches, enregistrement, génération sur recherche figée (Tâche 6) -------------------
 
-from RAG.src.llm.common import LlmCall  # noqa: E402
-from RAG.src.retrieval.analysis import QueryAnalysis  # noqa: E402
-from RAG.src.retrieval.identifiers import extract_identifiers  # noqa: E402
-from RAG.src.retrieval.retriever import RetrievedDocument, SearchResult, SearchTrace  # noqa: E402
-from RAG.src.utils.config import LlmProfile  # noqa: E402
-from RAG.src.utils.errors import LlmTruncatedError, LlmUnavailableError  # noqa: E402
+from RAG.src.llm.common import LlmCall
+from RAG.src.retrieval.analysis import QueryAnalysis
+from RAG.src.retrieval.identifiers import extract_identifiers
+from RAG.src.retrieval.retriever import RetrievedDocument, SearchResult, SearchTrace
+from RAG.src.utils.config import LlmProfile
+from RAG.src.utils.errors import LlmTruncatedError, LlmUnavailableError
 
 PROFILE = LlmProfile("mistral-medium", "mistralai/mistral-medium-3-5", "mistral/zdr", "Mistral", None)
 DOC_TEXT = "Variant c.5266dup, gene BRCA1. dbSNP rs80357906. Clinical significance: Pathogenic."
@@ -492,7 +493,7 @@ def _setup_outputs(monkeypatch, tmp_path):
 class JudgeLlm:
     """Faux OpenRouter du juge : sortie incohérente au premier appel de verdicts si `broken`."""
 
-    instances = []
+    instances: ClassVar[list] = []
 
     def __init__(self, *args, broken=False, **kwargs):
         self.broken, self.calls = JudgeLlm.broken, 0
@@ -511,7 +512,7 @@ class JudgeLlm:
 
 
 def test_juger_records_judgements_and_skips_incoherent_ones(tmp_path, monkeypatch):
-    import RAG.src.llm.openrouter as openrouter
+    from RAG.src.llm import openrouter
     _small_settings(monkeypatch)
     first = _setup_outputs(monkeypatch, tmp_path)
     monkeypatch.setenv("OPENROUTER_API_KEY", "test")
@@ -713,7 +714,7 @@ def test_evaluer_refuses_a_missing_generation(tmp_path, monkeypatch):
     _full_setup(monkeypatch, tmp_path)
     path = ev.GENERATIONS / "mistral-medium__p1.json"
     data = json.loads(path.read_text(encoding="utf-8"))
-    data["records"].pop(sorted(data["records"])[0])
+    data["records"].pop(min(data["records"]))
     ev._write_json_atomic(path, data)
     with pytest.raises(SystemExit, match="pas de conclusion"):
         ev.main(["evaluer"])

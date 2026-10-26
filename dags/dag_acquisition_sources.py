@@ -39,7 +39,7 @@ with DAG(
     description="Sources communes à tous les panels : dépôt raw puis conversion bronze",
     # Le 10 à 6 h UTC, partagé avec les rappels (dags/common/schedule.py).
     schedule=ACQUISITION_CRON,
-    start_date=dt.datetime(2026, 1, 1),
+    start_date=dt.datetime(2026, 1, 1, tzinfo=dt.UTC),
     catchup=False,
     # Deux runs écriraient la même partition `raw` partagée.
     max_active_runs=1,

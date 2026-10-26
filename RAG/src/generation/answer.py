@@ -11,7 +11,12 @@ from RAG.src.generation.checks import strip_cited_labels, verify_answer
 from RAG.src.generation.context import build_context, resolve_citations
 from RAG.src.generation.scope import detect_out_of_scope
 from RAG.src.prompts.generation import (
-    GENERATION_SCHEMA, GENERATION_SCHEMA_NAME, MAX_ANSWER_CHARS, SCOPE_REASONS, STATUSES, SYSTEM_PROMPT,
+    GENERATION_SCHEMA,
+    GENERATION_SCHEMA_NAME,
+    MAX_ANSWER_CHARS,
+    SCOPE_REASONS,
+    STATUSES,
+    SYSTEM_PROMPT,
     user_message,
 )
 from RAG.src.retrieval.retriever import RetrievedDocument, SearchResult
@@ -160,8 +165,8 @@ def generate_answer(question: str, result: SearchResult, *, client, profile: Llm
     except ValueError as exc:
         raise LlmUnavailableError(f"réponse de génération hors schéma : {exc}") from exc
 
-    meta = dict(provider_name=call.provider_name, model=profile.model, cost_usd=call.cost_usd,
-                latency_ms=latency, from_llm=True, disclaimer=messages.disclaimer(_archive(documents)))
+    meta = {"provider_name": call.provider_name, "model": profile.model, "cost_usd": call.cost_usd,
+                "latency_ms": latency, "from_llm": True, "disclaimer": messages.disclaimer(_archive(documents))}
     if status == "out_of_scope":
         return Answer(status=status, answer=messages.OUT_OF_SCOPE[reason], sources=(), scope_reason=reason,
                       rejected=None, **meta)

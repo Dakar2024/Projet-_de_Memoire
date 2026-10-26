@@ -6,7 +6,7 @@ import time
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, Self
 
 import numpy as np
 import psycopg
@@ -225,7 +225,7 @@ class PgSearchStore:
         self._conn: psycopg.Connection | None = None
         self._known: tuple[str, ...] | None = None
 
-    def __enter__(self) -> PgSearchStore:
+    def __enter__(self) -> Self:
         # Pas de requête préparée : un plan générique pourrait réutiliser HNSW malgré `enable_indexscan`.
         conn = psycopg.connect(self._conninfo, autocommit=True, connect_timeout=10, prepare_threshold=None)
         try:
@@ -355,7 +355,7 @@ class Searcher:
         self._settings = SearchSettings(self.config.k, self.config.min_filtered, self.config.max_question_chars)
         self._indexed = False
 
-    def __enter__(self) -> Searcher:
+    def __enter__(self) -> Self:
         # Index vide accepté (installation neuve) : l'API démarre et Airflow peut l'indexer ; autre modèle refusé.
         self._store.__enter__()
         try:

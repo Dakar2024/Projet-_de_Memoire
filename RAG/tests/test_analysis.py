@@ -5,7 +5,7 @@ import pytest
 from RAG.src.llm.openrouter import LlmCall
 from RAG.src.retrieval.analysis import AnalysisCache, analyze, validate_analysis
 from RAG.src.utils.config import LlmProfile
-from RAG.src.utils.errors import RagConfigurationError, LlmPermanentError, LlmProviderMismatchError, LlmUnavailableError
+from RAG.src.utils.errors import LlmPermanentError, LlmProviderMismatchError, LlmUnavailableError, RagConfigurationError
 
 PROFILE = LlmProfile("mistral-medium", "mistralai/mistral-medium-3-5", "mistral/zdr", "Mistral", None)
 GOOD = {"english_query": "Is BRCA1 rs80357906 pathogenic?", "significance": "none", "disease": None}

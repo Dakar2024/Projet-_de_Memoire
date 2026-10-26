@@ -36,17 +36,19 @@ def cuis_from_raw_clinvar(
     genes_set = set(genes)
     cuis: list[str] = []
 
-    with open_stream(f"{clinvar_partition}/{BULK_OBJECT}", client=client) as raw:
-        with gzip.GzipFile(fileobj=raw, mode="rb") as decompressed:
-            reader = csv.DictReader(
-                io.TextIOWrapper(decompressed, encoding="utf-8"), delimiter="\t"
-            )
-            for row in reader:
-                if row.get("GeneSymbol") not in genes_set:
-                    continue
-                for cui in extract_medgen_cuis(row.get("PhenotypeIDS") or ""):
-                    if cui not in cuis:
-                        cuis.append(cui)
+    with (
+        open_stream(f"{clinvar_partition}/{BULK_OBJECT}", client=client) as raw,
+        gzip.GzipFile(fileobj=raw, mode="rb") as decompressed,
+    ):
+        reader = csv.DictReader(
+            io.TextIOWrapper(decompressed, encoding="utf-8"), delimiter="\t"
+        )
+        for row in reader:
+            if row.get("GeneSymbol") not in genes_set:
+                continue
+            for cui in extract_medgen_cuis(row.get("PhenotypeIDS") or ""):
+                if cui not in cuis:
+                    cuis.append(cui)
     return cuis
 
 

@@ -17,7 +17,7 @@ with DAG(
     description="Échec volontaire pour tester l'envoi d'alerte (à relancer après tout changement SMTP)",
     # Jamais planifié : se déclenche à la main, `airflow dags trigger dag_test_alerte`.
     schedule=None,
-    start_date=dt.datetime(2026, 1, 1),
+    start_date=dt.datetime(2026, 1, 1, tzinfo=dt.UTC),
     catchup=False,
     is_paused_upon_creation=True,
     default_args={**alert_args(), "retries": 0},

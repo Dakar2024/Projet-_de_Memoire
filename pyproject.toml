@@ -9,3 +9,7 @@ src = ["src", "."]
 target-version = "py312"
 line-length = 120
 extend-exclude = ["venv", "data", "archive"]
+
+[tool.ruff.lint.per-file-ignores]
+# Le paquet s'importe sous ce nom partout (`RAG.src…`, image rag-api) : le renommer casserait tous ses imports.
+"RAG/**" = ["N999"]

@@ -108,8 +108,10 @@ def test_an_interrupted_replay_leaves_the_partition_incomplete(tmp_path):
     lake = f"file://{tmp_path}/lake"
     partition = ingest_medgen("2026-09-01", "sickle", ["HBB"], _client(), lake_uri=lake)
 
-    with patch("scripts.ingest_medgen.put_bytes", side_effect=OSError("connexion perdue en pleine écriture")):
-        with pytest.raises(OSError):
-            ingest_medgen("2026-09-01", "sickle", ["HBB"], _client(), lake_uri=lake)
+    with (
+        patch("scripts.ingest_medgen.put_bytes", side_effect=OSError("connexion perdue en pleine écriture")),
+        pytest.raises(OSError),
+    ):
+        ingest_medgen("2026-09-01", "sickle", ["HBB"], _client(), lake_uri=lake)
 
     assert partition_is_complete(partition) is False

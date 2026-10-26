@@ -1,4 +1,3 @@
-import json
 
 import pytest
 import requests
@@ -7,7 +6,10 @@ import responses
 from RAG.src.llm.openrouter import OPENROUTER_BASE_URL, OpenRouterClient, build_payload
 from RAG.src.utils.config import LlmProfile
 from RAG.src.utils.errors import (
-    LlmPermanentError, LlmProviderMismatchError, LlmTruncatedError, LlmUnavailableError,
+    LlmPermanentError,
+    LlmProviderMismatchError,
+    LlmTruncatedError,
+    LlmUnavailableError,
 )
 
 CLAUDE = LlmProfile("claude-opus-5.5", "anthropic/claude-opus-5.5", "google-vertex/europe", "Google", None)

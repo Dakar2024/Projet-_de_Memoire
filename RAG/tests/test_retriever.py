@@ -3,7 +3,12 @@ import pytest
 
 from RAG.src.retrieval.analysis import QueryAnalysis
 from RAG.src.retrieval.retriever import (
-    PgSearchStore, RetrievedDocument, Searcher, SearchSettings, check_index_models, search,
+    PgSearchStore,
+    RetrievedDocument,
+    Searcher,
+    SearchSettings,
+    check_index_models,
+    search,
 )
 from RAG.src.utils.errors import IndexEmptyError, QuestionRejectedError, RagConfigurationError
 
@@ -323,7 +328,7 @@ def test_doc_ids_sha256_sorts_in_python_before_hashing():
 
     from RAG.src.retrieval.retriever import doc_ids_sha256
 
-    expected = hashlib.sha256("clinvar:1\nclinvar:2\ngene:BRCA1".encode()).hexdigest()
+    expected = hashlib.sha256(b"clinvar:1\nclinvar:2\ngene:BRCA1").hexdigest()
     assert doc_ids_sha256(["gene:BRCA1", "clinvar:2", "clinvar:1"]) == expected
     assert doc_ids_sha256(iter(["clinvar:2", "gene:BRCA1", "clinvar:1"])) == expected
 

@@ -193,7 +193,7 @@ def test_as_dict_serialises_sources_and_history():
 
 
 @pytest.mark.parametrize("text", [
-    "rs​12345 n est pas documenté.",
+    "rs\u200b12345 n est pas documenté.",
     "c.68‑2A>G absent.",
     "Le variant VCV000017677 n est pas dans les fiches.",
     "Aucune fiche, mais ce variant est généralement pathogène.",

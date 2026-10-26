@@ -1,5 +1,9 @@
 from RAG.src.generation.context import (
-    UNKNOWN_CITATION_PREFIX, build_context, document_labels, render_document, resolve_citations,
+    UNKNOWN_CITATION_PREFIX,
+    build_context,
+    document_labels,
+    render_document,
+    resolve_citations,
 )
 from RAG.src.retrieval.retriever import RetrievedDocument
 

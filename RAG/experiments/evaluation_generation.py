@@ -530,7 +530,7 @@ def judgeable(record: dict) -> bool:
     return record.get("llm_status") in _JUDGED_STATUSES and bool((record.get("llm_text") or "").strip())
 
 
-def load_generations(folder: Path = None) -> dict[tuple[str, int], dict]:
+def load_generations(folder: Path | None = None) -> dict[tuple[str, int], dict]:
     """Charge les séries de génération par (profil, passage)."""
     folder = folder or GENERATIONS
     out = {}

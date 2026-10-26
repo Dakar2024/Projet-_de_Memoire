@@ -110,7 +110,7 @@ def check_manifests(a, b, current_doc_ids, current_chunk_hash, current_questions
 
 def same_model_suspected(docs_a: np.ndarray, docs_b: np.ndarray, threshold: float = SAME_MODEL_COSINE) -> bool:
     """Signale deux « modèles » aux vecteurs quasi identiques (conteneur non remplacé)."""
-    unit = lambda v: v / np.linalg.norm(v, axis=1, keepdims=True)  # noqa: E731
+    unit = lambda v: v / np.linalg.norm(v, axis=1, keepdims=True)
     mean_cosine = float(np.mean(np.sum(unit(docs_a) * unit(docs_b), axis=1)))
     return not mean_cosine < threshold  # NaN => suspect
 

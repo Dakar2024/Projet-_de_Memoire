@@ -30,7 +30,7 @@ def test_parse_genes_to_phenotype_excludes_genes_out_of_scope():
 
 @responses.activate
 def test_download_hpo_files_writes_genes_to_phenotype(tmp_path):
-    from ingestion.hpo import download_hpo_files, GENES_TO_PHENOTYPE_URL
+    from ingestion.hpo import GENES_TO_PHENOTYPE_URL, download_hpo_files
 
     responses.add(responses.GET, GENES_TO_PHENOTYPE_URL, body=b"gene-content", status=200)
 

@@ -85,8 +85,8 @@ def eliminate(result: CandidateResult, t: Thresholds) -> list[str]:
 
 def _ties(candidates: list[CandidateResult], metric: str, seed: int) -> tuple[list[CandidateResult], list[dict]]:
     """Candidats à égalité avec le meilleur pour `metric` ("faithfulness" ou "relevance")."""
-    scores: Callable[[CandidateResult], dict[str, float]] = lambda c: getattr(c, metric)  # noqa: E731
-    repeats: Callable[[CandidateResult], dict[str, list[float]]] = lambda c: getattr(c, f"repeat_{metric}")  # noqa: E731
+    scores: Callable[[CandidateResult], dict[str, float]] = lambda c: getattr(c, metric)
+    repeats: Callable[[CandidateResult], dict[str, list[float]]] = lambda c: getattr(c, f"repeat_{metric}")
     means = {c.name: float(np.mean(list(scores(c).values()))) if scores(c) else -1.0 for c in candidates}
     best = max(candidates, key=lambda c: (means[c.name], c.name))
     tied, steps = [best], []

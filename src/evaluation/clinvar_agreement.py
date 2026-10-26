@@ -33,7 +33,8 @@ def parse_date(text: str | None) -> dt.date | None:
         return None
     for fmt in _DATE_FORMATS:
         try:
-            return dt.datetime.strptime(text.strip(), fmt).date()
+            # Une date ClinVar n'a pas d'heure significative : le fuseau ne sert qu'à la rendre explicite.
+            return dt.datetime.strptime(text.strip(), fmt).replace(tzinfo=dt.UTC).date()
         except ValueError:
             continue
     raise ValueError(f"date ClinVar illisible : {text!r}")

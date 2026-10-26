@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Protocol
+from typing import Protocol, Self
 
 import numpy as np
 import psycopg
@@ -72,7 +72,7 @@ class PgVectorStore:
         self._conninfo = conninfo
         self._conn: psycopg.Connection | None = None
 
-    def __enter__(self) -> PgVectorStore:
+    def __enter__(self) -> Self:
         conn = psycopg.connect(self._conninfo, autocommit=True, connect_timeout=CONNECT_TIMEOUT_S)
         try:
             conn.execute("SELECT set_config('statement_timeout', %s, false)", (str(STATEMENT_TIMEOUT_MS),))

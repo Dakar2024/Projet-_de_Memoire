@@ -66,7 +66,7 @@ def build_panel_dag(panel: str, genes: list[str]) -> DAG:
         dag_id=f"dag_genomic_pipeline_{panel}",
         description=f"Pipeline médaillon — {PANEL_LABELS.get(panel, panel)}",
         schedule=[SOURCES_READY],
-        start_date=dt.datetime(2026, 1, 1),
+        start_date=dt.datetime(2026, 1, 1, tzinfo=dt.UTC),
         catchup=False,
         # Deux runs du même panel écriraient la même partition `raw`.
         max_active_runs=1,

@@ -58,15 +58,15 @@ def load_settings(path: Path = DEFAULT_SETTINGS_PATH, config_path: Path = DEFAUL
         judge_raw = raw["judge"]
         thresholds = Thresholds(**{k: float(raw["thresholds"][k]) for k in
                                    ("faithfulness_min", "rejection_max", "wrong_abstention_max", "kappa_min")})
-        values = dict(
-            judge_max_tokens=int(judge_raw["max_tokens"]),
-            candidates=tuple(str(c) for c in raw["candidates"]),
-            seed_draw=int(raw["seeds"]["draw"]), seed_bootstrap=int(raw["seeds"]["bootstrap"]),
-            strata={name: int(raw["strata"][name]) for name in STRATA},
-            repeat_questions=int(raw["repeat_questions"]), passes=int(raw["passes"]),
-            sample_size=int(raw["sample_size"]), thresholds=thresholds,
-            budget_usd=float(raw["budget_usd"]), reserve_per_call_usd=float(raw["reserve_per_call_usd"]),
-        )
+        values = {
+            "judge_max_tokens": int(judge_raw["max_tokens"]),
+            "candidates": tuple(str(c) for c in raw["candidates"]),
+            "seed_draw": int(raw["seeds"]["draw"]), "seed_bootstrap": int(raw["seeds"]["bootstrap"]),
+            "strata": {name: int(raw["strata"][name]) for name in STRATA},
+            "repeat_questions": int(raw["repeat_questions"]), "passes": int(raw["passes"]),
+            "sample_size": int(raw["sample_size"]), "thresholds": thresholds,
+            "budget_usd": float(raw["budget_usd"]), "reserve_per_call_usd": float(raw["reserve_per_call_usd"]),
+        }
         judge_name = str(judge_raw.get("name") or "")
     except (OSError, KeyError, TypeError, ValueError, AttributeError, yaml.YAMLError) as exc:
         raise RagConfigurationError(f"{path} : réglages E3a illisibles ou incomplets : {exc!r}") from exc

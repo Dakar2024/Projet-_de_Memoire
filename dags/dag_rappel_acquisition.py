@@ -21,7 +21,7 @@ with DAG(
     schedule=MultipleCronTriggerTimetable(
         REMINDER_EARLY_CRON, REMINDER_DAY_OF_CRON, timezone="UTC"
     ),
-    start_date=dt.datetime(2026, 1, 1),
+    start_date=dt.datetime(2026, 1, 1, tzinfo=dt.UTC),
     catchup=False,
     max_active_runs=1,
     # Un échec SMTP passager ne doit pas faire perdre le rappel.

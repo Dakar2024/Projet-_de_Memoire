@@ -7,7 +7,11 @@ import responses
 from RAG.src.llm.groq import GROQ_BASE_URL, GroqClient, build_payload, parse_duration, rate_limit_wait
 from RAG.src.utils.config import LlmProfile
 from RAG.src.utils.errors import (
-    LlmPermanentError, LlmQuotaExhaustedError, LlmTruncatedError, LlmUnavailableError, RagConfigurationError,
+    LlmPermanentError,
+    LlmQuotaExhaustedError,
+    LlmTruncatedError,
+    LlmUnavailableError,
+    RagConfigurationError,
 )
 
 TRIAL = LlmProfile("essai-groq-gpt-oss-120b", "openai/gpt-oss-120b", "groq", "Groq", None, backend="groq")

@@ -79,9 +79,11 @@ def test_an_interrupted_replay_leaves_the_partition_incomplete(tmp_path):
     lake = f"file://{tmp_path}/lake"
     partition = ingest_clinvar("2026-09-01", lake_uri=lake, cache_dir=tmp_path / "cache")
 
-    with patch("scripts.ingest_clinvar.put_file", side_effect=OSError("connexion perdue en pleine écriture")):
-        with pytest.raises(OSError):
-            ingest_clinvar("2026-09-01", lake_uri=lake, cache_dir=tmp_path / "cache")
+    with (
+        patch("scripts.ingest_clinvar.put_file", side_effect=OSError("connexion perdue en pleine écriture")),
+        pytest.raises(OSError),
+    ):
+        ingest_clinvar("2026-09-01", lake_uri=lake, cache_dir=tmp_path / "cache")
 
     assert partition_is_complete(partition) is False
 

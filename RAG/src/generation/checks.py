@@ -50,7 +50,7 @@ class _VariantIds:
     p: frozenset = frozenset()
     vid: frozenset = frozenset()
 
-    def __or__(self, other: "_VariantIds") -> "_VariantIds":
+    def __or__(self, other: _VariantIds) -> _VariantIds:
         return _VariantIds(self.rs | other.rs, self.c | other.c, self.p | other.p, self.vid | other.vid)
 
     def __contains__(self, key: str) -> bool:
@@ -563,8 +563,8 @@ def _check_variant_pairing(sentence: str, terms: list[tuple[int, str]],
     def reject(variant: list[str], said) -> None:
         """Rejette une signification non conforme à la fiche du variant."""
         raise GenerationRejectedError("significance_not_in_sources", [
-            f"signification non conforme à la fiche du variant {variant[0]} : {', '.join(said)} "
-            f"(fiche : {', '.join(sorted(significances(variant))) or 'aucune'} ; phrase : {sentence.strip()})"])
+            (f"signification non conforme à la fiche du variant {variant[0]} : {', '.join(said)} "
+            f"(fiche : {', '.join(sorted(significances(variant))) or 'aucune'} ; phrase : {sentence.strip()})")])
 
     def check(variants: list[list[str]], group: list[str], *, every_term: bool) -> None:
         """Vérifie un bloc de termes contre des variants."""
@@ -744,13 +744,13 @@ def _check_inherited(variants: list[str], said: list[str], keyed, sentence: str)
     for key in variants:
         if not significances(key) & set(said):
             raise GenerationRejectedError("significance_not_in_sources", [
-                f"signification non conforme à la fiche du variant {key} (phrase voisine) : {', '.join(said)} "
-                f"(fiche : {', '.join(sorted(significances(key))) or 'aucune'} ; phrase : {sentence.strip()})"])
+                (f"signification non conforme à la fiche du variant {key} (phrase voisine) : {', '.join(said)} "
+                f"(fiche : {', '.join(sorted(significances(key))) or 'aucune'} ; phrase : {sentence.strip()})")])
     for term in said:
         if not any(term in significances(key) for key in variants):
             raise GenerationRejectedError("significance_not_in_sources", [
-                f"signification non conforme aux variants de la phrase voisine : {term} "
-                f"(variants : {', '.join(variants)} ; phrase : {sentence.strip()})"])
+                (f"signification non conforme aux variants de la phrase voisine : {term} "
+                f"(variants : {', '.join(variants)} ; phrase : {sentence.strip()})")])
 
 
 # Marqueurs d'historique raconté, volontairement larges (faux positifs acceptés).

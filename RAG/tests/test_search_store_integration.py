@@ -90,7 +90,7 @@ def test_test_rows_never_surface(store):
 def test_exact_search_stays_stable_after_many_executions(store):
     """Au-delà de 5 exécutions, un plan préparé ne doit pas changer le résultat exact."""
     q = _vector()
-    kwargs = dict(query_vector=q, genes=["BRCA2"], significances=["Pathogenic"], exclude_doc_ids=[], limit=10)
+    kwargs = {"query_vector": q, "genes": ["BRCA2"], "significances": ["Pathogenic"], "exclude_doc_ids": [], "limit": 10}
     reference = None
     for _ in range(12):
         found = store.similar(exact=True, **kwargs)

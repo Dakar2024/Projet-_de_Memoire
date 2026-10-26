@@ -73,7 +73,8 @@ class AnalysisCache:
     @staticmethod
     def key(question: str, profile: LlmProfile) -> str:
         """Calcule la clé d'une analyse, avec l'empreinte du prompt en vigueur."""
-        raw = "\0".join((prompts.PROMPT_VERSION, prompts.prompt_sha256(), profile.model,
+        # Séparateur NUL explicite, plus lisible qu'une f-string ; la clé ne doit pas changer (cache).
+        raw = "\0".join((prompts.PROMPT_VERSION, prompts.prompt_sha256(), profile.model,  # noqa: FLY002
                          profile.provider_tag, question))
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 

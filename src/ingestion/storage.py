@@ -6,7 +6,7 @@ import json
 import os
 import re
 import shutil
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import polars as pl
@@ -222,7 +222,7 @@ def build_manifest(
         "source_version": source_version,
         "files": files,
         "record_count": record_count,
-        "written_at": datetime.now(timezone.utc).isoformat(),
+        "written_at": datetime.now(UTC).isoformat(),
     }
     if sha256 is not None:
         manifest["sha256"] = sha256

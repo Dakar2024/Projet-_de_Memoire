@@ -21,8 +21,8 @@ _RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
         r"\bamerican\s+college\s+of\s+medical\s+genetics\b",
         r"\bgrilles?\s+de\s+classification\b",
         # « Classer … selon », sauf « selon ClinVar / les laboratoires / les soumissionnaires ».
-        r"\bclasse[rz]?\b(?:\s+\S+){0,8}?\s+selon\b"
-        r"(?!\s+(?:clinvar|les\s+(?:laboratoires|soumissionnaires)\b))",
+        (r"\bclasse[rz]?\b(?:\s+\S+){0,8}?\s+selon\b"
+        r"(?!\s+(?:clinvar|les\s+(?:laboratoires|soumissionnaires)\b))"),
     )),
     ("frequency", (
         r"\bfrequences?\b",
@@ -90,9 +90,9 @@ _RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     )),
     # Listes fermées (création, culture générale) : le vocabulaire médical est ouvert, le reste va au LLM.
     ("other", (
-        r"\b(?:ecri[st]|ecrire|redige[sz]?|rediger|compose[sz]?|composer|invente[sz]?|inventer"
+        (r"\b(?:ecri[st]|ecrire|redige[sz]?|rediger|compose[sz]?|composer|invente[sz]?|inventer"
         r"|raconte[sz]?|raconter)\b.*\b(?:poemes?|chansons?|blagues?|histoires?|contes?|recits?"
-        r"|haikus?|slogans?|romans?|nouvelles?|raps?|vers|dissertations?)\b",
+        r"|haikus?|slogans?|romans?|nouvelles?|raps?|vers|dissertations?)\b"),
         r"\b(?:poemes?|chansons?|blagues?|haikus?|horoscopes?)\b",
         r"\bcapitales?\b",
         r"\bpresident(?:e|s|es)?\b",

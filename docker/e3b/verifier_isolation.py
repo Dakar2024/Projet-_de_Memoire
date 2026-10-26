@@ -50,4 +50,4 @@ if __name__ == "__main__":
         print(f"FUITE  {probleme}")
     if problemes:
         sys.exit(1)
-    print(f"isolée : aucun nom, port, volume, réseau ni dossier de données partagé avec la pile principale")
+    print("isolée : aucun nom, port, volume, réseau ni dossier de données partagé avec la pile principale")

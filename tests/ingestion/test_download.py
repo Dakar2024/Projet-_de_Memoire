@@ -2,7 +2,7 @@ import pytest
 import responses
 from requests.exceptions import ConnectionError
 
-from ingestion.download import download_to_file, IncompleteDownloadError
+from ingestion.download import IncompleteDownloadError, download_to_file
 
 URL = "https://example.org/big-file.txt"
 
