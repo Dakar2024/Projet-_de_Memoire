@@ -1,7 +1,10 @@
 # Évaluation du pipeline — protocole complet
 
-**Date de rédaction :** 29 septembre 2026
-**Référence des données :** archive ClinVar de septembre 2026, partition `dt=2026-09-01`
+**Date de rédaction :** 29 septembre 2026 ; **mise à jour :** 26 octobre 2026, à la fin d'E3b
+**Référence des données :** archive ClinVar de septembre 2026, partition `dt=2026-09-01` ;
+niveaux 5 à 7 et volumes du § 3 recalés sur l'archive d'**octobre 2026** (`dt=2026-10-01`)
+**Résultats des niveaux 5 à 7 :** `reference/rapport_e3b.md` ; grille manuelle :
+`reference/grille_justesse_e3b.md`
 **Objet :** établir, preuve à l'appui, que le pipeline produit des données justes, complètes et
 reproductibles — et dire précisément ce qui n'est pas prouvé.
 
@@ -17,15 +20,15 @@ Sept niveaux, du plus faible au plus fort. Un niveau élevé ne remplace pas les
 tests unitaires verts ne disent rien de la justesse biologique, et une vérification manuelle
 réussie ne dit rien du comportement en panne.
 
-| # | Niveau de preuve | Ce qu'il établit | État au 29/09/2026 |
+| # | Niveau de preuve | Ce qu'il établit | État au 26/10/2026 |
 |---|---|---|---|
-| 1 | Tests automatisés | La logique est juste, isolément | ✅ 284 + 24 tests verts |
-| 2 | Exécution de bout en bout | Les composants s'assemblent | ✅ 18 gènes, 96 910 documents |
+| 1 | Tests automatisés | La logique est juste, isolément | ✅ 1 757 + 77 tests verts (`pytest`, `tests_airflow`) |
+| 2 | Exécution de bout en bout | Les composants s'assemblent | ✅ 18 gènes, 97 210 documents (octobre) |
 | 3 | Contrôles qualité intégrés | Chaque exécution se vérifie elle-même | ✅ 5 contrôles actifs |
 | 4 | Idempotence du rejeu | Relancer ne corrompt rien | ✅ vérifié sur le lac réel |
-| 5 | Comportement en panne | Le système échoue proprement | ❌ **à faire** |
-| 6 | Restauration | Les données sont récupérables | ❌ **à faire** |
-| 7 | **Justesse métier** | Les données correspondent à la réalité | ❌ **à faire — §8** |
+| 5 | Comportement en panne | Le système échoue proprement | ✅ six scénarios joués, deux défauts corrigés (D-E3b-2, D-E3b-3), une réserve (O-E3b-2) |
+| 6 | Restauration | Les données sont récupérables | ✅ restauration complète sur pile vide, rejeu ; un défaut corrigé (D-E3b-1) |
+| 7 | **Justesse métier** | Les données correspondent à la réalité | 7b ✅ 400/400 contre l'API ClinVar ; 7a ⏳ **grille prête, à cocher par l'utilisateur — §8** |
 
 **Le niveau 7 est celui qui compte pour un jury de génomique**, et c'est le seul qu'aucun
 programme ne peut produire à votre place.
@@ -73,9 +76,9 @@ docker compose exec airflow-scheduler airflow dags list-runs dag_genomic_pipelin
 |---|---|
 | Toutes les tâches vertes sauf | aucune — `quality_check_gold` est la dernière |
 | Durée totale d'un panel | 8 à 12 min (dominée par les appels NCBI) |
-| `silver/clinvar_variant` | 96 892 lignes — 93 381 brca, 3 511 sickle |
-| `silver/clinvar_variant_disease` | 170 475 lignes |
-| `gold/rag/documents` | 96 910 — 96 892 variants + 18 gènes |
+| `silver/clinvar_variant` | 97 192 lignes — 93 615 brca, 3 577 sickle (octobre ; septembre : 96 892) |
+| `silver/clinvar_variant_disease` | 171 141 lignes (septembre : 170 475) |
+| `gold/rag/documents` | 97 210 — 97 192 variants + 18 gènes (septembre : 96 910) |
 | Pic mémoire du scheduler | < 2,5 Go (mesuré : 2 Go sur la conversion ClinVar) |
 
 Un écart de plus de 5 % sur les volumes doit être expliqué avant de poursuivre : soit
@@ -143,7 +146,12 @@ coût.
 
 ---
 
-## 6. Niveau 5 — Comportement en panne *(à réaliser)*
+## 6. Niveau 5 — Comportement en panne *(réalisé le 23 et 24/10/2026)*
+
+> **Résultats** : `reference/rapport_e3b.md`, niveau 5. Joués sur la pile isolée `genomique-e3b`,
+> jamais sur la principale, avec deux scénarios ajoutés (P5 double déclenchement, P6 mois passé).
+> Depuis la règle « mois en cours uniquement » (24/10/2026), P3 ne vise plus 2019 : l'acquisition
+> d'octobre est relancée derrière un proxy fermé. Le tableau ci-dessous est le protocole d'origine.
 
 Quatre scénarios, à exécuter une fois et à consigner. Chacun vérifie que le système **échoue
 proprement** plutôt que de produire des données fausses.
@@ -163,7 +171,10 @@ pytest tests/transformations/test_quality_check_silver.py -v -k truncated
 
 ---
 
-## 7. Niveau 6 — Restauration *(à réaliser)*
+## 7. Niveau 6 — Restauration *(réalisé le 23/10/2026)*
+
+> **Résultats** : `reference/rapport_e3b.md`, niveau 6. Restauration complète sur une pile vide
+> (`scripts/restaurer.sh`), puis rejeu ; le « vrai test » décrit à la fin de cette section est fait.
 
 Une sauvegarde non restaurée n'est pas une sauvegarde.
 
@@ -193,8 +204,8 @@ correspondent à ce que disent réellement les bases sources.
 
 ### 8.1 Trois pièges méthodologiques, à connaître avant de commencer
 
-**Piège 1 — le décalage temporel.** Le pipeline a figé l'**archive mensuelle de septembre
-2026**. Le site de ClinVar affiche l'état **courant**, qui a pu changer depuis. Une divergence
+**Piège 1 — le décalage temporel.** Le pipeline a figé une **archive mensuelle** (septembre
+2026 à la rédaction, octobre 2026 pour E3b). Le site de ClinVar affiche l'état **courant**, qui a pu changer depuis. Une divergence
 n'est donc pas automatiquement une erreur.
 
 > **Règle de décision :** comparer d'abord la date « Last evaluated » affichée sur le site avec
@@ -212,6 +223,15 @@ document RAG, lui, **omet la ligne** correspondante. Un document sans ligne « d
 correct, pas amputé.
 
 ### 8.2 L'échantillon de vérification
+
+> **E3b (octobre 2026)** : les onze variants sont toujours dans le Gold. La grille
+> `reference/grille_justesse_e3b.md` (`scripts/verifier_justesse.py --grille`) reprend chacun avec
+> **nos valeurs d'octobre**, qui priment sur celles du tableau ci-dessous (septembre), et le texte
+> de son document RAG. **Maladies** : `PhenotypeList` liste celles de **tous** les RCV, pas
+> seulement de la classification germinale (correction P-E3b-1 du rapport).
+>
+> **7b**, complément automatique : 400 variants tirés au hasard (graine 20261023), comparés aux
+> E-utilities sur les mêmes six éléments : 400 conformes, Wilson 95 % [99,05 ; 100].
 
 Onze variants réellement présents dans le Gold, choisis pour couvrir toutes les catégories de
 signification clinique, les deux panels et les trois cas particuliers.
@@ -329,9 +349,10 @@ mais pas infinie, et c'est ce que surveillera le tableau de bord Infrastructure.
 
 À écrire noir sur blanc dans le mémoire — c'est ce qui distingue une évaluation d'un argumentaire.
 
-1. **La justesse de l'ensemble des 96 892 variants.** Onze sont vérifiés à la main. Le reste
-   repose sur le fait que la même transformation s'applique uniformément, ce qui est une
-   inférence, pas une preuve.
+1. **La justesse de l'ensemble des 97 192 variants.** Onze sont vérifiés à la main, et 400 tirés
+   au hasard sont comparés automatiquement à l'API ClinVar (7b : 400/400, taux d'erreur inférieur
+   à 1 % avec 95 % de confiance). Le reste est une inférence statistique, pas une preuve. Et 7b
+   vérifie nos transformations, pas ClinVar lui-même : la source est la même.
 2. **La stabilité dans le temps.** Un seul mois a été traité. Le mécanisme d'historique SCD2 est
    testé unitairement, mais aucune reclassification réelle n'a encore été observée entre deux
    archives.
@@ -360,13 +381,18 @@ mais pas infinie, et c'est ce que surveillera le tableau de bord Infrastructure.
 
 | Scénario | Comportement observé | Date | Conclusion |
 |---|---|---|---|
-| P1 conteneur tué | ______ | ______ | ☐ conforme |
-| P2 disque saturé | ______ | ______ | ☐ conforme |
-| P3 source indisponible | ______ | ______ | ☐ conforme |
-| P4 archive tronquée | ______ | ______ | ☐ conforme |
-| Restauration complète | ______ | ______ | ☐ conforme |
+| P1 conteneur tué | Tâches reprises au 2ᵉ essai, rien de commité par l'essai tué | 24/10/2026 | ☑ conforme |
+| P2 disque saturé | Refus avant tout téléchargement ; échec au 1er essai après correction D-E3b-3 | 24/10/2026 | ☑ conforme (après correction) |
+| P3 source indisponible | `ProxyError`, 4 essais, mail d'échec, aucun Asset ni run de panel | 24/10/2026 | ☑ conforme |
+| P4 archive tronquée | `quality_check_silver` bloque à 46 % de variants absents, Gold intact | 24/10/2026 | ☑ conforme, réserve O-E3b-2 |
+| P5 double déclenchement | Sauté par `skip_if_already_published`, aucun Asset | 24/10/2026 | ☑ conforme |
+| P6 mois passé | Refusé au 1er essai (« hors du mois en cours ») | 24/10/2026 | ☑ conforme |
+| Restauration complète | Pile vide restaurée, rejeu ; D-E3b-1 trouvé et corrigé | 23/10/2026 | ☑ conforme (après correction) |
 
 ### Niveau 7 — justesse métier
+
+> À remplir depuis `reference/grille_justesse_e3b.md` (7a). Le résultat de 7b est dans
+> `reference/rapport_e3b.md`.
 
 | # | Nom HGVS | Signification | Statut de revue | Date | dbSNP | Maladies | Verdict |
 |---|---|---|---|---|---|---|---|

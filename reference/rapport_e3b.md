@@ -9,6 +9,7 @@ Critères fixés **avant** les mesures. Pile isolée `genomique-e3b` (spec § 3)
 | 5 — Comportement en panne | ✅ six scénarios joués ; deux défauts trouvés et corrigés (D-E3b-2, D-E3b-3), une réserve (O-E3b-2) |
 | 7a — Onze fiches (utilisateur) | grille pré-remplie (`reference/grille_justesse_e3b.md`), à cocher par l'utilisateur ; un défaut trouvé en la préparant (D-E3b-4), **corrigé** |
 | 7b — 400 variants contre l'API ClinVar | ✅ 400/400 conformes, Wilson 95 % [99,05 ; 100] ; règle des maladies corrigée après mesure (P-E3b-1), les deux résultats donnés |
+| Clôture (26/10/2026) | pile isolée démontée (`down -v`, `data/e3b` supprimé) ; pile principale saine, lac intact (97 210 documents, 97 192 variants) ; `evaluation.md` et `TODO.md` mis à jour |
 
 ---
 

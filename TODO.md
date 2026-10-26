@@ -24,8 +24,11 @@ Ce qui n'est pas encore fait. Les audits complets sont dans `reference/audit_sec
 
 ## 2. RAG — sous-projets restants
 
-- [ ] **E3b — évaluation du pipeline de données** (niveaux 5 à 7 de `reference/evaluation.md`) :
-      spec, plan, implémentation. Inclut la restauration complète (voir §4).
+- [ ] **E3b — reste la 7a** : cocher `reference/grille_justesse_e3b.md` (onze fiches ClinVar et
+      cinq sources annexes, ~2 h 30), puis reporter le taux dans `reference/evaluation.md` § 11 et
+      `reference/rapport_e3b.md`. Niveaux 5, 6 et 7b faits le 23–26/10 (`reference/rapport_e3b.md`).
+- [ ] **Appliquer D-E3b-4 au Gold RAG** : relancer les deux panels sur octobre (22 149 documents
+      re-vectorisés) ou attendre le run de novembre. Décision de l'utilisateur.
 - [ ] **E3c — audit général et politique de garantie** : spec, plan, implémentation.
 - [ ] **Fusion des branches** RAG → `pipeline/ingest` → `main`, à la toute fin du RAG, avec accord.
 
@@ -37,8 +40,8 @@ Ce qui n'est pas encore fait. Les audits complets sont dans `reference/audit_sec
 
 ## 4. Exploitation
 
-- [ ] **Relancer un run complet sur une pile restaurée** (E3b). La fidélité des copies est vérifiée :
-      base vectorielle (14/10) puis base Airflow et lac (16/10, `verifier_restauration_lac_airflow.sh`).
+- [x] **Relancer un run complet sur une pile restaurée** (E3b, 23/10/2026) : critère R2 du niveau 6,
+      toutes les tâches au premier essai (`reference/rapport_e3b.md`).
 - [ ] **Design des e-mails** (alerte d'échec, rappels J-2 et jour J) une fois le design de l'application
       validé : tout est dans `dags/common/emails.py`.
 - [ ] **Monitoring** : relire en entier la spec
