@@ -66,8 +66,8 @@ de développement.
       (PYSEC-2025-217, PYSEC-2026-2288 à 2290, 3929, 4174), acceptés dans la CI car aucun chemin n'est utilisé
       (modèles épinglés par SHA, pas de `Trainer`, torch 2.14.1). Passer en ≥ 5.10 change sans doute l'export
       ONNX, donc l'empreinte du modèle et tout l'index : à décider par mesure (canari), pas en passant.
-- [ ] **Scan des images Docker** dans la CI (G1, reste) ; et rendre `ruff` et `pyright` bloquants une fois
-      l'existant nettoyé (117 et 193 erreurs au 16/10/2026, job `lint` informatif).
+- [ ] **Scan des images Docker** dans la CI (G1, reste) ; et rendre `pyright` bloquant une fois l'existant
+      nettoyé (193 erreurs au 16/10/2026). `ruff` est bloquant depuis le 26/10/2026 (120 erreurs → 0).
 
 ## 7. RAG — durcissements différés
 

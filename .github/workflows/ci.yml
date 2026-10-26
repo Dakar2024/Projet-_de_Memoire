@@ -60,7 +60,7 @@ jobs:
           --ignore-vuln PYSEC-2026-3929 --ignore-vuln PYSEC-2026-4174
 
   lint:
-    name: Lint (informatif)
+    name: Lint (ruff bloquant, pyright informatif)
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -71,9 +71,8 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - run: pip install -r requirements.txt -r RAG/requirements.txt $TEST_DEPS ruff==0.16.10 pyright==1.1.414
-      # Informatif tant que l'existant n'est pas nettoyé (117 erreurs ruff, 193 pyright au 16/10/2026) :
-      # chaque étape est tentée, aucune n'échoue le build.
+      # ruff bloque depuis le nettoyage de l'existant (120 erreurs → 0 le 26/10/2026). pyright reste
+      # informatif tant que ses 193 erreurs (16/10/2026) ne sont pas traitées.
       - run: ruff check . --statistics
-        continue-on-error: true
       - run: pyright
         continue-on-error: true
