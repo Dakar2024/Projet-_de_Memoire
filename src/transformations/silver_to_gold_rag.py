@@ -162,7 +162,14 @@ def build_documents(logical_date: str, panel: str, lake_uri: str | None = None) 
     history = _previous_significance(variants)
     current = variants.filter(pl.col("is_current"))
     gene_of = dict(variant_gene.select("alleleid", "gene_symbol").iter_rows())
-    inheritance_of = dict(inheritance.select("cui", "mode_inheritance").iter_rows())
+    # Tous les modes d'une maladie, triés, comme `dim_disease` : un `dict` des lignes ne gardait
+    # que le dernier lu, donc un mode choisi par l'ordre des lignes (défaut D-E3b-4).
+    inheritance_of = dict(
+        inheritance.group_by("cui")
+        .agg(pl.col("mode_inheritance").drop_nulls().unique().sort().str.join("; "))
+        .filter(pl.col("mode_inheritance") != "")
+        .iter_rows()
+    )
     phenotypes_of = _phenotypes_by_disease(gene_phenotype)
 
     diseases_of: dict[str, list[dict]] = {}

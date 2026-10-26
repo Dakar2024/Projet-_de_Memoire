@@ -260,7 +260,10 @@ def test_previous_significance_ties_are_broken_by_maintain_order_not_arbitrarily
     assert history["1"] == ("Likely pathogenic", "2026-09-01")
 
 
-def _seed_silver(lake, panel="brca", significance="Pathogenic", extra_variant=False):
+def _seed_silver(
+    lake, panel="brca", significance="Pathogenic", extra_variant=False,
+    inheritance_modes=("Autosomal dominant",),
+):
     """Silver minimal mais complet pour un run Gold : un variant, sa maladie, son
     gène, un phénotype."""
     gene = BREAST_CANCER_GENES[0]
@@ -294,7 +297,9 @@ def _seed_silver(lake, panel="brca", significance="Pathogenic", extra_variant=Fa
             schema_overrides={"orpha_id": pl.Utf8, "mondo_id": pl.Utf8}),
         f"{lake}/silver/clinvar_variant_disease", panel)
     _write_silver_snapshot(
-        pl.DataFrame([{"cui": "C1", "mode_inheritance": "Autosomal dominant", "panel": panel}]),
+        pl.DataFrame(
+            [{"cui": "C1", "mode_inheritance": mode, "panel": panel} for mode in inheritance_modes],
+            schema_overrides={"mode_inheritance": pl.Utf8}),
         f"{lake}/silver/medgen_inheritance", panel)
     # Ruling coordinateur (tâche 4) : la tâche 6 (silver_to_gold_analytique) réutilise
     # ce même fixture et lit medgen_concept pour la dimension maladie. Semé ici pour
@@ -413,3 +418,34 @@ def test_silver_to_gold_rag_leaves_the_other_panel_untouched(tmp_path):
     silver_to_gold_rag("2026-10-01", "brca", lake_uri=lake)
 
     assert "clinvar:999" in pl.read_delta(documents_uri(lake))["doc_id"].to_list()
+
+
+@pytest.mark.parametrize(
+    "modes",
+    [
+        ("Autosomal recessive inheritance", "Autosomal dominant inheritance"),
+        ("Autosomal dominant inheritance", "Autosomal recessive inheritance"),
+    ],
+)
+def test_build_documents_cites_every_inheritance_mode_whatever_the_row_order(tmp_path, modes):
+    # D-E3b-4 : la bêta-thalassémie (C0005283) a deux modes dans MedGen ; un `dict` ne gardait
+    # que le dernier lu, donc un mode choisi par l'ordre des lignes.
+    lake = _seed_silver(f"file://{tmp_path}/lake", inheritance_modes=modes)
+
+    docs = build_documents("2026-09-01", "brca", lake_uri=lake)
+
+    text = docs.filter(pl.col("doc_id") == "clinvar:1")["text"].item()
+    assert (
+        "Hereditary cancer (OMIM 604370, inheritance: "
+        "Autosomal dominant inheritance; Autosomal recessive inheritance)"
+    ) in text
+
+
+def test_build_documents_ignores_a_null_inheritance_mode(tmp_path):
+    lake = _seed_silver(f"file://{tmp_path}/lake", inheritance_modes=(None, "Autosomal dominant"))
+
+    docs = build_documents("2026-09-01", "brca", lake_uri=lake)
+
+    text = docs.filter(pl.col("doc_id") == "clinvar:1")["text"].item()
+    assert "Hereditary cancer (OMIM 604370, inheritance: Autosomal dominant)" in text
+
