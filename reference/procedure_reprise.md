@@ -105,9 +105,9 @@ relancé par Clear après le run du mois suivant (règle 3). La garde a refusé 
 
 ### 5.1 Données fausses publiées pour le mois en cours
 
-Un bug corrigé, ou une archive tronquée bloquée par `quality_check_silver` (le Silver instantané
-du panel est alors déjà réécrit, seul le Gold est protégé) : rejouer **le mois en cours**, avant la
-fin du mois (règle 3). L'acquisition d'un mois déjà publié est sautée, il faut la forcer :
+Un bug corrigé, ou une archive tronquée refusée par `bronze_to_silver` (« Silver non publié, rien
+n'a été écrit » : le Silver garde sa version précédente, le Gold aussi) : rejouer **le mois en
+cours**, avant la fin du mois (règle 3). L'acquisition d'un mois déjà publié est sautée, il faut la forcer :
 
 ```bash
 docker compose exec airflow-scheduler \

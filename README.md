@@ -412,8 +412,10 @@ Panels de gènes (`src/ingestion/config.py`) :
 | `medgen_concept`, `medgen_mim`, `medgen_inheritance` | Maladies, numéros OMIM, modes de transmission |
 | `hpo_gene_phenotype`, `hpo_term` | Phénotypes par gène et définition de chaque terme HPO |
 
-Chaque table est partitionnée par panel. `quality_check_silver` bloque la suite du pipeline
-si une table est absente ou vide, ou si les liens entre tables sont incohérents.
+Chaque table est partitionnée par panel. `bronze_to_silver` contrôle ses tables **avant** de les
+écrire : une table vide, des liens incohérents ou une archive tronquée (plus de 5 % de variants
+courants absents) et rien n'est publié. `quality_check_silver` refait les mêmes contrôles sur les
+tables publiées et bloque la suite du pipeline.
 
 ## Tables de la couche Gold
 

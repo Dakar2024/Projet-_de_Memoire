@@ -6,7 +6,7 @@ Critères fixés **avant** les mesures. Pile isolée `genomique-e3b` (spec § 3)
 | Niveau | État |
 |---|---|
 | 6 — Restauration | ✅ conforme ; un défaut du pipeline trouvé (D-E3b-1), **corrigé et revérifié** |
-| 5 — Comportement en panne | ✅ six scénarios joués ; deux défauts trouvés et corrigés (D-E3b-2, D-E3b-3), une réserve (O-E3b-2) |
+| 5 — Comportement en panne | ✅ six scénarios joués ; deux défauts trouvés et corrigés (D-E3b-2, D-E3b-3) ; réserve O-E3b-2 **levée** le 26/10 |
 | 7a — Onze fiches (utilisateur) | grille pré-remplie (`reference/grille_justesse_e3b.md`), à cocher par l'utilisateur ; un défaut trouvé en la préparant (D-E3b-4), **corrigé** |
 | 7b — 400 variants contre l'API ClinVar | ✅ 400/400 conformes, Wilson 95 % [99,05 ; 100] ; règle des maladies corrigée après mesure (P-E3b-1), les deux résultats donnés |
 | Clôture (26/10/2026) | pile isolée démontée (`down -v`, `data/e3b` supprimé) ; pile principale saine, lac intact (97 210 documents, 97 192 variants) ; `evaluation.md` et `TODO.md` mis à jour |
@@ -57,12 +57,36 @@ Le 23/10, `--logical-date 2019-01-10` donnait un run « réussi » sans aucune t
 pas de tâche avant le `start_date` du DAG (2026-01-01). Sans effet sur les données (rien n'est
 ingéré, conforme à la règle du mois en cours), mais sans message.
 
-### Observation O-E3b-2 — le Silver n'est pas protégé par son propre contrôle
+### Observation O-E3b-2 — le Silver n'est pas protégé par son propre contrôle (levée)
 
 Le contrôle Silver bloque le Gold, pas le Silver : `bronze_to_silver` a déjà remplacé les tables
 instantanées du panel par les données tronquées (v7 → v8). L'application et le RAG lisent le Gold,
 resté sain ; le Silver reste faux jusqu'au prochain run correct (`procedure_reprise.md` § 5.1 :
 réacquérir le mois avec `force`).
+
+**Levée** (26/10/2026, option « contrôler avant d'écrire » choisie par l'utilisateur parmi trois) :
+- **Fonction pure partagée.** Les contrôles deviennent une fonction pure, `find_silver_errors`.
+  `bronze_to_silver` l'applique aux tables **candidates**, en mémoire, avant la première écriture.
+  L'état de `clinvar_variant` après la fusion SCD2 est reconstruit sans rien écrire, avec la même
+  détection des changements que l'écriture. En cas d'échec : « Silver non publié, rien n'a été
+  écrit », échec définitif sans relance.
+- **Défense en profondeur.** `quality_check_silver` refait les mêmes contrôles sur les tables
+  publiées.
+- **Tests d'abord.** Trois tests étaient rouges sur l'ancien code :
+  - une archive tronquée de moitié ne change la version Delta d'aucune des 10 tables ;
+  - un premier run sans variant ne crée aucune table ;
+  - le DAG transforme le refus en échec définitif.
+
+  La graine des tests de `bronze_to_silver` a reçu une vraie notice MedGen : sans elle,
+  `medgen_mim` et `medgen_inheritance` sortaient vides, ce que le contrôle refuse désormais.
+- **Revérifié sur un lac jetable.** Vrai bronze d'octobre, panel sickle. Silver publié, puis
+  bronze ClinVar tronqué comme en P4 (9 223 698 → 4 611 849 lignes) : refusé, « 1470 variant(s)
+  courant(s) sur 3577 absent(s) de l'instantané du mois, soit 41% ». Versions Delta inchangées sur
+  les 10 tables, contrôle d'après publication toujours vert.
+
+**Limite restante** : les 10 écritures ne forment pas une transaction, Delta n'en offre pas entre
+tables. Un plantage au milieu laisse un Silver mixte : `quality_check_silver` le bloque avant le
+Gold, et le rejeu du mois le répare.
 
 ---
 

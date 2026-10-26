@@ -26,7 +26,7 @@ réussie ne dit rien du comportement en panne.
 | 2 | Exécution de bout en bout | Les composants s'assemblent | ✅ 18 gènes, 97 210 documents (octobre) |
 | 3 | Contrôles qualité intégrés | Chaque exécution se vérifie elle-même | ✅ 5 contrôles actifs |
 | 4 | Idempotence du rejeu | Relancer ne corrompt rien | ✅ vérifié sur le lac réel |
-| 5 | Comportement en panne | Le système échoue proprement | ✅ six scénarios joués, deux défauts corrigés (D-E3b-2, D-E3b-3), une réserve (O-E3b-2) |
+| 5 | Comportement en panne | Le système échoue proprement | ✅ six scénarios joués, deux défauts corrigés (D-E3b-2, D-E3b-3), la réserve O-E3b-2 levée |
 | 6 | Restauration | Les données sont récupérables | ✅ restauration complète sur pile vide, rejeu ; un défaut corrigé (D-E3b-1) |
 | 7 | **Justesse métier** | Les données correspondent à la réalité | 7b ✅ 400/400 contre l'API ClinVar ; 7a ⏳ **grille prête, à cocher par l'utilisateur — §8** |
 
@@ -107,7 +107,7 @@ se vérifie ». Ils bloquent la propagation vers la couche suivante.
 |---|---|---|
 | `check_raw` | Partition complète, `_SUCCESS` présent, `record_count` > 0 | Un téléchargement tronqué |
 | `check_bronze` | Idem après conversion | Une conversion partielle |
-| `quality_check_silver` | Les 10 tables non vides, gènes du panel, unicité de l'état courant, références croisées, **plausibilité du volume (seuil 5 %)** | Une archive ClinVar tronquée |
+| `quality_check_silver` | Les 10 tables non vides, gènes du panel, unicité de l'état courant, références croisées, **plausibilité du volume (seuil 5 %)**. Mêmes contrôles **avant** l'écriture, dans `bronze_to_silver` (depuis le 26/10/2026) | Une archive ClinVar tronquée, refusée avant publication |
 | `quality_check_gold` | Conservation des variants, un document par variant et par gène, unicité des `doc_id`, taille des textes, clés non pendantes | Une perte entre Silver et Gold |
 
 ### Prouver qu'un garde-fou se déclenche vraiment
@@ -384,7 +384,7 @@ mais pas infinie, et c'est ce que surveillera le tableau de bord Infrastructure.
 | P1 conteneur tué | Tâches reprises au 2ᵉ essai, rien de commité par l'essai tué | 24/10/2026 | ☑ conforme |
 | P2 disque saturé | Refus avant tout téléchargement ; échec au 1er essai après correction D-E3b-3 | 24/10/2026 | ☑ conforme (après correction) |
 | P3 source indisponible | `ProxyError`, 4 essais, mail d'échec, aucun Asset ni run de panel | 24/10/2026 | ☑ conforme |
-| P4 archive tronquée | `quality_check_silver` bloque à 46 % de variants absents, Gold intact | 24/10/2026 | ☑ conforme, réserve O-E3b-2 |
+| P4 archive tronquée | `quality_check_silver` bloque à 46 % de variants absents, Gold intact ; depuis le 26/10, refusé avant publication du Silver | 24/10/2026, revérifié le 26/10 | ☑ conforme (réserve O-E3b-2 levée) |
 | P5 double déclenchement | Sauté par `skip_if_already_published`, aucun Asset | 24/10/2026 | ☑ conforme |
 | P6 mois passé | Refusé au 1er essai (« hors du mois en cours ») | 24/10/2026 | ☑ conforme |
 | Restauration complète | Pile vide restaurée, rejeu ; D-E3b-1 trouvé et corrigé | 23/10/2026 | ☑ conforme (après correction) |
