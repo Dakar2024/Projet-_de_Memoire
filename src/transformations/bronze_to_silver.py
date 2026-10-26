@@ -12,6 +12,7 @@ from ingestion.config import BRONZE, PANEL_GENES
 from ingestion.errors import OutOfOrderMonthError
 from ingestion.medgen import parse_medgen_conceptmeta
 from ingestion.storage import get_bytes, partition_uri, scan_parquet, storage_options
+from transformations.quality_check_silver import SilverQualityError, find_silver_errors
 from transformations.silver_io import silver_table_uri
 
 # Colonnes techniques bronze, jamais propagées en Silver.
@@ -311,6 +312,42 @@ def _check_month_order(table_uri: str, panel: str, logical_date: str) -> None:
         )
 
 
+def _changed_rows(rows: pl.DataFrame, current: pl.DataFrame) -> pl.DataFrame:
+    """Lignes de `rows` nouvelles ou dont un champ surveillé diffère de la version courante."""
+    # `_matched_current` distingue « sans correspondance » d'un champ surveillé réellement nul.
+    current_watched = (
+        current.select(["alleleid"] + _CLINVAR_WATCHED_FIELDS)
+        .rename({f: f"cur_{f}" for f in _CLINVAR_WATCHED_FIELDS})
+        .with_columns(pl.lit(True).alias("_matched_current"))
+    )
+    joined = rows.join(current_watched, on="alleleid", how="left")
+    # `ne_missing` et non `!=` : détecte aussi la transition `null → valeur`.
+    changed = pl.any_horizontal(
+        [pl.col(f).ne_missing(pl.col(f"cur_{f}")) for f in _CLINVAR_WATCHED_FIELDS]
+    ) | pl.col("_matched_current").is_null()
+    return joined.filter(changed).drop(
+        [f"cur_{f}" for f in _CLINVAR_WATCHED_FIELDS] + ["_matched_current"]
+    )
+
+
+def _project_clinvar_variant(rows: pl.DataFrame, table_uri: str, panel: str) -> pl.DataFrame:
+    """`alleleid` et `is_current` de `clinvar_variant` du panel après la fusion SCD2, sans rien écrire."""
+    new_current = rows.select("alleleid").with_columns(pl.lit(True).alias("is_current"))
+    if not DeltaTable.is_deltatable(table_uri, storage_options=storage_options(table_uri)):
+        return new_current
+    published = pl.read_delta(table_uri, storage_options=storage_options(table_uri)).filter(
+        pl.col("panel") == panel
+    )
+    changed = _changed_rows(rows, published.filter(pl.col("is_current")))
+    # La fusion ferme la version courante d'un variant changé et ouvre la nouvelle ; elle ne
+    # ferme jamais un variant absent du lot.
+    closed = pl.col("alleleid").is_in(changed["alleleid"].implode())
+    return pl.concat([
+        published.select("alleleid", (pl.col("is_current") & ~closed).alias("is_current")),
+        changed.select("alleleid").with_columns(pl.lit(True).alias("is_current")),
+    ])
+
+
 def _write_clinvar_variant(
     rows: pl.DataFrame, table_uri: str, panel: str, logical_date: str
 ) -> None:
@@ -333,21 +370,7 @@ def _write_clinvar_variant(
         pl.col("is_current") & (pl.col("panel") == panel)
     )
     current_ids = current["alleleid"].to_list()
-
-    # `_matched_current` distingue « sans correspondance » d'un champ surveillé réellement nul.
-    current_watched = (
-        current.select(["alleleid"] + _CLINVAR_WATCHED_FIELDS)
-        .rename({f: f"cur_{f}" for f in _CLINVAR_WATCHED_FIELDS})
-        .with_columns(pl.lit(True).alias("_matched_current"))
-    )
-    joined = rows.join(current_watched, on="alleleid", how="left")
-    # `ne_missing` et non `!=` : détecte aussi la transition `null → valeur`.
-    changed = pl.any_horizontal(
-        [pl.col(f).ne_missing(pl.col(f"cur_{f}")) for f in _CLINVAR_WATCHED_FIELDS]
-    ) | pl.col("_matched_current").is_null()
-    to_process = joined.filter(changed).drop(
-        [f"cur_{f}" for f in _CLINVAR_WATCHED_FIELDS] + ["_matched_current"]
-    )
+    to_process = _changed_rows(rows, current)
 
     if len(to_process) == 0:
         return
@@ -421,21 +444,29 @@ def bronze_to_silver(logical_date: str, panel: str, lake_uri: str | None = None)
     hpo_term = _build_hpo_term(hpo_terms_partition)
     ncbi_gene = _build_ncbi_gene(ncbi_gene_partition)
 
-    _write_clinvar_variant(
-        variant_rows.with_columns(pl.lit(panel).alias("panel")),
-        silver_table_uri("clinvar_variant", lake_uri), panel, logical_date,
+    variant_rows = variant_rows.with_columns(pl.lit(panel).alias("panel"))
+    variant_uri = silver_table_uri("clinvar_variant", lake_uri)
+    snapshots = {
+        "clinvar_variant_disease": variant_disease,
+        "clinvar_variant_gene": variant_gene,
+        "ncbi_gene": ncbi_gene,
+        "refseq_transcript": refseq_transcript,
+        "medgen_concept": concept,
+        "medgen_mim": mim,
+        "medgen_inheritance": inheritance,
+        "hpo_gene_phenotype": hpo_gene_phenotype,
+        "hpo_term": hpo_term,
+    }
+    # Contrôle avant publication (O-E3b-2) : refusé, le Silver garde sa version précédente.
+    errors = find_silver_errors(
+        {"clinvar_variant": _project_clinvar_variant(variant_rows, variant_uri, panel), **snapshots},
+        panel,
     )
-    for table, df in [
-        ("clinvar_variant_disease", variant_disease),
-        ("clinvar_variant_gene", variant_gene),
-        ("ncbi_gene", ncbi_gene),
-        ("refseq_transcript", refseq_transcript),
-        ("medgen_concept", concept),
-        ("medgen_mim", mim),
-        ("medgen_inheritance", inheritance),
-        ("hpo_gene_phenotype", hpo_gene_phenotype),
-        ("hpo_term", hpo_term),
-    ]:
+    if errors:
+        raise SilverQualityError("Silver non publié, rien n'a été écrit : " + "; ".join(errors))
+
+    _write_clinvar_variant(variant_rows, variant_uri, panel, logical_date)
+    for table, df in snapshots.items():
         _write_silver_snapshot(
             df.with_columns(pl.lit(panel).alias("panel")), silver_table_uri(table, lake_uri), panel
         )

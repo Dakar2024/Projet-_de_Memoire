@@ -143,8 +143,9 @@ def build_panel_dag(panel: str, genes: list[str]) -> DAG:
         def task_bronze_to_silver(sources_date: str) -> None:
             try:
                 bronze_to_silver(sources_date, panel)
-            except OutOfOrderMonthError as exc:
-                # Une relance lirait le même historique : échec définitif, avec la marche à suivre.
+            except (OutOfOrderMonthError, SilverQualityError) as exc:
+                # Une relance relirait le même historique ou le même bronze : échec définitif, avec
+                # la marche à suivre ; refusé avant publication, le Silver garde sa version (O-E3b-2).
                 raise AirflowFailException(str(exc)) from exc
 
         @task(task_id="quality_check_silver")

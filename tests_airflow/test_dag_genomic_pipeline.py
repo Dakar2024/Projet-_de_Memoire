@@ -382,3 +382,21 @@ def test_an_out_of_order_month_fails_without_consuming_retries(monkeypatch):
 
     with pytest.raises(AirflowFailException, match="2026-12-01"):
         dag.get_task("bronze_to_silver").python_callable("2026-11-01")
+
+
+def test_a_silver_refused_before_publication_fails_without_consuming_retries(monkeypatch):
+    """`bronze_to_silver` contrôle avant d'écrire (O-E3b-2) : une relance referait le même constat."""
+    from airflow.sdk.exceptions import AirflowFailException
+
+    from dags import dag_genomic_pipeline
+    from transformations.quality_check_silver import SilverQualityError
+
+    def refused(sources_date, panel):
+        raise SilverQualityError("Silver non publié : 46 % des variants courants absents")
+
+    monkeypatch.setattr(dag_genomic_pipeline, "bronze_to_silver", refused)
+    dag = build_panel_dag("brca", ["BRCA1", "BRCA2"])
+
+    with pytest.raises(AirflowFailException, match="Silver non publié"):
+        dag.get_task("bronze_to_silver").python_callable("2026-10-01")
+

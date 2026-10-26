@@ -3,7 +3,11 @@ import pytest
 
 from ingestion.config import BREAST_CANCER_GENES, SICKLE_CELL_GENES
 from transformations.bronze_to_silver import _write_clinvar_variant, _write_silver_snapshot
-from transformations.quality_check_silver import SilverQualityError, quality_check_silver
+from transformations.quality_check_silver import (
+    SilverQualityError,
+    find_silver_errors,
+    quality_check_silver,
+)
 
 ALL_TABLES = [
     "clinvar_variant", "clinvar_variant_gene", "clinvar_variant_disease", "ncbi_gene",
@@ -205,3 +209,40 @@ def test_quality_check_silver_names_the_proportion_of_retired_variants(tmp_path)
 
     message = str(raised.value)
     assert "60" in message and "%" in message
+
+
+def _candidate(current: int, in_snapshot: int, gene: str = "HBB") -> dict[str, pl.DataFrame]:
+    """Tables du panel sickle telles qu'elles seraient publiées : `current` variants courants,
+    un instantané du mois qui n'en couvre que `in_snapshot`."""
+    snapshot_ids = [str(i) for i in range(in_snapshot)]
+    one_row = pl.DataFrame({"panel": ["sickle"]})
+    tables = {table: one_row for table in ALL_TABLES}
+    tables["clinvar_variant"] = pl.DataFrame({
+        "alleleid": [str(i) for i in range(current)], "is_current": [True] * current,
+    })
+    tables["clinvar_variant_gene"] = pl.DataFrame({
+        "alleleid": snapshot_ids, "gene_symbol": [gene] * in_snapshot,
+    })
+    tables["clinvar_variant_disease"] = pl.DataFrame({"alleleid": snapshot_ids})
+    return tables
+
+
+def test_find_silver_errors_accepts_consistent_tables():
+    assert find_silver_errors(_candidate(100, 98), "sickle") == []
+
+
+def test_find_silver_errors_names_a_truncated_snapshot():
+    [error] = find_silver_errors(_candidate(100, 40), "sickle")
+    assert "60 variant(s) courant(s) sur 100" in error
+
+
+def test_find_silver_errors_reports_an_absent_table():
+    tables = _candidate(10, 10)
+    tables["medgen_mim"] = None
+    assert find_silver_errors(tables, "sickle") == ["medgen_mim : table absente"]
+
+
+def test_find_silver_errors_reports_a_gene_outside_the_panel():
+    [error] = find_silver_errors(_candidate(10, 10, gene="BRCA1"), "sickle")
+    assert "gènes hors panel 'sickle'" in error
+

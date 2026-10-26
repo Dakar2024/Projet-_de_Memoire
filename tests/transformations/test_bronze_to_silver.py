@@ -3,7 +3,9 @@ import json as _json
 
 import polars as pl
 import pytest
+from deltalake import DeltaTable
 
+from ingestion.config import SILVER_TABLES as ALL_SILVER_TABLES
 from ingestion.errors import OutOfOrderMonthError
 from ingestion.storage import put_bytes
 from transformations.bronze_to_silver import (
@@ -22,6 +24,7 @@ from transformations.bronze_to_silver import (
     _write_silver_snapshot,
     bronze_to_silver,
 )
+from transformations.quality_check_silver import SilverQualityError
 
 
 def _seed_bronze_parquet(tmp_path, source, panel, df: pl.DataFrame) -> str:
@@ -532,14 +535,30 @@ def test_build_hpo_term_keeps_a_row_with_empty_details(tmp_path):
     assert result["definition"].to_list() == [None]
 
 
-def _seed_all_bronze(tmp_path, lake, panel):
-    _seed_bronze_parquet(tmp_path, "clinvar", None, pl.DataFrame({
-        "alleleid": ["1"], "genesymbol": ["HBB"], "assembly": ["GRCh38"],
-        "clinicalsignificance": ["Benign"], "reviewstatus": ["criteria provided"],
-        "lastevaluated": ["2026-08-01"], "rs_dbsnp": ["-1"],
-        "name": ["NM_000518.5(HBB):c.1A>G"],
-        "phenotypelist": ["Sickle cell anemia"], "phenotypeids": ["MedGen:C0002895"],
-    }))
+# Notice MedGen minimale mais réelle : sans MIM ni mode, `medgen_mim` et `medgen_inheritance`
+# sortiraient vides et le contrôle d'avant publication refuserait le Silver.
+_CONCEPTMETA = (
+    "<ModesOfInheritance><ModeOfInheritance><Name>Autosomal recessive inheritance</Name>"
+    "</ModeOfInheritance></ModesOfInheritance><OMIM><MIM>603903</MIM></OMIM>"
+)
+
+
+def _clinvar_bronze(hbb_variants: int) -> pl.DataFrame:
+    """`hbb_variants` variants HBB (panel sickle), plus un BRCA1 pour que le panel brca ne soit pas vide."""
+    ids = [str(i) for i in range(1, hbb_variants + 1)] + ["brca-1"]
+    n = len(ids)
+    return pl.DataFrame({
+        "alleleid": ids, "genesymbol": ["HBB"] * hbb_variants + ["BRCA1"], "assembly": ["GRCh38"] * n,
+        "clinicalsignificance": ["Benign"] * n, "reviewstatus": ["criteria provided"] * n,
+        "lastevaluated": ["2026-08-01"] * n, "rs_dbsnp": ["-1"] * n,
+        "name": [f"NM_000518.5(HBB):c.{i}A>G" for i in range(1, hbb_variants + 1)]
+        + ["NM_007294.4(BRCA1):c.116G>A"],
+        "phenotypelist": ["Sickle cell anemia"] * n, "phenotypeids": ["MedGen:C0002895"] * n,
+    })
+
+
+def _seed_all_bronze(tmp_path, lake, panel, hbb_variants=1):
+    _seed_bronze_parquet(tmp_path, "clinvar", None, _clinvar_bronze(hbb_variants))
     _seed_bronze_parquet(tmp_path, "hpo", None, pl.DataFrame({
         "ncbi_gene_id": ["3043"], "gene_symbol": ["HBB"],
         "hpo_id": ["HP:0001903"], "hpo_name": ["Anemia"],
@@ -552,7 +571,8 @@ def _seed_all_bronze(tmp_path, lake, panel):
         "transcripts_json": [_json.dumps([{"accessionversion": "NM_000518.5", "slen": 1000}])],
     }))
     _seed_bronze_parquet(tmp_path, "medgen", panel, pl.DataFrame({
-        "cui": ["C0002895"], "esummary_json": [_json.dumps({"conceptid": "C0002895"})],
+        "cui": ["C0002895"],
+        "esummary_json": [_json.dumps({"conceptid": "C0002895", "conceptmeta": _CONCEPTMETA})],
     }))
     _seed_bronze_parquet(tmp_path, "hpo_terms", panel, pl.DataFrame({
         "gene_symbol": ["HBB"], "hpo_id": ["HP:0001903"], "hpo_name": ["Anemia"],
@@ -591,10 +611,6 @@ def test_bronze_to_silver_does_not_disturb_the_other_panel(tmp_path):
 
 
 def test_bronze_to_silver_writes_clinvar_variant_disease(tmp_path):
-    # Panel "sickle", pas "brca" : le gène ClinVar de `_seed_all_bronze` est HBB, qui
-    # n'appartient qu'au panel sickle — un run "brca" produirait un `clinvar_variants`
-    # vide (aucun alleleid retenu) et la table serait vide, ce que ce test ne veut pas
-    # vérifier.
     lake = f"file://{tmp_path}/lake"
     _seed_all_bronze(tmp_path, lake, "sickle")
 
@@ -684,3 +700,46 @@ def test_bronze_to_silver_refuses_an_older_month_before_writing_anything(tmp_pat
         bronze_to_silver("2026-09-01", "sickle", lake_uri=lake)
 
     assert not (tmp_path / "lake" / "silver" / "ncbi_gene").exists()
+
+
+def _versions(lake: str) -> dict[str, int]:
+    return {table: DeltaTable(f"{lake}/silver/{table}").version() for table in ALL_SILVER_TABLES}
+
+
+def test_bronze_to_silver_refuses_a_truncated_archive_before_writing_anything(tmp_path):
+    """O-E3b-2 : le contrôle Silver bloquait le Gold, pas le Silver ; une archive tronquée de
+    moitié réécrivait les instantanés du panel avant d'être refusée (E3b P4, v7 → v8)."""
+    lake = f"file://{tmp_path}/lake"
+    _seed_all_bronze(tmp_path, lake, "sickle", hbb_variants=40)
+    bronze_to_silver("2026-09-01", "sickle", lake_uri=lake)
+    before = _versions(lake)
+
+    _seed_all_bronze(tmp_path, lake, "sickle", hbb_variants=20)
+    with pytest.raises(SilverQualityError, match="Silver non publié") as raised:
+        bronze_to_silver("2026-09-01", "sickle", lake_uri=lake)
+
+    assert "50%" in str(raised.value)
+    assert _versions(lake) == before
+
+
+def test_bronze_to_silver_refuses_a_first_run_without_variants_before_creating_tables(tmp_path):
+    lake = f"file://{tmp_path}/lake"
+    _seed_all_bronze(tmp_path, lake, "sickle", hbb_variants=0)
+
+    with pytest.raises(SilverQualityError, match="aucune ligne"):
+        bronze_to_silver("2026-09-01", "sickle", lake_uri=lake)
+
+    assert not (tmp_path / "lake" / "silver").exists()
+
+
+def test_bronze_to_silver_publishes_a_month_with_a_few_retired_variants(tmp_path):
+    lake = f"file://{tmp_path}/lake"
+    _seed_all_bronze(tmp_path, lake, "sickle", hbb_variants=40)
+    bronze_to_silver("2026-09-01", "sickle", lake_uri=lake)
+
+    _seed_all_bronze(tmp_path, lake, "sickle", hbb_variants=39)
+    bronze_to_silver("2026-09-01", "sickle", lake_uri=lake)
+
+    gene = pl.read_delta(f"{lake}/silver/clinvar_variant_gene").filter(pl.col("panel") == "sickle")
+    assert gene.height == 39
+
