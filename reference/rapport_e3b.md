@@ -7,7 +7,7 @@ Critères fixés **avant** les mesures. Pile isolée `genomique-e3b` (spec § 3)
 |---|---|
 | 6 — Restauration | ✅ conforme ; un défaut du pipeline trouvé (D-E3b-1), **corrigé et revérifié** |
 | 5 — Comportement en panne | ✅ six scénarios joués ; deux défauts trouvés et corrigés (D-E3b-2, D-E3b-3), une réserve (O-E3b-2) |
-| 7a — Onze fiches (utilisateur) | à faire |
+| 7a — Onze fiches (utilisateur) | grille pré-remplie (`reference/grille_justesse_e3b.md`), à cocher par l'utilisateur ; un défaut trouvé en la préparant (D-E3b-4) |
 | 7b — 400 variants contre l'API ClinVar | ✅ 400/400 conformes, Wilson 95 % [99,05 ; 100] ; règle des maladies corrigée après mesure (P-E3b-1), les deux résultats donnés |
 
 ---
@@ -227,4 +227,41 @@ RCV, pas seulement celles de sa classification germinale. Une maladie citée ne 
 « classé pathogène pour cette maladie ».
 
 Sorties : `data/experiments/e3b/tirage.json`, `comparaisons.csv`, `resume.json`.
+
+---
+
+## Niveau 7a — Onze fiches (préparation, 26/10/2026)
+
+`scripts/verifier_justesse.py --grille` vérifie que les onze variants du protocole (§ 8.2) sont
+dans le Gold d'octobre. Ils y sont tous, aucun remplacement. L'outil écrit ensuite
+`reference/grille_justesse_e3b.md`, une fiche par variant :
+- **nos valeurs** : les six éléments, lus dans le Silver ;
+- **le document RAG** : son texte réel et son lien de citation ;
+- **à cocher par l'utilisateur** : la grille du § 11, et les cinq sources annexes, pré-remplies
+  avec nos valeurs.
+
+Vérification automatique du § 8.4 sur les **97 210 documents** : 0 `rs-1`, 0 `None`,
+0 `Last evaluated: -.`, 0 `Review status: -`.
+
+### Défaut D-E3b-4 — un seul mode de transmission par maladie dans le document RAG (correction en attente d'accord)
+
+**Observé** en préparant la grille : le document du variant n° 11 (HBB, 1048666) écrit « beta
+Thalassemia (inheritance: Autosomal dominant inheritance) ». MedGen donne pour C0005283 **deux**
+modes : récessif et dominant (`silver/medgen_inheritance`). Le document n'en cite qu'un, et pas le
+plus courant pour cette maladie.
+
+**Cause** (code) : `silver_to_gold_rag.build_documents` construit
+`dict(inheritance.select("cui", "mode_inheritance").iter_rows())`. Quand une maladie a plusieurs
+modes, le `dict` ne garde que **le dernier** lu, donc un mode choisi par l'ordre des lignes. Le
+Gold analytique, lui, les réunit triés (`silver_to_gold_analytique.py:117`, joints par « ; »). Les
+deux couches se contredisent donc.
+
+**Étendue** : 26 couples (CUI, panel) sur 104 ont plusieurs modes, et jusqu'à 22 292 variants
+citent l'une de ces maladies. Le document en cite au plus cinq (`MAX_DISEASES`), le nombre de
+textes réellement touchés est donc inférieur.
+
+**Conséquences** :
+- **pour le lecteur** : le RAG peut affirmer un mode de transmission partiel, voire trompeur ;
+- **pour le pipeline** : le texte dépend de l'ordre des lignes, donc son empreinte aussi. Un
+  ordre différent entraînerait des re-vectorisations inutiles.
 
