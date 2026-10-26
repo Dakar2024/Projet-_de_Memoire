@@ -7,7 +7,7 @@ Critères fixés **avant** les mesures. Pile isolée `genomique-e3b` (spec § 3)
 |---|---|
 | 6 — Restauration | ✅ conforme ; un défaut du pipeline trouvé (D-E3b-1), **corrigé et revérifié** |
 | 5 — Comportement en panne | ✅ six scénarios joués ; deux défauts trouvés et corrigés (D-E3b-2, D-E3b-3), une réserve (O-E3b-2) |
-| 7a — Onze fiches (utilisateur) | grille pré-remplie (`reference/grille_justesse_e3b.md`), à cocher par l'utilisateur ; un défaut trouvé en la préparant (D-E3b-4) |
+| 7a — Onze fiches (utilisateur) | grille pré-remplie (`reference/grille_justesse_e3b.md`), à cocher par l'utilisateur ; un défaut trouvé en la préparant (D-E3b-4), **corrigé** |
 | 7b — 400 variants contre l'API ClinVar | ✅ 400/400 conformes, Wilson 95 % [99,05 ; 100] ; règle des maladies corrigée après mesure (P-E3b-1), les deux résultats donnés |
 
 ---
@@ -243,7 +243,7 @@ dans le Gold d'octobre. Ils y sont tous, aucun remplacement. L'outil écrit ensu
 Vérification automatique du § 8.4 sur les **97 210 documents** : 0 `rs-1`, 0 `None`,
 0 `Last evaluated: -.`, 0 `Review status: -`.
 
-### Défaut D-E3b-4 — un seul mode de transmission par maladie dans le document RAG (correction en attente d'accord)
+### Défaut D-E3b-4 — un seul mode de transmission par maladie dans le document RAG (corrigé)
 
 **Observé** en préparant la grille : le document du variant n° 11 (HBB, 1048666) écrit « beta
 Thalassemia (inheritance: Autosomal dominant inheritance) ». MedGen donne pour C0005283 **deux**
@@ -264,4 +264,24 @@ textes réellement touchés est donc inférieur.
 - **pour le lecteur** : le RAG peut affirmer un mode de transmission partiel, voire trompeur ;
 - **pour le pipeline** : le texte dépend de l'ordre des lignes, donc son empreinte aussi. Un
   ordre différent entraînerait des re-vectorisations inutiles.
+
+**Correction** (26/10/2026, avec l'accord de l'utilisateur) : `build_documents` agrège les modes
+par CUI, sans doublon ni valeur nulle, triés et joints par « ; ». C'est la règle de `dim_disease` :
+les deux couches disent maintenant la même chose.
+
+Tests d'abord : deux modes donnés dans les deux ordres produisent le même texte, avec les deux
+modes. Ces deux tests étaient rouges sur l'ancien code. Un troisième test vérifie qu'un mode nul
+est ignoré. Suite complète : 1 757 tests verts.
+
+**Revérifié sur les données réelles** (documents reconstruits en mémoire depuis le Silver
+d'octobre du lac principal, rien d'écrit) :
+- **bêta-thalassémie** : n° 11 donne « beta Thalassemia (inheritance: Autosomal dominant
+  inheritance; Autosomal recessive inheritance) » ;
+- **étendue** : 22 149 documents changent de texte, 394 sickle et 21 755 brca, tous sur la seule
+  ligne « Associated conditions ». Exemple : « Familial cancer of breast » n'affichait que
+  « Non-Mendelian inheritance », MedGen donne aussi « Autosomal dominant inheritance ».
+
+Le Gold RAG de la pile principale garde l'ancien texte jusqu'au prochain run de panel, qui
+re-vectorisera ces documents : leur empreinte change. La grille 7a montre donc encore l'ancien
+document du n° 11.
 
