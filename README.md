@@ -100,6 +100,7 @@ Une fois la stack Docker démarrée :
 | **MinIO** (console web) | http://localhost:9011 | `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` du `.env` | Parcourir les fichiers de chaque couche |
 | **MinIO** (API S3) | http://localhost:9000 | idem | Accès programmatique au stockage |
 | PostgreSQL | non exposé (réseau Docker interne) | `POSTGRES_PASSWORD` du `.env` | Base de métadonnées d'Airflow |
+| **Grafana** (profil `monitoring`) | http://localhost:3000 | `admin` / `GRAFANA_ADMIN_PASSWORD` du `.env` | Tableaux de bord et alertes (voir [Monitoring](#monitoring)) |
 
 Les ports MinIO se changent dans `.env` (`MINIO_API_PORT`, `MINIO_CONSOLE_PORT`) si 9000/9001
 sont déjà occupés sur la machine (par Portainer, par exemple).
@@ -385,6 +386,29 @@ docker compose exec airflow-scheduler airflow dags pause dag_test_alerte
 Un envoi raté n'échoue pas la tâche une seconde fois : il est seulement écrit dans son journal
 (`Failed to send notification`). Une alerte qui n'arrive pas se diagnostique donc là.
 
+### Monitoring
+
+Prometheus et Grafana, derrière le profil Compose `monitoring` : activable et désactivable sans
+toucher au fichier, et le pipeline tourne pareil dans les deux cas.
+
+```bash
+docker compose --profile monitoring up -d     # démarrer avec le monitoring
+docker compose --profile monitoring stop prometheus grafana cadvisor monitoring-exporter
+```
+
+| Conteneur | Rôle |
+|---|---|
+| `statsd-exporter` | Traduit les métriques StatsD d'Airflow (étiquettes au format InfluxDB). **Hors profil, toujours démarré** : Airflow résout ce nom au démarrage de chaque processus et, s'il échoue, n'émet plus rien jusqu'au redémarrage |
+| `monitoring-exporter` | `src/monitoring/exporter.py` : variants courants, documents RAG, reclassifications du mois, âge des partitions, espace libre sur C:, dernier run réussi (API d'Airflow, compte `viewer`). Compte MinIO en lecture seule |
+| `cadvisor` | Mémoire et CPU par conteneur face à sa limite |
+| `prometheus` | Collecte toutes les 60 s, rétention 90 jours (2 Go au plus), aucun port publié |
+| `grafana` | Trois tableaux provisionnés depuis `docker/grafana/` : vue d'ensemble, exécution, infrastructure |
+
+**Trois alertes, par mail via Resend**, chacune pour ce que les mails d'Airflow ne voient pas :
+aucun run réussi depuis 40 jours, moins de 10 % libres sur C:, conteneur au-delà de 90 % de sa
+limite mémoire. Les échecs de tâches restent signalés par Airflow seul, avec le message d'erreur.
+Consommation mesurée au repos : 457 Mio pour les cinq conteneurs (`reference/choix_contexte.md`).
+
 ## Sources de données
 
 | Source | Contenu | Accès |
@@ -478,8 +502,10 @@ scripts/              ingest_*.py : un script par source, écrit dans raw
                       run_collection.py : ancien script de collecte (voir plus bas)
                       sauvegarde.sh : sauvegarde des buckets MinIO, de PostgreSQL et de la base vectorielle ;
                       verifier_restauration_rag.sh, verifier_restauration_lac_airflow.sh : tests de restauration
+src/monitoring/       exportateur Prometheus des métriques de données (volumes, fraîcheur, disque)
 dags/                 DAGs Airflow : acquisition mensuelle + un DAG par panel
-docker/               image Airflow ; MinIO compilé depuis les sources, son proxy filtrant et la création des buckets
+docker/               image Airflow ; MinIO compilé depuis les sources, son proxy filtrant et la création des buckets ;
+                      configuration de Prometheus, de statsd-exporter et de Grafana (tableaux, alertes)
 docker-compose.yml    stack Airflow 3 + PostgreSQL + MinIO
 tests/                tests de la logique (rapides)
 tests_airflow/        tests de structure des DAGs

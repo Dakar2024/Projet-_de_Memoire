@@ -113,6 +113,14 @@ Deux précisions d'honnêteté intellectuelle :
   **pas** un argument d'empreinte mémoire, mais un argument d'adéquation (section 4.2).
 
 Sur un VPS de 12 Go accueillant déjà Airflow, PostgreSQL et MinIO, chaque gigaoctet compte.
+
+**Le monitoring, mesuré à la même aune (28/10/2026).** Prometheus, Grafana, cAdvisor,
+statsd-exporter et l'exportateur de données consomment **457 Mio au repos** (`docker stats`,
+pile au repos) : Grafana 273, exportateur 108, Prometheus 50, cAdvisor 16, statsd-exporter 11.
+C'est un tiers de NiFi à vide. La différence de traitement tient moins au chiffre qu'à ce qu'il
+achète : le coût de NiFi n'apportait rien qu'Airflow ne fasse déjà ; celui-ci apporte une
+observabilité qu'aucun composant en place ne fournit, et il se coupe d'une commande (profil
+Compose `monitoring`).
 Les scripts Python n'ont pas d'empreinte au repos parce qu'ils **n'existent que pendant leur
 exécution** — propriété qu'aucun système à démon ne peut offrir.
 

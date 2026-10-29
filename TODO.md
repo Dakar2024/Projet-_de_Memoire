@@ -44,8 +44,12 @@ Ce qui n'est pas encore fait. Les audits complets sont dans `reference/audit_sec
       toutes les tâches au premier essai (`reference/rapport_e3b.md`).
 - [ ] **Design des e-mails** (alerte d'échec, rappels J-2 et jour J) une fois le design de l'application
       validé : tout est dans `dags/common/emails.py`.
-- [ ] **Monitoring** : relire en entier la spec
-      `docs/superpowers/specs/2026-09-29-monitoring-prometheus-grafana-design.md`, puis décider.
+- [x] **Monitoring** (28/10) : Prometheus + Grafana sous le profil `monitoring`, trois alertes
+      (silence 40 j, disque C:, mémoire), mail de test reçu via Resend, 457 Mio au repos.
+- [ ] **Monitoring, au run du 10/11** : vérifier sur le flux réel les métriques de tâches
+      (`airflow_ti_finish`, `airflow_task_duration`, `airflow_dagrun_duration_success`) du tableau
+      « exécution », absentes tant qu'aucun run n'a tourné ; recalibrer le seuil mémoire sur le pic
+      du scheduler pendant `bronze_to_silver`.
 
 ## 5. Robustesse du pipeline de données
 
