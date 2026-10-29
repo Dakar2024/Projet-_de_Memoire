@@ -13,6 +13,7 @@ from ingestion.storage import (
     delete,
     exists,
     finalize_partition,
+    find_complete_partitions,
     find_delta_tables,
     get_bytes,
     layer_uri,
@@ -457,6 +458,31 @@ def test_find_delta_tables_on_s3_reads_every_page():
         client.put_object(Bucket="silver", Key=key, Body=b"")
 
     assert find_delta_tables("s3://silver", client=client) == ["s3://silver/clinvar_variant", "s3://silver/hpo_term"]
+
+
+def test_find_complete_partitions_locally_keeps_only_partitions_with_a_success_marker(tmp_path):
+    for partition in ("clinvar/dt=2026-10-01", "medgen/dt=2026-10-01/panel=brca"):
+        (tmp_path / "raw" / partition).mkdir(parents=True)
+        (tmp_path / "raw" / partition / "_SUCCESS").touch()
+    (tmp_path / "raw" / "clinvar" / "dt=2026-11-01").mkdir()   # interrompue, sans _SUCCESS
+
+    partitions = find_complete_partitions(f"file://{tmp_path}/raw")
+
+    assert partitions == [
+        f"file://{tmp_path}/raw/clinvar/dt=2026-10-01",
+        f"file://{tmp_path}/raw/medgen/dt=2026-10-01/panel=brca",
+    ]
+
+
+def test_find_complete_partitions_on_s3_reads_every_page():
+    client = FakeS3()
+    for key in ("clinvar/dt=2026-10-01/_SUCCESS", "clinvar/dt=2026-10-01/data.parquet",
+                "clinvar/dt=2026-11-01/data.parquet", "hpo/dt=2026-10-01/_SUCCESS"):
+        client.put_object(Bucket="bronze", Key=key, Body=b"")
+
+    assert find_complete_partitions("s3://bronze", client=client) == [
+        "s3://bronze/clinvar/dt=2026-10-01", "s3://bronze/hpo/dt=2026-10-01",
+    ]
 
 
 class _UnreachableS3:

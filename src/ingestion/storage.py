@@ -194,6 +194,24 @@ def find_delta_tables(root_uri: str, client=None) -> list[str]:
     return sorted(f"{scheme}{log.parent}" for log in root.rglob(DELTA_LOG_DIR) if log.is_dir())
 
 
+def find_complete_partitions(root_uri: str, client=None) -> list[str]:
+    """Liste les partitions sous une racine qui portent un `_SUCCESS`, triées."""
+    if root_uri.startswith(S3_SCHEME):
+        bucket, prefix = _split_s3(root_uri)
+        prefix = f"{prefix.rstrip('/')}/" if prefix else ""
+        partitions: set[str] = set()
+        pages = (client or _s3_client()).get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=prefix)
+        for page in pages:
+            for item in page.get("Contents", []):
+                partition, marker, rest = item["Key"].rpartition(f"/{SUCCESS_MARKER}")
+                if marker and not rest:
+                    partitions.add(f"{S3_SCHEME}{bucket}/{partition}")
+        return sorted(partitions)
+    root = _local_path(root_uri)
+    scheme = FILE_SCHEME if root_uri.startswith(FILE_SCHEME) else ""
+    return sorted(f"{scheme}{marker.parent}" for marker in root.rglob(SUCCESS_MARKER) if marker.is_file())
+
+
 def sha256_file(path: Path) -> str:
     """Calcule le SHA-256 d'un fichier local, par blocs."""
     digest = hashlib.sha256()

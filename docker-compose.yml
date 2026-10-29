@@ -32,7 +32,7 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-apiserver:8080/execution/
     AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:?AIRFLOW_JWT_SECRET obligatoire, à renseigner}
     # Format `utilisateur:rôle` ; le mot de passe vient de AIRFLOW_ADMIN_PASSWORD (écrit par airflow-init).
-    AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_USERS: admin:admin
+    AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_USERS: admin:admin,monitoring:viewer
     AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:?AIRFLOW_ADMIN_PASSWORD obligatoire, à renseigner}
     # Dans le volume des journaux, déjà inscriptible par l'UID du conteneur.
     AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_PASSWORDS_FILE: /opt/airflow/logs/simple_auth_manager_passwords.json.generated
@@ -50,6 +50,16 @@ x-airflow-common: &airflow-common
     # Sans ALERT_EMAIL, aucun envoi n'est tenté (dags/common/alerting.py).
     AIRFLOW_CONN_SMTP_DEFAULT: '{"conn_type": "smtp", "host": "smtp.resend.com", "port": 465, "login": "resend", "password": "${RESEND_API_KEY:-}", "extra": {"from_email": "${ALERT_FROM:-}", "disable_tls": true, "timeout": 30, "retry_limit": 3}}'
     ALERT_EMAIL: ${ALERT_EMAIL:-}
+    # Métriques en UDP vers statsd-exporter, toujours démarré : sans lui, le nom ne se résout pas et
+    # Airflow passe pour toute la vie du processus à NoStatsLogger (_shared/observability/metrics/stats.py).
+    AIRFLOW__METRICS__STATSD_ON: "True"
+    AIRFLOW__METRICS__STATSD_HOST: statsd-exporter
+    AIRFLOW__METRICS__STATSD_PORT: "9125"
+    AIRFLOW__METRICS__STATSD_PREFIX: airflow
+    # Étiquettes au format InfluxDB (`stat,dag_id=…`), lues nativement par statsd-exporter ; sans les
+    # noms anciens, qui portent l'étiquette dans le nom et doublent chaque métrique d'une version sans étiquette.
+    AIRFLOW__METRICS__STATSD_INFLUXDB_ENABLED: "True"
+    AIRFLOW__METRICS__LEGACY_NAMES_ON: "False"
   volumes:
     - .:/opt/projet:ro
     - ./data:/opt/projet/data
@@ -179,6 +189,8 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER obligatoire, à renseigner}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD obligatoire, à renseigner}
+      # Méthode documentée par MinIO pour collecter sans jeton ; port publié sur la boucle locale seulement.
+      MINIO_PROMETHEUS_AUTH_TYPE: public
     volumes:
       - minio-data:/data
     networks:
@@ -219,6 +231,7 @@ services:
     networks:
       - genomique-network
       - minio-backend
+      - monitoring-network
     depends_on:
       minio-server:
         condition: service_healthy
@@ -255,6 +268,8 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD obligatoire, à renseigner}
       MINIO_AIRFLOW_USER: ${MINIO_AIRFLOW_USER:?MINIO_AIRFLOW_USER obligatoire, à renseigner}
       MINIO_AIRFLOW_PASSWORD: ${MINIO_AIRFLOW_PASSWORD:?MINIO_AIRFLOW_PASSWORD obligatoire, à renseigner}
+      MINIO_EXPORTER_USER: ${MINIO_EXPORTER_USER:?MINIO_EXPORTER_USER obligatoire, à renseigner}
+      MINIO_EXPORTER_PASSWORD: ${MINIO_EXPORTER_PASSWORD:?MINIO_EXPORTER_PASSWORD obligatoire, à renseigner}
     entrypoint: ["/bin/sh", "/scripts/create-buckets.sh"]
     volumes:
       - ./docker/minio/create-buckets.sh:/scripts/create-buckets.sh:ro
@@ -268,12 +283,15 @@ services:
     <<: *airflow-common
     container_name: genomique-airflow-init
     restart: "no"
+    environment:
+      <<: *airflow-env
+      AIRFLOW_MONITORING_PASSWORD: ${AIRFLOW_MONITORING_PASSWORD:?AIRFLOW_MONITORING_PASSWORD obligatoire, à renseigner}
     command:
       - bash
       - -c
       - >-
         airflow db migrate &&
-        python3 -c "import json, os; p = os.environ['AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_PASSWORDS_FILE']; os.makedirs(os.path.dirname(p), exist_ok=True); d = json.load(open(p)) if os.path.exists(p) else {}; d['admin'] = os.environ['AIRFLOW_ADMIN_PASSWORD']; json.dump(d, open(p, 'w'))" &&
+        python3 -c "import json, os; p = os.environ['AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_PASSWORDS_FILE']; os.makedirs(os.path.dirname(p), exist_ok=True); d = json.load(open(p)) if os.path.exists(p) else {}; d['admin'] = os.environ['AIRFLOW_ADMIN_PASSWORD']; d['monitoring'] = os.environ['AIRFLOW_MONITORING_PASSWORD']; json.dump(d, open(p, 'w'))" &&
         airflow pools set ncbi 1 "E-utilities NCBI : une tâche à la fois, limite de débit globale" &&
         airflow pools set conversion_lourde 1 "Conversions lourdes et écritures Delta partagées : une à la fois (plafond mémoire 3 Go)" &&
         airflow pools set rag_index 1 "Indexation RAG : une indexation à la fois, le service d'embedding sature le processeur"
@@ -289,6 +307,9 @@ services:
     restart: unless-stopped
     depends_on: *airflow-after-init
     command: api-server
+    networks:
+      - genomique-network
+      - monitoring-network
     ports:
       # Boucle locale : pas de TLS devant l'interface.
       - "127.0.0.1:8080:8080"
@@ -677,6 +698,214 @@ services:
       - ./data/models:/opt/projet/data/models:ro
     entrypoint: ["python", "-m", "pytest", "-p", "no:cacheprovider"]
 
+#==================== Monitoring : StatsD ======================#
+# Traduit les métriques StatsD d'Airflow pour Prometheus.
+# Hors profil, toujours démarré (64 Mo) : Airflow résout ce nom au démarrage de chaque processus.
+#===============================================================#
+  statsd-exporter:
+    image: prom/statsd-exporter:v0.31.0@sha256:1d5d341c4eb7abdd3445a3f85c3d498402b676ad29b4cf0421f5d280943871ab
+    container_name: genomique-statsd-exporter
+    restart: unless-stopped
+    user: "65534:65534"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging: *default-logging
+    command:
+      - --statsd.listen-udp=:9125
+      - --statsd.listen-tcp=
+      - --web.listen-address=:9102
+      - --statsd.mapping-config=/etc/statsd-exporter/mapping.yml
+    volumes:
+      - ./docker/statsd-exporter/mapping.yml:/etc/statsd-exporter/mapping.yml:ro
+    networks:
+      - genomique-network
+      - monitoring-network
+    deploy:
+      resources:
+        limits:
+          memory: 64m
+
+#================ Monitoring : exportateur de données ==========#
+# Volumes, fraîcheur et disque du lac, derniers runs réussis (src/monitoring/exporter.py)
+#===============================================================#
+  monitoring-exporter:
+    profiles: ["monitoring"]
+    build:
+      context: .
+      dockerfile: docker/airflow/Dockerfile
+    container_name: genomique-monitoring-exporter
+    restart: unless-stopped
+    user: "${AIRFLOW_UID:?AIRFLOW_UID obligatoire, sortie de id -u sur l hôte}:0"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging: *default-logging
+    working_dir: /opt/projet
+    entrypoint: ["python", "-m", "monitoring.exporter"]
+    environment:
+      PYTHONPATH: /opt/projet/src
+      LAKE_URI: "s3://"
+      AWS_ENDPOINT_URL: "http://minio:9000"
+      # Second compte de service MinIO, en lecture seule (politique monitoring-lake-read).
+      AWS_ACCESS_KEY_ID: ${MINIO_EXPORTER_USER:?MINIO_EXPORTER_USER obligatoire, à renseigner}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_EXPORTER_PASSWORD:?MINIO_EXPORTER_PASSWORD obligatoire, à renseigner}
+      AWS_REGION: us-east-1
+      AIRFLOW_API_URL: http://airflow-apiserver:8080
+      AIRFLOW_MONITORING_USER: monitoring
+      AIRFLOW_MONITORING_PASSWORD: ${AIRFLOW_MONITORING_PASSWORD:?AIRFLOW_MONITORING_PASSWORD obligatoire, à renseigner}
+      # Le montage ./data est sur C: : seule vue juste de l'espace libre (MinIO voit le vhdx de WSL).
+      EXPORTER_DATA_PATH: /opt/projet/data
+    # Le code et data/ seulement : pas le dépôt entier, qui contient le .env.
+    volumes:
+      - ./src:/opt/projet/src:ro
+      - ./data:/opt/projet/data:ro
+    networks:
+      - monitoring-network
+    depends_on:
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9102/metrics', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+#=================== Monitoring : cAdvisor =====================#
+# Mémoire et CPU par conteneur face à leur limite
+#===============================================================#
+  cadvisor:
+    profiles: ["monitoring"]
+    image: ghcr.io/google/cadvisor:v0.60.6@sha256:b8e7d1093144fd088f425ff003d75a4aa405de075db78dae3bc563730b1bd07a
+    container_name: genomique-cadvisor
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+    command:
+      - --docker_only=true
+      - --housekeeping_interval=30s
+      - --store_container_labels=false
+      - --whitelisted_container_labels=com.docker.compose.service
+      # CPU et mémoire seulement : mesurer le disque de chaque conteneur parcourt /var/lib/docker et
+      # gonfle le slab du cgroup (410 Mo mesurés), compté dans le working set de cAdvisor lui-même.
+      - --enable_metrics=cpu,memory
+    # Seule concession de privilège de la pile (spec §7.1) : les sockets Docker et containerd (Docker 29
+    # passe par containerd pour nommer les conteneurs), en lecture seule. Sans /dev/kmsg, pas d'événements
+    # OOM : lire le journal du noyau serait un privilège de plus, la règle mémoire se fonde sur le seuil.
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /run/containerd/containerd.sock:/run/containerd/containerd.sock:ro
+      - /sys:/sys:ro
+    networks:
+      - monitoring-network
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+
+#================== Monitoring : Prometheus ====================#
+# Sans authentification native : aucun port publié, joint par Grafana seul
+#===============================================================#
+  prometheus:
+    profiles: ["monitoring"]
+    image: prom/prometheus:v3.15.1@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2
+    container_name: genomique-prometheus
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging: *default-logging
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      # Trois runs mensuels pour qu'une tendance existe ; plafond en taille, le disque C: est compté.
+      - --storage.tsdb.retention.time=90d
+      - --storage.tsdb.retention.size=2GB
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    networks:
+      - monitoring-network
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9090/-/ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
+#==================== Monitoring : Grafana =====================#
+# Url dans le navigateur : http://localhost:3000
+# Connexion : admin / GRAFANA_ADMIN_PASSWORD du .env
+# Tableaux, source et alertes provisionnés depuis docker/grafana/ (versionnés)
+#===============================================================#
+  grafana:
+    profiles: ["monitoring"]
+    image: grafana/grafana:13.2.5@sha256:9f7aa1e1e3246aade5792d35a738049f7f32f89cd51d1956cf426a4e86268a84
+    container_name: genomique-grafana
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging: *default-logging
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD obligatoire, à renseigner}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      GF_SERVER_ROOT_URL: http://localhost:3000
+      # Même compte Resend qu'Airflow, en 465 (SSL implicite).
+      GF_SMTP_ENABLED: "true"
+      GF_SMTP_HOST: smtp.resend.com:465
+      GF_SMTP_USER: resend
+      GF_SMTP_PASSWORD: ${RESEND_API_KEY:-}
+      GF_SMTP_FROM_ADDRESS: ${ALERT_FROM:-}
+      GF_SMTP_FROM_NAME: Monitoring génomique
+      ALERT_EMAIL: ${ALERT_EMAIL:-}
+    volumes:
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./docker/grafana/dashboards:/var/lib/grafana-dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3000:3000"
+    networks:
+      - monitoring-network
+      - monitoring-egress
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
 #===================== Volumes persistants =====================#
 # Données conservées entre redémarrages et mises à jour (sauvegardées par scripts/sauvegarde.sh)
 #===============================================================#
@@ -685,9 +914,12 @@ volumes:
   minio-data:
   airflow-logs:
   rag-postgres-data:
+  # Historique et état de Grafana ; reconstructibles, donc hors sauvegarde.
+  prometheus-data:
+  grafana-data:
 
 #=========================== Réseaux ===========================#
-# Internes (sans Internet) sauf genomique-network, rag-api-ingress, rag-egress et rag-export
+# Internes (sans Internet) sauf genomique-network, rag-api-ingress, rag-egress, rag-export et monitoring-egress
 #===============================================================#
 networks:
   genomique-network:
@@ -723,4 +955,11 @@ networks:
     driver: bridge
   # Téléchargement des modèles épinglés par rag-model-export.
   rag-export:
+    driver: bridge
+  # Prometheus, ses cibles et Grafana : aucun accès sortant.
+  monitoring-network:
+    driver: bridge
+    internal: true
+  # Publication du port de Grafana et envoi des alertes par SMTP.
+  monitoring-egress:
     driver: bridge

@@ -1,0 +1,30 @@
+# Collecte des cinq cibles du monitoring (docs : spec monitoring, §3).
+# Pipeline mensuel : 60 s suffisent largement, et la base reste petite.
+global:
+  scrape_interval: 60s
+  evaluation_interval: 60s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # Métriques d'Airflow, émises en StatsD et traduites par statsd-exporter.
+  - job_name: airflow
+    static_configs:
+      - targets: ["statsd-exporter:9102"]
+
+  # Volumes, fraîcheur et disque du lac, derniers runs réussis (src/monitoring/exporter.py).
+  - job_name: genomics
+    static_configs:
+      - targets: ["monitoring-exporter:9102"]
+
+  # Par le proxy nginx, qui reste l'unique entrée vers MinIO.
+  - job_name: minio
+    metrics_path: /minio/v2/metrics/cluster
+    static_configs:
+      - targets: ["minio:9000"]
+
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]

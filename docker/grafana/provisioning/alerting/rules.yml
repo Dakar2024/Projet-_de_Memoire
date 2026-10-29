@@ -1,0 +1,124 @@
+# Trois règles, chacune pour un angle mort des mails d'Airflow (spec D6, §6).
+# Aucune sur les échecs de tâches : Airflow les signale déjà, avec le message d'erreur.
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: genomique
+    folder: Génomique
+    interval: 1m
+    rules:
+      - uid: silence-pipeline
+        title: Aucun run réussi depuis 40 jours
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              instant: true
+              # Jours écoulés depuis le dernier succès, par DAG ; 0 (jamais) donne une valeur énorme.
+              expr: (time() - max by (dag) (genomics_last_successful_run_timestamp)) / 86400
+          # $values n'expose que les expressions : B réduit A pour le seuil et le message.
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              reducer: last
+              expression: A
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [40]}
+        # Exportateur muet : on ne sait plus si le pipeline tourne, ce qui doit aussi alerter.
+        noDataState: Alerting
+        execErrState: Error
+        for: 1h
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.dag }} : aucun run réussi depuis {{ humanize $values.B.Value }} jours"
+          description: >-
+            Le run mensuel n'a pas démarré ou n'a pas abouti, sans qu'aucune tâche n'échoue.
+            Vérifier le scheduler Airflow, puis consulter reference/procedure_reprise.md.
+
+      - uid: disque-c-presque-plein
+        title: Disque C presque plein
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              instant: true
+              # Vue du montage ./data (C:) ; celle de MinIO (vhdx de WSL) surestime l'espace libre.
+              expr: 100 * genomics_free_space_bytes{path="data"} / genomics_total_space_bytes{path="data"}
+          # $values n'expose que les expressions : B réduit A pour le seuil et le message.
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              reducer: last
+              expression: A
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: lt, params: [10]}
+        noDataState: NoData
+        execErrState: Error
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "Disque C : {{ humanize $values.B.Value }} % libres"
+          description: >-
+            Sous 10 % libres, le prochain run risque d'échouer faute de place (P3).
+            Libérer de l'espace sur C: ou compacter le vhdx de WSL.
+
+      - uid: memoire-conteneur
+        title: Conteneur proche de sa limite mémoire
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              instant: true
+              expr: >-
+                100 * container_memory_working_set_bytes{name=~"genomique-.+"}
+                / (container_spec_memory_limit_bytes{name=~"genomique-.+"} > 0)
+          # $values n'expose que les expressions : B réduit A pour le seuil et le message.
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              reducer: last
+              expression: A
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [90]}
+        noDataState: NoData
+        execErrState: Error
+        for: 2m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.name }} : {{ humanize $values.B.Value }} % de sa limite mémoire"
+          description: >-
+            Au-delà de la limite, le noyau tue le processus et Airflow ne voit qu'un échec sans cause.
+            Seuil à recalibrer sur le premier run observé (spec §6).

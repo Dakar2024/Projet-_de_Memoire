@@ -1,0 +1,3 @@
+# Aucun plugin provisionné ; le dossier évite une erreur au démarrage de Grafana.
+apiVersion: 1
+apps: []

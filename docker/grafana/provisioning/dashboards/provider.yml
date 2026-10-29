@@ -1,0 +1,10 @@
+apiVersion: 1
+providers:
+  - name: genomique
+    folder: Génomique
+    type: file
+    # Modifications à la souris refusées : le JSON versionné fait foi (spec D7).
+    allowUiUpdates: false
+    disableDeletion: true
+    options:
+      path: /var/lib/grafana-dashboards

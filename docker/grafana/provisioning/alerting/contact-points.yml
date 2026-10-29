@@ -1,0 +1,11 @@
+apiVersion: 1
+contactPoints:
+  - orgId: 1
+    name: e-mail
+    receivers:
+      - uid: email-resend
+        type: email
+        settings:
+          # Mêmes destinataires que les alertes d'Airflow (.env).
+          addresses: $ALERT_EMAIL
+          singleEmail: true

@@ -58,3 +58,37 @@ mc admin policy create local airflow-lake /tmp/airflow-lake.json || true
 mc admin user add local "$MINIO_AIRFLOW_USER" "$MINIO_AIRFLOW_PASSWORD"
 mc admin policy attach local airflow-lake --user "$MINIO_AIRFLOW_USER" || true
 echo "compte de service ${MINIO_AIRFLOW_USER} pret (politique airflow-lake)"
+
+# Exportateur de monitoring : lecture seule ; un composant qui ne doit rien écrire ne peut rien écrire.
+cat > /tmp/monitoring-lake-read.json <<'POLICY'
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["s3:GetObject"],
+      "Resource": [
+        "arn:aws:s3:::raw/*",
+        "arn:aws:s3:::bronze/*",
+        "arn:aws:s3:::silver/*",
+        "arn:aws:s3:::gold/*"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["s3:ListBucket", "s3:GetBucketLocation"],
+      "Resource": [
+        "arn:aws:s3:::raw",
+        "arn:aws:s3:::bronze",
+        "arn:aws:s3:::silver",
+        "arn:aws:s3:::gold"
+      ]
+    }
+  ]
+}
+POLICY
+
+mc admin policy create local monitoring-lake-read /tmp/monitoring-lake-read.json || true
+mc admin user add local "$MINIO_EXPORTER_USER" "$MINIO_EXPORTER_PASSWORD"
+mc admin policy attach local monitoring-lake-read --user "$MINIO_EXPORTER_USER" || true
+echo "compte de service ${MINIO_EXPORTER_USER} pret (politique monitoring-lake-read)"
