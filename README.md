@@ -404,9 +404,11 @@ docker compose --profile monitoring stop prometheus grafana cadvisor monitoring-
 | `prometheus` | Collecte toutes les 60 s, rétention 90 jours (2 Go au plus), aucun port publié |
 | `grafana` | Trois tableaux provisionnés depuis `docker/grafana/` : vue d'ensemble, exécution, infrastructure |
 
-**Trois alertes, par mail via Resend**, chacune pour ce que les mails d'Airflow ne voient pas :
+**Quatre alertes, par mail via Resend**, chacune pour ce que les mails d'Airflow ne voient pas :
 aucun run réussi depuis 40 jours, moins de 10 % libres sur C:, conteneur au-delà de 90 % de sa
-limite mémoire. Les échecs de tâches restent signalés par Airflow seul, avec le message d'erreur.
+limite mémoire, cible de monitoring injoignable depuis 15 min. Les échecs de tâches restent
+signalés par Airflow seul, avec le message d'erreur. Un trou de collecte, comme une veille du PC,
+ne déclenche pas d'alerte : les règles disque et mémoire gardent leur dernier état.
 Consommation mesurée au repos : 457 Mio pour les cinq conteneurs (`reference/choix_contexte.md`).
 
 ## Sources de données

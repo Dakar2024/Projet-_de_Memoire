@@ -1,4 +1,5 @@
-# Trois règles, chacune pour un angle mort des mails d'Airflow (spec D6, §6).
+# Quatre règles, chacune pour un angle mort des mails d'Airflow (spec D6, §6).
+# $values est vide sans données ou en cas d'erreur de requête : chaque message prévoit ce cas.
 # Aucune sur les échecs de tâches : Airflow les signale déjà, avec le message d'erreur.
 apiVersion: 1
 groups:
@@ -41,7 +42,7 @@ groups:
         for: 1h
         labels: {severity: warning}
         annotations:
-          summary: "{{ $labels.dag }} : aucun run réussi depuis {{ humanize $values.B.Value }} jours"
+          summary: "{{ if $values.B }}{{ $labels.dag }} : aucun run réussi depuis {{ humanize $values.B.Value }} jours{{ else }}Exportateur muet : impossible de savoir si le pipeline tourne{{ end }}"
           description: >-
             Le run mensuel n'a pas démarré ou n'a pas abouti, sans qu'aucune tâche n'échoue.
             Vérifier le scheduler Airflow, puis consulter reference/procedure_reprise.md.
@@ -74,12 +75,13 @@ groups:
               expression: B
               conditions:
                 - evaluator: {type: lt, params: [10]}
-        noDataState: NoData
+        # Un trou de collecte (veille du PC) ne dit rien du disque ; la règle cible-injoignable couvre les pannes.
+        noDataState: KeepLast
         execErrState: Error
         for: 15m
         labels: {severity: warning}
         annotations:
-          summary: "Disque C : {{ humanize $values.B.Value }} % libres"
+          summary: "{{ if $values.B }}Disque C : {{ humanize $values.B.Value }} % libres{{ else }}Disque C : mesure indisponible{{ end }}"
           description: >-
             Sous 10 % libres, le prochain run risque d'échouer faute de place (P3).
             Libérer de l'espace sur C: ou compacter le vhdx de WSL.
@@ -113,12 +115,52 @@ groups:
               expression: B
               conditions:
                 - evaluator: {type: gt, params: [90]}
-        noDataState: NoData
+        # Un trou de collecte (veille du PC) ne dit rien de la mémoire ; la règle cible-injoignable couvre les pannes.
+        noDataState: KeepLast
         execErrState: Error
         for: 2m
         labels: {severity: warning}
         annotations:
-          summary: "{{ $labels.name }} : {{ humanize $values.B.Value }} % de sa limite mémoire"
+          summary: "{{ if $values.B }}{{ $labels.name }} : {{ humanize $values.B.Value }} % de sa limite mémoire{{ else }}Mémoire des conteneurs : mesure indisponible{{ end }}"
           description: >-
             Au-delà de la limite, le noyau tue le processus et Airflow ne voit qu'un échec sans cause.
             Seuil à recalibrer sur le premier run observé (spec §6).
+
+      - uid: cible-injoignable
+        title: Cible de monitoring injoignable
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              instant: true
+              # `up` et non `up == 0` : ce dernier est vide quand tout va bien.
+              expr: up
+          # $values n'expose que les expressions : B réduit A pour le seuil et le message.
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              reducer: last
+              expression: A
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: lt, params: [1]}
+        noDataState: KeepLast
+        execErrState: Error
+        # 15 min : une veille du PC ne produit qu'un trou, pas de `up` à 0 aussi long.
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ if $values.B }}Cible {{ $labels.job }} injoignable depuis 15 min{{ else }}Prometheus ne répond pas{{ end }}"
+          description: >-
+            Les règles sur cette cible gardent leur dernier état : le monitoring est aveugle sur elle.
+            Vérifier le conteneur avec docker compose --profile monitoring ps.
