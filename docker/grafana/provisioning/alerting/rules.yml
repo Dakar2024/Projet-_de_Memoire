@@ -48,7 +48,7 @@ groups:
             Vérifier le scheduler Airflow, puis consulter reference/procedure_reprise.md.
 
       - uid: disque-c-presque-plein
-        title: Disque C presque plein
+        title: Disque D (./data) presque plein
         condition: C
         data:
           - refId: A
@@ -57,7 +57,7 @@ groups:
             model:
               refId: A
               instant: true
-              # Vue du montage ./data (C:) ; celle de MinIO (vhdx de WSL) surestime l'espace libre.
+              # Vue du montage ./data (D: depuis le 2026-11-08) ; celle de MinIO (vhdx de WSL) surestime l'espace libre.
               expr: 100 * genomics_free_space_bytes{path="data"} / genomics_total_space_bytes{path="data"}
           # $values n'expose que les expressions : B réduit A pour le seuil et le message.
           - refId: B
@@ -81,10 +81,10 @@ groups:
         for: 15m
         labels: {severity: warning}
         annotations:
-          summary: "{{ if $values.B }}Disque C : {{ humanize $values.B.Value }} % libres{{ else }}Disque C : mesure indisponible{{ end }}"
+          summary: "{{ if $values.B }}Disque D (./data) : {{ humanize $values.B.Value }} % libres{{ else }}Disque D (./data) : mesure indisponible{{ end }}"
           description: >-
             Sous 10 % libres, le prochain run risque d'échouer faute de place (P3).
-            Libérer de l'espace sur C: ou compacter le vhdx de WSL.
+            Libérer de l'espace sur D: (données du lac, D:\Backups) ou compacter le vhdx de WSL (D:\WSL\Ubuntu).
 
       - uid: memoire-conteneur
         title: Conteneur proche de sa limite mémoire

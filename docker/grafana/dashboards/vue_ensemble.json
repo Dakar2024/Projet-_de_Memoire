@@ -354,7 +354,7 @@
     {
       "id": 12,
       "type": "stat",
-      "title": "Espace libre sur C:",
+      "title": "Espace libre sur D: (./data)",
       "description": "",
       "gridPos": {
         "x": 12,

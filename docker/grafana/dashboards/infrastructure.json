@@ -205,8 +205,8 @@
     {
       "id": 46,
       "type": "timeseries",
-      "title": "Espace libre sur C:",
-      "description": "Vue du montage ./data, sur C:. Celle de MinIO (vhdx de WSL) surestime l'espace.",
+      "title": "Espace libre sur D: (./data)",
+      "description": "Vue du montage ./data, sur D:. Celle de MinIO (vhdx de WSL) surestime l'espace.",
       "gridPos": {
         "x": 12,
         "y": 9,
